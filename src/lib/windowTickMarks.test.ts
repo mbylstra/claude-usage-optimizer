@@ -30,12 +30,21 @@ describe('buildWindowTickMarks', () => {
   it('marks each interior day of a weekly window', () => {
     const tickMarks = buildWindowTickMarks(activeStatus('sevenDay', '2026-08-11T09:00:00.000Z'));
 
-    expect(tickMarks.map((tickMark) => tickMark.label)).toEqual(['1d', '2d', '3d', '4d', '5d', '6d']);
-    expect(tickMarks[0].positionPercent).toBeCloseTo(100 / 7);
+    expect(tickMarks.map((tickMark) => tickMark.label)).toEqual([
+      '1d',
+      '2d',
+      '3d',
+      '4d',
+      '5d',
+      '6d',
+    ]);
+    expect(tickMarks.at(0)?.positionPercent).toBeCloseTo(100 / 7);
   });
 
   it('marks the Opus weekly window in days too', () => {
-    const tickMarks = buildWindowTickMarks(activeStatus('sevenDayOpus', '2026-08-11T09:00:00.000Z'));
+    const tickMarks = buildWindowTickMarks(
+      activeStatus('sevenDayOpus', '2026-08-11T09:00:00.000Z'),
+    );
 
     expect(tickMarks).toHaveLength(6);
     expect(tickMarks.at(-1)?.label).toBe('6d');
@@ -58,7 +67,7 @@ describe('buildWindowTickMarks', () => {
     );
 
     expect(tickMarks.map((tickMark) => tickMark.label)).toEqual(['1h', '2h', '3h', '4h', '5h']);
-    expect(tickMarks[0].positionPercent).toBeCloseTo(100 / 6);
+    expect(tickMarks.at(0)?.positionPercent).toBeCloseTo(100 / 6);
   });
 
   it('leaves a partial final segment when the span is not a whole number of units', () => {
@@ -71,9 +80,11 @@ describe('buildWindowTickMarks', () => {
   });
 
   it('returns no ticks for a window shorter than one unit', () => {
-    expect(buildWindowTickMarks(
-      activeStatus('sevenDay', '2026-08-07T18:00:00.000Z', '2026-08-07T15:00:00.000Z'),
-    )).toEqual([]);
+    expect(
+      buildWindowTickMarks(
+        activeStatus('sevenDay', '2026-08-07T18:00:00.000Z', '2026-08-07T15:00:00.000Z'),
+      ),
+    ).toEqual([]);
   });
 
   it('returns no ticks rather than a smear for an implausibly long window', () => {

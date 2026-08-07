@@ -102,7 +102,7 @@ export function deriveUsageStatuses(snapshot: UsageSnapshot, now: Date): Derived
   return snapshot.windows.map((window) => deriveWindowStatus(window, now));
 }
 
-/** Highest utilisation across every window — what the toolbar badge shows. */
+/** Highest utilisation across every window — what the toolbar tooltip names. */
 export function highestUtilizationPercent(snapshot: UsageSnapshot): number {
   return snapshot.windows.reduce(
     (highest, window) => Math.max(highest, clampPercent(window.utilizationPercent)),

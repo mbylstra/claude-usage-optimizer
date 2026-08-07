@@ -10,7 +10,8 @@ whether you are ahead of or behind an even burn for each window.
 ```
 src/
   lib/          pure TypeScript, zero browser-extension dependencies
-                pace maths, formatters, view-model construction, badge, types
+                pace maths, formatters, view-model construction, toolbar title,
+                types
   extension/    the only place chrome.* is touched
                 claudeUsageClient.ts, usageStorage.ts, serviceWorker.ts, messages.ts
   components/   pure React, props in only — plus ui/ for shadcn primitives

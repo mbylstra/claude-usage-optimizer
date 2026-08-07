@@ -41,11 +41,13 @@ colour at any size: headroom is good news, and grading it would imply a scale
 you cannot act on.
 
 Each bar carries a vertical line marking the even-burn point, so the number and
-the picture say the same thing.
+the picture say the same thing. Behind it runs a scale — one tick per hour of a
+five-hour session, one per day of a weekly window — so the line can be read as
+"three hours in" rather than merely "somewhere past the middle".
 
-The toolbar badge shows the highest utilisation across all windows, coloured by
-how the _weekly_ window is pacing — that being the one where running ahead is a
-genuine budget breach rather than just a busy afternoon.
+The toolbar icon carries no badge. Hovering it names the highest utilisation
+across all windows; the pace story lives in the popup, where there is room to
+tell it.
 
 ## Install it locally
 

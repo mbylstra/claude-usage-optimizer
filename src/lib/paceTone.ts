@@ -1,9 +1,8 @@
 import type { PaceSeverity, PaceStatus } from './usageTypes';
 
 /**
- * The single colour decision, made once and shared by the pace pill, the usage
- * bar and the toolbar badge — so they can never disagree about how alarming a
- * window is.
+ * The single colour decision, made once and shared by the pace pill and the
+ * usage bar — so they can never disagree about how alarming a window is.
  *
  * Being ahead escalates through three steps, because "you will run out early"
  * is a matter of degree: an hour ahead in a five-hour session is a different

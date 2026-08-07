@@ -48,14 +48,12 @@ function createChromeFake() {
 
   const createdAlarms: { name: string; options: unknown }[] = [];
   const badgeText: string[] = [];
-  const badgeColors: string[] = [];
   const titles: string[] = [];
 
   return {
     storage,
     createdAlarms,
     badgeText,
-    badgeColors,
     titles,
     triggerAlarm: (name: string) => alarms.listeners.forEach((listener) => listener({ name })),
     sendMessage: (message: unknown) =>
@@ -88,8 +86,6 @@ function createChromeFake() {
       },
       action: {
         setBadgeText: async ({ text }: { text: string }) => void badgeText.push(text),
-        setBadgeBackgroundColor: async ({ color }: { color: string }) =>
-          void badgeColors.push(color),
         setTitle: async ({ title }: { title: string }) => void titles.push(title),
       },
     },
@@ -130,7 +126,19 @@ describe('serviceWorker', () => {
     });
   });
 
-  it('fetches, caches and badges when the refresh alarm fires', async () => {
+  it('clears any badge an earlier version left on the toolbar icon', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse(USAGE_PAYLOAD)),
+    );
+    await loadServiceWorker();
+
+    await vi.waitFor(() => expect(chromeFake.badgeText).toContain(''));
+    // Nothing ever paints one back on.
+    expect(chromeFake.badgeText.every((text) => text === '')).toBe(true);
+  });
+
+  it('fetches, caches and retitles the icon when the refresh alarm fires', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) =>
@@ -149,9 +157,8 @@ describe('serviceWorker', () => {
     expect(cached.snapshot?.windows).toHaveLength(2);
     expect(cached.fetchedAt).not.toBeNull();
 
-    // Badge shows the higher of the two utilisations.
-    await vi.waitFor(() => expect(chromeFake.badgeText).toContain('61'));
-    expect(chromeFake.titles.at(-1)).toContain('61%');
+    // The tooltip names the higher of the two utilisations.
+    await vi.waitFor(() => expect(chromeFake.titles.at(-1)).toContain('61%'));
   });
 
   it('appends a history sample on every successful refresh', async () => {
@@ -280,7 +287,7 @@ describe('serviceWorker', () => {
     expect(response.snapshot?.windows).toHaveLength(2);
   });
 
-  it('reports being logged out without discarding the badge', async () => {
+  it('reports being logged out and falls back to the plain tooltip', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => jsonResponse({ error: 'unauthorized' }, 401)),
@@ -291,8 +298,8 @@ describe('serviceWorker', () => {
 
     expect(response.error?.code).toBe('NOT_LOGGED_IN');
     expect(response.snapshot).toBeNull();
-    // No data means an empty badge rather than a stale number.
-    expect(chromeFake.badgeText.at(-1)).toBe('');
+    // No data means the neutral title rather than a stale percentage.
+    expect(chromeFake.titles.at(-1)).toBe('Claude Usage Optimizer');
   });
 
   it('ignores messages it does not understand', async () => {
