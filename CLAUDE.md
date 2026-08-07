@@ -30,7 +30,8 @@ them.
 ## Commands
 
 `just` is the entry point for everything. Do not run raw pnpm/vite commands —
-add a recipe instead.
+add a recipe instead. Never use `git add` or `git commit` — that is for the user
+to do.
 
 ```sh
 just check           # typecheck + lint + format-check — the gate
