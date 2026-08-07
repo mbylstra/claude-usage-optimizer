@@ -1,4 +1,9 @@
-import type { UsageCacheEntry, UsageSnapshot } from '@/lib/usageTypes';
+import type {
+  UsageCacheEntry,
+  UsageSnapshot,
+  UsageWindowKind,
+  UsageWindowSnapshot,
+} from '@/lib/usageTypes';
 import type { OrganizationIdCache } from './claudeUsageClient';
 
 export type { UsageCacheEntry };
@@ -34,6 +39,20 @@ export interface UsageHistorySample {
   fiveHourPercent: number | null;
   sevenDayPercent: number | null;
   sevenDayOpusPercent: number | null;
+  /**
+   * The reset times as reported at `fetchedAt`. Recorded because how they *move*
+   * settles whether a window is fixed or rolling, which the pace model depends
+   * on and a single response cannot tell you:
+   *
+   * - fixed  — holds steady, then jumps forward by the window duration while
+   *            utilisation drops to ~0
+   * - rolling — creeps forward continuously, utilisation decaying gradually
+   *
+   * See `plans/mvp-chrome-extension.md` §2.
+   */
+  fiveHourResetsAt: string | null;
+  sevenDayResetsAt: string | null;
+  sevenDayOpusResetsAt: string | null;
 }
 
 async function readStorageValue<T>(key: string): Promise<T | null> {
@@ -82,9 +101,11 @@ export async function writeUsageCache(entry: UsageCacheEntry): Promise<void> {
 
 export const USAGE_CACHE_CHANGE_KEY = USAGE_CACHE_STORAGE_KEY;
 
-function percentFor(snapshot: UsageSnapshot, kind: string): number | null {
-  const window = snapshot.windows.find((candidate) => candidate.kind === kind);
-  return window === undefined ? null : window.utilizationPercent;
+function windowFor(
+  snapshot: UsageSnapshot,
+  kind: UsageWindowKind,
+): UsageWindowSnapshot | undefined {
+  return snapshot.windows.find((candidate) => candidate.kind === kind);
 }
 
 /**
@@ -98,11 +119,18 @@ export async function appendUsageHistorySample(
   const existing = (await readStorageValue<UsageHistorySample[]>(USAGE_HISTORY_STORAGE_KEY)) ?? [];
   const history = Array.isArray(existing) ? existing : [];
 
+  const fiveHour = windowFor(snapshot, 'fiveHour');
+  const sevenDay = windowFor(snapshot, 'sevenDay');
+  const sevenDayOpus = windowFor(snapshot, 'sevenDayOpus');
+
   const sample: UsageHistorySample = {
     fetchedAt,
-    fiveHourPercent: percentFor(snapshot, 'fiveHour'),
-    sevenDayPercent: percentFor(snapshot, 'sevenDay'),
-    sevenDayOpusPercent: percentFor(snapshot, 'sevenDayOpus'),
+    fiveHourPercent: fiveHour?.utilizationPercent ?? null,
+    sevenDayPercent: sevenDay?.utilizationPercent ?? null,
+    sevenDayOpusPercent: sevenDayOpus?.utilizationPercent ?? null,
+    fiveHourResetsAt: fiveHour?.resetsAt ?? null,
+    sevenDayResetsAt: sevenDay?.resetsAt ?? null,
+    sevenDayOpusResetsAt: sevenDayOpus?.resetsAt ?? null,
   };
 
   const appended = [...history, sample];

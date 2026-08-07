@@ -1,10 +1,10 @@
 # Plan: Claude Usage Optimizer — MV3 Chrome Extension (MVP)
 
 > **Status: implemented 2026-08-07.** Phases 0–6 are done and `just check` passes
-> (83 tests across 8 files). `dist/` builds and `just package` produces a zip.
-> Section-by-section notes on what actually happened are inline below, marked
-> **Built:**. The one thing still outstanding is the live-data verification in
-> Phase 1 — see [What is still unverified](#what-is-still-unverified).
+> (85 tests across 8 files). `dist/` builds and `just package` produces a zip.
+> Loaded unpacked in Chrome and confirmed working. Section-by-section notes on
+> what actually happened are inline below, marked **Built:**. One thing is still
+> outstanding — see [What is still unverified](#what-is-still-unverified).
 
 ## Goal
 
@@ -526,25 +526,53 @@ weighted model against. Without it, Phase 2 of the product starts from zero data
 Nothing reads it yet — that is the point. Data starts accumulating from first
 install, so whenever the weighted model gets built it has real history behind it.
 
+**Extended after first use:** each sample also records the three `resets_at`
+values as reported at that moment. This costs three strings per sample and makes
+the buffer answer the fixed-vs-rolling question in §2 on its own, from ordinary
+use, without anyone having to inspect an API response — see below.
+
 ---
 
 ## What is still unverified
 
-Two things could not be checked, both needing a browser and neither blocking the
-build.
+**Resolved 2026-08-07:** the extension was loaded unpacked and reported working —
+the service worker registers, the popup renders real data and the badge paints.
+Phase 4's exit criterion is met. The notes below on why this could not be checked
+from the CLI are kept because the obstacles are still there for anyone who tries.
+
+One thing remains open.
 
 **1. The live API shape — the Phase 1 exit criterion.** Whether `resets_at − 7d`
 is really the weekly window start, and whether the field spellings match §1. The
 code defends against being wrong (see the Phase 2 note), but it has not been seen
-against a real response. To settle it: open
+against a real response. To settle the field spellings: open
 `https://claude.ai/api/organizations` while signed in, then
 `https://claude.ai/api/organizations/{uuid}/usage`, and compare against §1.
 
-**2. That the extension loads and runs in Chrome.** `dist/` is complete and the
-manifest is valid, but no one has watched the service worker register, the alarm
-fire, or the badge paint.
+Note that a single response **cannot** settle the more important half — whether
+the window is fixed or rolling. Both kinds return a `resets_at`, and both render
+a plausible-looking card, so the extension working well is not evidence either
+way. Only the _movement_ of `resets_at` distinguishes them, which is why the
+history buffer now records it (§7). After a week of ordinary use:
 
-Verifying #2 from the CLI turned out to be impossible:
+```js
+// in the extension's service worker console
+(await chrome.storage.local.get('usageHistory')).usageHistory
+  .map((s) => `${s.fetchedAt}  ${s.sevenDayResetsAt}  ${s.sevenDayPercent}%`)
+  .join('\n');
+```
+
+A weekly reset that holds constant and then jumps forward exactly 7 days, with
+utilisation dropping to ~0 at that moment, confirms a fixed window and the pace
+model is sound as built. One that creeps forward between samples means the window
+is rolling, `windowStartedAt` is meaningless, and weekly pace needs reworking —
+most likely into "capacity freeing up in the next N hours" rather than an
+elapsed-fraction comparison.
+
+### Why none of this could be checked from the CLI
+
+Loading the extension programmatically turned out to be impossible, which is why
+it had to be done by hand:
 
 - Chrome has **removed the `--load-extension` switch**, and
   `--disable-features=DisableLoadExtensionCommandLineSwitch` no longer revives it.
@@ -558,5 +586,6 @@ Verifying #2 from the CLI turned out to be impossible:
   Claude Code 2.1.223). No process ever spawned from
   `~/.claude/chrome/chrome-native-host`.
 
-So loading it by hand is currently the only route: `chrome://extensions` →
-Developer mode → **Load unpacked** → select `dist/`.
+So loading it by hand is the only route: `chrome://extensions` → Developer mode →
+**Load unpacked** → select `dist/`. Worth remembering after any `just build`, and
+worth budgeting for rather than assuming a scripted check will cover it.

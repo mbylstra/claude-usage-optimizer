@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
+import type { UsageHistorySample } from './usageStorage';
 
 /**
  * Smoke tests for the service worker's wiring: alarm and message handlers,
@@ -167,9 +168,62 @@ describe('serviceWorker', () => {
     chromeFake.triggerAlarm('refreshUsage');
     await vi.waitFor(() => expect(chromeFake.storage.has('usageHistory')).toBe(true));
 
-    const history = chromeFake.storage.get('usageHistory') as { fiveHourPercent: number }[];
+    const history = chromeFake.storage.get('usageHistory') as UsageHistorySample[];
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({ fiveHourPercent: 42, sevenDayPercent: 61 });
+  });
+
+  it('records the reset times alongside the percentages', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).endsWith('/organizations')
+          ? jsonResponse([{ uuid: 'chat-org', capabilities: ['chat'] }])
+          : jsonResponse(USAGE_PAYLOAD),
+      ),
+    );
+    await loadServiceWorker();
+
+    chromeFake.triggerAlarm('refreshUsage');
+    await vi.waitFor(() => expect(chromeFake.storage.has('usageHistory')).toBe(true));
+
+    const history = chromeFake.storage.get('usageHistory') as UsageHistorySample[];
+    expect(history[0]).toMatchObject({
+      fiveHourResetsAt: '2026-08-07T18:00:00Z',
+      sevenDayResetsAt: '2026-08-11T09:00:00Z',
+      // Not present in this payload, so recorded as absent rather than omitted.
+      sevenDayOpusPercent: null,
+      sevenDayOpusResetsAt: null,
+    });
+  });
+
+  /**
+   * The reason the reset times are recorded at all: a fixed window's reset holds
+   * steady and then jumps, while a rolling one creeps forward. One sample cannot
+   * tell them apart; a sequence can.
+   */
+  it('accumulates a sequence of reset times that can distinguish a window jump', async () => {
+    const resetTimes = ['2026-08-07T18:00:00Z', '2026-08-07T18:00:00Z', '2026-08-07T23:00:00Z'];
+    let refreshCount = 0;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith('/organizations')) {
+          return jsonResponse([{ uuid: 'chat-org', capabilities: ['chat'] }]);
+        }
+        const resetsAt = resetTimes[Math.min(refreshCount++, resetTimes.length - 1)];
+        return jsonResponse({ five_hour: { utilization: 30, resets_at: resetsAt } });
+      }),
+    );
+    await loadServiceWorker();
+
+    for (let refresh = 0; refresh < resetTimes.length; refresh += 1) {
+      await chromeFake.sendMessage({ type: 'REFRESH_USAGE' });
+    }
+
+    const history = chromeFake.storage.get('usageHistory') as UsageHistorySample[];
+    expect(history.map((sample) => sample.fiveHourResetsAt)).toEqual(resetTimes);
   });
 
   it('ignores alarms that are not ours', async () => {

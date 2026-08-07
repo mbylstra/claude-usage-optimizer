@@ -112,11 +112,17 @@ permission set is deliberately tiny: `storage`, `alarms`, and host access to
 
 ### Usage history
 
-Every successful refresh appends a `{ fetchedAt, fiveHourPercent,
-sevenDayPercent, sevenDayOpusPercent }` sample to a capped ring buffer in
-`chrome.storage.local`. Nothing reads it yet. It exists so that an
-activity-weighted pace model — one that knows 3am Sunday is not 10am Tuesday —
-has a real dataset to be built against later, instead of starting from zero.
+Every successful refresh appends a sample — the utilisation percentages, the
+reset times as reported at that moment, and `fetchedAt` — to a capped ring buffer
+in `chrome.storage.local`. Nothing reads it yet. It serves two future purposes:
+
+1. An activity-weighted pace model — one that knows 3am Sunday is not 10am
+   Tuesday — needs a real dataset rather than starting from zero.
+2. The recorded reset times settle whether each window is **fixed or rolling**,
+   which no single API response can tell you. A fixed window's reset holds steady
+   and then jumps forward by the window duration as utilisation drops to ~0; a
+   rolling one creeps forward continuously with utilisation decaying gradually.
+   Weekly pace is only meaningful in the fixed case — see the assumption above.
 
 ## Privacy
 
