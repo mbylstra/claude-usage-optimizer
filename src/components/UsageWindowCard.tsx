@@ -6,6 +6,7 @@ import {
   USAGE_WINDOW_LABELS,
   type DerivedWindowStatus,
 } from '@/lib/usageTypes';
+import { buildWindowTickMarks, type WindowTickMark } from '@/lib/windowTickMarks';
 import { PaceIndicator } from './PaceIndicator';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { cn } from './ui/utils';
@@ -32,10 +33,12 @@ function UsageBar({
   percentUsed,
   pacePercent,
   tone,
+  tickMarks,
 }: {
   percentUsed: number;
   pacePercent: number;
   tone: PaceTone;
+  tickMarks: WindowTickMark[];
 }) {
   return (
     <div
@@ -50,6 +53,18 @@ function UsageBar({
         className={cn('h-full rounded-full transition-[width]', BAR_FILL_CLASSES[tone])}
         style={{ width: `${percentUsed}%` }}
       />
+      {/* Hour or day boundaries, so the bar reads as a scale and the even-burn
+          line below can be placed against it. Half-height and faint, so they
+          stay clearly subordinate to that line. */}
+      {tickMarks.map((tickMark) => (
+        <div
+          key={tickMark.label}
+          className="bg-foreground/25 absolute bottom-0 h-1 w-px"
+          style={{ left: `${tickMark.positionPercent}%` }}
+          title={`${tickMark.label} into the window`}
+          aria-hidden="true"
+        />
+      ))}
       {/* The even-burn line: where you would be if you spent this window evenly. */}
       <div
         className="bg-foreground/45 absolute inset-y-0 w-0.5"
@@ -115,7 +130,12 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
           <PaceIndicator tone={tone} paceDeltaMs={status.paceDeltaMs} />
         </div>
 
-        <UsageBar percentUsed={status.percentUsed} pacePercent={status.pacePercent} tone={tone} />
+        <UsageBar
+          percentUsed={status.percentUsed}
+          pacePercent={status.pacePercent}
+          tone={tone}
+          tickMarks={buildWindowTickMarks(status)}
+        />
 
         <div className="grid grid-cols-3 gap-2">
           <DetailRow label="Started" value={formatClockTimeWithDay(status.windowStartedAt, now)} />
