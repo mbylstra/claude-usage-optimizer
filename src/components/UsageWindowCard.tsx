@@ -59,8 +59,13 @@ function UsageBar({
       {tickMarks.map((tickMark) => (
         <div
           key={tickMark.label}
-          className="bg-foreground/25 absolute bottom-0 h-1 w-px"
-          style={{ left: `${tickMark.positionPercent}%` }}
+          className="absolute bottom-0 h-1 w-px"
+          style={{
+            left: `${tickMark.positionPercent}%`,
+            backgroundColor: 'white',
+            mixBlendMode: 'screen',
+            opacity: 0.6,
+          }}
           title={`${tickMark.label} into the window`}
           aria-hidden="true"
         />
