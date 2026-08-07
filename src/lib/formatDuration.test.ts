@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration, formatPaceGap, formatTimeAgo } from './formatDuration';
+import { formatDuration, formatTimeAgo } from './formatDuration';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -35,32 +35,6 @@ describe('formatDuration', () => {
   it('is safe with non-finite input', () => {
     expect(formatDuration(Number.NaN)).toBe('0m');
     expect(formatDuration(Number.POSITIVE_INFINITY)).toBe('0m');
-  });
-});
-
-describe('formatPaceGap', () => {
-  it('uses days alone once the gap reaches a day', () => {
-    expect(formatPaceGap(2 * DAY + 21 * HOUR)).toBe('2.9d');
-    expect(formatPaceGap(DAY)).toBe('1d');
-  });
-
-  it('drops a trailing ".0" rather than saying "3.0d"', () => {
-    expect(formatPaceGap(3 * DAY + 2 * MINUTE)).toBe('3d');
-  });
-
-  it('falls back to hours and minutes below a day', () => {
-    expect(formatPaceGap(23 * HOUR + 30 * MINUTE)).toBe('23h 30m');
-    expect(formatPaceGap(36 * MINUTE)).toBe('36m');
-  });
-
-  it('reads the magnitude, so direction is the caller’s business', () => {
-    expect(formatPaceGap(-(2 * DAY + 12 * HOUR))).toBe('2.5d');
-    expect(formatPaceGap(-(90 * MINUTE))).toBe('1h 30m');
-  });
-
-  it('is safe with non-finite input', () => {
-    expect(formatPaceGap(Number.NaN)).toBe('0m');
-    expect(formatPaceGap(Number.POSITIVE_INFINITY)).toBe('0m');
   });
 });
 

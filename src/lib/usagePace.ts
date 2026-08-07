@@ -1,27 +1,40 @@
 import {
+  PACE_SEVERITY_THRESHOLDS_MS,
   USAGE_WINDOW_DURATIONS_MS,
   type ActiveWindowStatus,
   type DerivedWindowStatus,
+  type PaceSeverity,
   type PaceStatus,
   type UsageSnapshot,
+  type UsageWindowKind,
   type UsageWindowSnapshot,
 } from './usageTypes';
-
-/**
- * How far `percentUsed` may drift from the even-burn line before we call it
- * ahead or behind. Below this the difference is noise, not a signal.
- */
-export const PACE_TOLERANCE_PERCENTAGE_POINTS = 5;
 
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, value));
 }
 
-function classifyPace(paceDeltaPercentagePoints: number): PaceStatus {
-  if (paceDeltaPercentagePoints > PACE_TOLERANCE_PERCENTAGE_POINTS) return 'ahead';
-  if (paceDeltaPercentagePoints < -PACE_TOLERANCE_PERCENTAGE_POINTS) return 'behind';
-  return 'onTrack';
+/**
+ * Bands the gap by how much time it is worth in *this* window. The same
+ * percentage gap means very different things across five hours and seven days,
+ * so the thresholds are per window kind and the comparison is done in
+ * milliseconds — see `PACE_SEVERITY_THRESHOLDS_MS`.
+ */
+function classifyPaceSeverity(kind: UsageWindowKind, paceDeltaMs: number): PaceSeverity {
+  const thresholds = PACE_SEVERITY_THRESHOLDS_MS[kind];
+  const gapMs = Math.abs(paceDeltaMs);
+
+  if (gapMs >= thresholds.severe) return 'severe';
+  if (gapMs >= thresholds.moderate) return 'moderate';
+  if (gapMs >= thresholds.slight) return 'slight';
+  return 'none';
+}
+
+/** Direction, but only once the gap is big enough to have one worth naming. */
+function classifyPace(paceSeverity: PaceSeverity, paceDeltaMs: number): PaceStatus {
+  if (paceSeverity === 'none') return 'onTrack';
+  return paceDeltaMs > 0 ? 'ahead' : 'behind';
 }
 
 function parseTimestamp(value: string | null): Date | null {
@@ -63,6 +76,11 @@ export function deriveWindowStatus(snapshot: UsageWindowSnapshot, now: Date): De
 
   const remainingMs = windowResetsAt.getTime() - now.getTime();
 
+  // A percentage point of this window is worth this much wall-clock time, so
+  // the gap converts straight into "you are 36m ahead of an even burn".
+  const paceDeltaMs = (paceDeltaPercentagePoints / 100) * effectiveDurationMs;
+  const paceSeverity = classifyPaceSeverity(snapshot.kind, paceDeltaMs);
+
   const status: ActiveWindowStatus = {
     kind: snapshot.kind,
     isActive: true,
@@ -73,10 +91,9 @@ export function deriveWindowStatus(snapshot: UsageWindowSnapshot, now: Date): De
     percentUsed,
     pacePercent,
     paceDeltaPercentagePoints,
-    // A percentage point of this window is worth this much wall-clock time, so
-    // the gap converts straight into "you are 36m ahead of an even burn".
-    paceDeltaMs: (paceDeltaPercentagePoints / 100) * effectiveDurationMs,
-    paceStatus: classifyPace(paceDeltaPercentagePoints),
+    paceDeltaMs,
+    paceStatus: classifyPace(paceSeverity, paceDeltaMs),
+    paceSeverity,
   };
   return status;
 }

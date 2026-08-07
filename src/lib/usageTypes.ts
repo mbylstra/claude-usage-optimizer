@@ -11,7 +11,8 @@ export const USAGE_WINDOW_KINDS: readonly UsageWindowKind[] = [
   'sevenDayOpus',
 ];
 
-const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
+const MILLISECONDS_PER_MINUTE = 60 * 1000;
+const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
 
 /**
@@ -59,6 +60,43 @@ export interface UsageSnapshot {
 
 export type PaceStatus = 'ahead' | 'behind' | 'onTrack';
 
+/** How loudly a pace gap deserves to be flagged. `none` is the neutral case. */
+export type PaceSeverity = 'none' | 'slight' | 'moderate' | 'severe';
+
+export interface PaceSeverityThresholdsMs {
+  slight: number;
+  moderate: number;
+  severe: number;
+}
+
+const FIVE_HOUR_PACE_SEVERITY_THRESHOLDS_MS: PaceSeverityThresholdsMs = {
+  slight: 15 * MILLISECONDS_PER_MINUTE,
+  moderate: 30 * MILLISECONDS_PER_MINUTE,
+  severe: 60 * MILLISECONDS_PER_MINUTE,
+};
+
+const WEEKLY_PACE_SEVERITY_THRESHOLDS_MS: PaceSeverityThresholdsMs = {
+  slight: 12 * MILLISECONDS_PER_HOUR,
+  moderate: 24 * MILLISECONDS_PER_HOUR,
+  severe: 48 * MILLISECONDS_PER_HOUR,
+};
+
+/**
+ * How far off an even burn you have to be before the gap is worth flagging, and
+ * how hard.
+ *
+ * These are wall-clock spans rather than percentage points because that is the
+ * only way the two window lengths can be judged on the same scale: a quarter of
+ * an hour is a real dent in a five-hour session and nothing at all across a
+ * week. An hour ahead in a five-hour window, or two days ahead in a week, is the
+ * point at which you are genuinely going to run out early.
+ */
+export const PACE_SEVERITY_THRESHOLDS_MS: Record<UsageWindowKind, PaceSeverityThresholdsMs> = {
+  fiveHour: FIVE_HOUR_PACE_SEVERITY_THRESHOLDS_MS,
+  sevenDay: WEEKLY_PACE_SEVERITY_THRESHOLDS_MS,
+  sevenDayOpus: WEEKLY_PACE_SEVERITY_THRESHOLDS_MS,
+};
+
 export interface ActiveWindowStatus {
   kind: UsageWindowKind;
   isActive: true;
@@ -81,6 +119,12 @@ export interface ActiveWindowStatus {
    */
   paceDeltaMs: number;
   paceStatus: PaceStatus;
+  /**
+   * How big `paceDeltaMs` is against this window's thresholds. `none` exactly
+   * when `paceStatus` is `onTrack` — both come out of the same classification,
+   * so they cannot disagree.
+   */
+  paceSeverity: PaceSeverity;
 }
 
 export interface InactiveWindowStatus {

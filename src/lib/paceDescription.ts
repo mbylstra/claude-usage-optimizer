@@ -1,4 +1,4 @@
-import { formatPaceGap } from './formatDuration';
+import { formatDuration } from './formatDuration';
 
 /**
  * The sentence the user actually acts on. Kept out of the component so it can be
@@ -33,6 +33,6 @@ export function paceDescription(paceDeltaMs: number): string {
   const direction = paceDirection(paceDeltaMs);
   if (direction === 'even') return 'On pace';
 
-  const gap = formatPaceGap(paceDeltaMs);
+  const gap = formatDuration(Math.abs(paceDeltaMs));
   return direction === 'ahead' ? `${gap} ahead of pace` : `${gap} behind pace`;
 }
