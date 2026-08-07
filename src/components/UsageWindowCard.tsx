@@ -107,10 +107,7 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
             {Math.round(status.percentUsed)}
             <span className="text-muted-foreground ml-0.5 text-sm font-normal">% used</span>
           </span>
-          <PaceIndicator
-            paceStatus={status.paceStatus}
-            paceDeltaPercentagePoints={status.paceDeltaPercentagePoints}
-          />
+          <PaceIndicator paceStatus={status.paceStatus} paceDeltaMs={status.paceDeltaMs} />
         </div>
 
         <UsageBar

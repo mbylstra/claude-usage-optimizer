@@ -133,9 +133,22 @@ code was written to survive either answer:
 oov renders expected-usage as a second ring/bar and leaves the comparison to your
 eyes. We show a **scalar** as well, because that is the number you actually act on:
 
-- `paceDelta > +5` → "**12 points ahead of pace**" (amber/red — you will run out early)
-- `paceDelta < -5` → "**8 points behind pace**" (blue — you have headroom)
-- otherwise → "**On pace**" (neutral)
+- `paceDelta > +5` → amber/red — you will run out early
+- `paceDelta < -5` → blue — you have headroom
+- otherwise → neutral
+
+**Revised 2026-08-07 — the scalar is stated in time, not percentage points.**
+"12 points ahead of pace" required knowing both the window length and what a
+"point" was before it meant anything, and the same 12 points is 36 minutes on the
+5-hour window but a whole day on the weekly one. `ActiveWindowStatus` therefore
+carries `paceDeltaMs = paceDelta / 100 × windowDuration`, and the indicator reads
+"**36m ahead of pace**" / "**1h 5m behind pace**".
+
+The wording and the icon now come from the sign of `paceDeltaMs`, while only the
+colour comes from `paceStatus`. That decouples the two deliberately: a window
+inside the ±5-point tolerance stays neutral but still says "11m ahead of pace"
+rather than collapsing to a bare dash, which was the other half of the
+complaint. "On pace" survives only for gaps under a minute.
 
 ### Colour treatment — identical on both windows
 
@@ -190,7 +203,7 @@ src/
   lib/
     usageBadge.ts             #   deriveBadgeState(snapshot, now) — badge is pure too
     usagePopupData.ts         #   buildUsagePopupData(cacheEntry, now) -> UsagePopupData
-    paceDescription.ts        #   "12 points ahead of pace" — the copy, unit-tested
+    paceDescription.ts        #   "36m ahead of pace" — the copy, unit-tested
   extension/
     messages.ts               #   popup -> worker refresh message
   components/

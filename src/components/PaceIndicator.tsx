@@ -1,27 +1,29 @@
 import { Minus, TrendingDown, TrendingUp } from 'lucide-react';
-import { paceDescription } from '@/lib/paceDescription';
+import { paceDescription, paceDirection, type PaceDirection } from '@/lib/paceDescription';
 import type { PaceStatus } from '@/lib/usageTypes';
 import { cn } from './ui/utils';
 
 /**
  * The scalar the whole extension exists to show: how far ahead of, or behind,
- * an even burn you are.
+ * an even burn you are, in minutes and hours rather than percentage points.
  *
- * Renders purely from `paceStatus` — the colour treatment is identical on every
- * window, so there is no per-window behaviour flag to reason about.
+ * Colour comes from `paceStatus`, so it is identical on every window and there
+ * is no per-window behaviour flag to reason about. The wording and the icon come
+ * from the signed gap, which means a card inside the tolerance still names its
+ * gap while staying neutral.
  */
 
 export interface PaceIndicatorProps {
   paceStatus: PaceStatus;
-  paceDeltaPercentagePoints: number;
+  paceDeltaMs: number;
   className?: string;
 }
 
-const PACE_ICONS = {
+const PACE_ICONS: Record<PaceDirection, typeof Minus> = {
   ahead: TrendingUp,
   behind: TrendingDown,
-  onTrack: Minus,
-} as const;
+  even: Minus,
+};
 
 const PACE_CLASSES: Record<PaceStatus, string> = {
   ahead: 'bg-pace-ahead-surface text-pace-ahead',
@@ -29,12 +31,8 @@ const PACE_CLASSES: Record<PaceStatus, string> = {
   onTrack: 'bg-pace-on-track-surface text-pace-on-track',
 };
 
-export function PaceIndicator({
-  paceStatus,
-  paceDeltaPercentagePoints,
-  className,
-}: PaceIndicatorProps) {
-  const Icon = PACE_ICONS[paceStatus];
+export function PaceIndicator({ paceStatus, paceDeltaMs, className }: PaceIndicatorProps) {
+  const Icon = PACE_ICONS[paceDirection(paceDeltaMs)];
 
   return (
     <span
@@ -45,7 +43,7 @@ export function PaceIndicator({
       )}
     >
       <Icon className="size-3.5" aria-hidden="true" />
-      {paceDescription(paceStatus, paceDeltaPercentagePoints)}
+      {paceDescription(paceDeltaMs)}
     </span>
   );
 }

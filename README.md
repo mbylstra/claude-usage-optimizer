@@ -15,9 +15,16 @@ For the 5-hour session window, the weekly window, and the weekly Opus window:
 
 - percent used, and when the window started and resets
 - how long is left
-- **pace**: `percent used − percent of the window elapsed`, rendered as
-  "12 points ahead of pace" (amber), "8 points behind pace" (blue), or
-  "On pace" (neutral)
+- **pace**: how far your usage is ahead of, or behind, an even burn — expressed
+  as _time_, because that is the unit you can act on: "36m ahead of pace"
+  (amber), "1h 5m behind pace" (blue), or "On pace" (neutral)
+
+  The gap is measured along the window: being 36m ahead means you have already
+  spent what an even burn would not reach until 36 minutes from now. The same
+  percentage gap is worth minutes on the 5-hour window and days on the weekly
+  one, which is why the raw percentage-point difference was never the number to
+  show. Colour follows a ±5 percentage-point tolerance; inside it the pill goes
+  neutral but still names the gap.
 
 Each bar carries a vertical line marking the even-burn point, so the number and
 the picture say the same thing.

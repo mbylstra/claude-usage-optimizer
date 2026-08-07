@@ -61,7 +61,27 @@ describe('deriveWindowStatus', () => {
 
     expect(status.pacePercent).toBe(50);
     expect(status.paceDeltaPercentagePoints).toBe(0);
+    expect(status.paceDeltaMs).toBe(0);
     expect(status.paceStatus).toBe('onTrack');
+  });
+
+  it('scales the pace gap in time to the length of the window', () => {
+    // The same 20-point gap, on a seven-day window, is a day and a half — which
+    // is exactly why the indicator quotes time rather than points.
+    const status = expectActive(
+      deriveWindowStatus(
+        {
+          kind: 'sevenDay',
+          utilizationPercent: 70,
+          resetsAt: '2026-08-11T09:00:00.000Z',
+          startedAt: '2026-08-04T09:00:00.000Z',
+        },
+        new Date('2026-08-07T21:00:00.000Z'),
+      ),
+    );
+
+    expect(status.pacePercent).toBe(50);
+    expect(status.paceDeltaMs).toBe(0.2 * SEVEN_DAYS_MS);
   });
 
   it('reports time remaining until the reset', () => {
@@ -83,6 +103,8 @@ describe('deriveWindowStatus', () => {
       );
 
       expect(status.paceDeltaPercentagePoints).toBe(20);
+      // 20 points of a five-hour window is an hour of burn brought forward.
+      expect(status.paceDeltaMs).toBe(60 * 60 * 1000);
       expect(status.paceStatus).toBe('ahead');
     });
 
@@ -95,6 +117,7 @@ describe('deriveWindowStatus', () => {
       );
 
       expect(status.paceDeltaPercentagePoints).toBe(-20);
+      expect(status.paceDeltaMs).toBe(-60 * 60 * 1000);
       expect(status.paceStatus).toBe('behind');
     });
 

@@ -73,6 +73,9 @@ export function deriveWindowStatus(snapshot: UsageWindowSnapshot, now: Date): De
     percentUsed,
     pacePercent,
     paceDeltaPercentagePoints,
+    // A percentage point of this window is worth this much wall-clock time, so
+    // the gap converts straight into "you are 36m ahead of an even burn".
+    paceDeltaMs: (paceDeltaPercentagePoints / 100) * effectiveDurationMs,
     paceStatus: classifyPace(paceDeltaPercentagePoints),
   };
   return status;

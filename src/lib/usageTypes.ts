@@ -73,6 +73,13 @@ export interface ActiveWindowStatus {
   pacePercent: number;
   /** percentUsed - pacePercent. Positive means burning faster than even. */
   paceDeltaPercentagePoints: number;
+  /**
+   * The same gap expressed as time, which is the form people can act on:
+   * how far along the window an even burn would have to travel to reach the
+   * usage you have already spent. Positive means ahead of the even burn — you
+   * are where you would otherwise be this much later in the window.
+   */
+  paceDeltaMs: number;
   paceStatus: PaceStatus;
 }
 
