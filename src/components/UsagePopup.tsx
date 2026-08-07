@@ -1,5 +1,6 @@
 import { AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
 import { formatTimeAgo } from '@/lib/formatDuration';
+import { SUGGESTED_MODEL_LABELS, type SuggestedModel } from '@/lib/suggestedModel';
 import type { UsagePopupData } from '@/lib/usagePopupData';
 import type { UsageErrorInfo } from '@/lib/usageTypes';
 import { UsageWindowCard } from './UsageWindowCard';
@@ -28,6 +29,18 @@ function PopupFrame({ children }: { children: React.ReactNode }) {
     <div className="bg-background text-foreground flex w-[22rem] flex-col gap-3 p-3.5">
       {children}
     </div>
+  );
+}
+
+function SuggestedModelRow({ model }: { model: SuggestedModel }) {
+  return (
+    <p
+      className="text-muted-foreground text-xs"
+      title="Suggested model, based on how your usage windows are pacing"
+    >
+      Suggested model:{' '}
+      <span className="text-foreground font-semibold">{SUGGESTED_MODEL_LABELS[model]}</span>
+    </p>
   );
 }
 
@@ -99,20 +112,6 @@ function OpenClaudeButton({ onOpenClaude }: { onOpenClaude: () => void }) {
   );
 }
 
-/**
- * A miniature of one of the bar markers, for the footer key. The "you" marker
- * takes its colour from the window's pace, so its key is the whole ramp rather
- * than any one hue — which is itself the thing worth knowing about it.
- */
-function BarMarkerKey({ className }: { className: string }) {
-  return (
-    <span
-      className={cn('inline-block h-3 w-[3px] shrink-0 rounded-full', className)}
-      aria-hidden="true"
-    />
-  );
-}
-
 function LoadingState() {
   return (
     <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading usage">
@@ -181,13 +180,9 @@ export function UsagePopup({ data, now, isRefreshing, onRefresh, onOpenClaude }:
         ))}
       </div>
 
-      <footer className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
-          <BarMarkerKey className="bg-foreground" />
-          even burn
-          <BarMarkerKey className="from-pace-headroom via-pace-steady to-pace-ahead-severe bg-linear-to-b" />
-          you
-        </span>
+      {data.suggestedModel != null && <SuggestedModelRow model={data.suggestedModel} />}
+
+      <footer className="flex items-center justify-end gap-2">
         <a
           href={CLAUDE_URL}
           onClick={(event) => {

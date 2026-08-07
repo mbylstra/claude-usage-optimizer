@@ -1,4 +1,5 @@
 import { deriveUsageStatuses } from './usagePace';
+import { deriveSuggestedModel, type SuggestedModel } from './suggestedModel';
 import type { DerivedWindowStatus, UsageCacheEntry, UsageErrorInfo } from './usageTypes';
 
 /**
@@ -27,6 +28,8 @@ export interface UsagePopupReady {
   isStale: boolean;
   /** Set when the latest refresh failed but older numbers are still on screen. */
   refreshError: UsageErrorInfo | null;
+  /** Null only if the snapshot is missing a window the suggestion depends on. */
+  suggestedModel: SuggestedModel | null;
 }
 
 export type UsagePopupData = UsagePopupLoading | UsagePopupError | UsagePopupReady;
@@ -45,12 +48,14 @@ export function buildUsagePopupData(entry: UsageCacheEntry | null, now: Date): U
   }
 
   const fetchedAt = parseTimestamp(entry.fetchedAt) ?? now;
+  const windows = deriveUsageStatuses(entry.snapshot, now);
 
   return {
     state: 'ready',
-    windows: deriveUsageStatuses(entry.snapshot, now),
+    windows,
     fetchedAt,
     isStale: now.getTime() - fetchedAt.getTime() > USAGE_STALE_AFTER_MS,
     refreshError: entry.error,
+    suggestedModel: deriveSuggestedModel(windows),
   };
 }
