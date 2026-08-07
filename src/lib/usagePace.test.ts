@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import {
-  deriveUsageStatuses,
-  deriveWindowStatus,
-  highestUtilizationPercent,
-  PACE_TOLERANCE_PERCENTAGE_POINTS,
-} from './usagePace';
+import { deriveUsageStatuses, deriveWindowStatus, highestUtilizationPercent } from './usagePace';
 import type { ActiveWindowStatus, UsageWindowSnapshot } from './usageTypes';
 
-const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const FIVE_HOURS_MS = 5 * HOUR;
+const SEVEN_DAYS_MS = 7 * 24 * HOUR;
 
 /** A five-hour window resetting at 18:00, i.e. one that started at 13:00. */
 function fiveHourSnapshot(overrides: Partial<UsageWindowSnapshot> = {}): UsageWindowSnapshot {
@@ -94,64 +91,83 @@ describe('deriveWindowStatus', () => {
   });
 
   describe('pace classification', () => {
-    it('is "ahead" when usage outruns elapsed time by more than the tolerance', () => {
-      const status = expectActive(
-        deriveWindowStatus(
-          fiveHourSnapshot({ utilizationPercent: 70 }),
-          new Date('2026-08-07T15:30:00.000Z'),
-        ),
-      );
+    // Half way through the five-hour window, so an even burn is 50% and one
+    // percentage point of drift is three minutes.
+    const halfWay = new Date('2026-08-07T15:30:00.000Z');
+
+    function fiveHourPaceAt(utilizationPercent: number) {
+      return expectActive(deriveWindowStatus(fiveHourSnapshot({ utilizationPercent }), halfWay));
+    }
+
+    it('is "ahead" when usage outruns elapsed time by more than the threshold', () => {
+      const status = fiveHourPaceAt(70);
 
       expect(status.paceDeltaPercentagePoints).toBe(20);
       // 20 points of a five-hour window is an hour of burn brought forward.
-      expect(status.paceDeltaMs).toBe(60 * 60 * 1000);
+      expect(status.paceDeltaMs).toBe(60 * MINUTE);
       expect(status.paceStatus).toBe('ahead');
     });
 
-    it('is "behind" when usage trails elapsed time by more than the tolerance', () => {
-      const status = expectActive(
-        deriveWindowStatus(
-          fiveHourSnapshot({ utilizationPercent: 30 }),
-          new Date('2026-08-07T15:30:00.000Z'),
-        ),
-      );
+    it('is "behind" when usage trails elapsed time by more than the threshold', () => {
+      const status = fiveHourPaceAt(30);
 
       expect(status.paceDeltaPercentagePoints).toBe(-20);
-      expect(status.paceDeltaMs).toBe(-60 * 60 * 1000);
+      expect(status.paceDeltaMs).toBe(-60 * MINUTE);
       expect(status.paceStatus).toBe('behind');
     });
 
-    it('stays "onTrack" exactly at the tolerance boundary in both directions', () => {
-      const halfWay = new Date('2026-08-07T15:30:00.000Z');
-
-      const atUpperBound = expectActive(
-        deriveWindowStatus(
-          fiveHourSnapshot({ utilizationPercent: 50 + PACE_TOLERANCE_PERCENTAGE_POINTS }),
-          halfWay,
-        ),
-      );
-      const atLowerBound = expectActive(
-        deriveWindowStatus(
-          fiveHourSnapshot({ utilizationPercent: 50 - PACE_TOLERANCE_PERCENTAGE_POINTS }),
-          halfWay,
-        ),
-      );
-
-      expect(atUpperBound.paceStatus).toBe('onTrack');
-      expect(atLowerBound.paceStatus).toBe('onTrack');
+    it('grades a five-hour gap at 15m, 30m and 60m', () => {
+      expect(fiveHourPaceAt(54.9).paceSeverity).toBe('none'); // 14m 42s
+      expect(fiveHourPaceAt(55).paceSeverity).toBe('slight'); // exactly 15m
+      expect(fiveHourPaceAt(59.9).paceSeverity).toBe('slight');
+      expect(fiveHourPaceAt(60).paceSeverity).toBe('moderate'); // exactly 30m
+      expect(fiveHourPaceAt(69.9).paceSeverity).toBe('moderate');
+      expect(fiveHourPaceAt(70).paceSeverity).toBe('severe'); // exactly 60m
     });
 
-    it('tips over to ahead/behind just past the tolerance boundary', () => {
-      const halfWay = new Date('2026-08-07T15:30:00.000Z');
+    it('grades a weekly gap at 12h, 1d and 2d — not at the five-hour marks', () => {
+      // Half way through the week, so an even burn is 50% and a point is 1h 41m.
+      const midWeek = new Date('2026-08-07T21:00:00.000Z');
+      function weeklyPaceAt(utilizationPercent: number) {
+        return expectActive(
+          deriveWindowStatus(
+            {
+              kind: 'sevenDay',
+              utilizationPercent,
+              resetsAt: '2026-08-11T09:00:00.000Z',
+              startedAt: '2026-08-04T09:00:00.000Z',
+            },
+            midWeek,
+          ),
+        );
+      }
 
-      expect(
-        expectActive(deriveWindowStatus(fiveHourSnapshot({ utilizationPercent: 55.1 }), halfWay))
-          .paceStatus,
-      ).toBe('ahead');
-      expect(
-        expectActive(deriveWindowStatus(fiveHourSnapshot({ utilizationPercent: 44.9 }), halfWay))
-          .paceStatus,
-      ).toBe('behind');
+      // An hour ahead is the top of the five-hour scale and nothing here.
+      const anHourAhead = weeklyPaceAt(50.6);
+      expect(Math.round(anHourAhead.paceDeltaMs / MINUTE)).toBe(60);
+      expect(anHourAhead.paceSeverity).toBe('none');
+
+      expect(weeklyPaceAt(57).paceSeverity).toBe('none'); // 11h 46m — still under 12h
+      expect(weeklyPaceAt(58).paceSeverity).toBe('slight'); // 13h 26m
+      expect(weeklyPaceAt(65).paceSeverity).toBe('moderate'); // 1d 1h
+      expect(weeklyPaceAt(80).paceSeverity).toBe('severe'); // 2d 2h
+    });
+
+    it('stays "onTrack" — and neutral — just inside the smallest threshold', () => {
+      expect(fiveHourPaceAt(54.9).paceStatus).toBe('onTrack');
+      expect(fiveHourPaceAt(45.1).paceStatus).toBe('onTrack');
+    });
+
+    it('grades being behind by the same thresholds', () => {
+      expect(fiveHourPaceAt(45).paceSeverity).toBe('slight');
+      expect(fiveHourPaceAt(30).paceSeverity).toBe('severe');
+    });
+
+    it('reports "none" severity exactly when the status is "onTrack"', () => {
+      for (const utilizationPercent of [0, 30, 44.9, 45, 50, 55, 54.9, 70, 100]) {
+        const status = fiveHourPaceAt(utilizationPercent);
+        expect(status.paceSeverity === 'none').toBe(status.paceStatus === 'onTrack');
+      }
     });
   });
 

@@ -1,10 +1,10 @@
 import { formatClockTimeWithDay } from '@/lib/formatClockTime';
 import { formatDuration } from '@/lib/formatDuration';
+import { paceTone, type PaceTone } from '@/lib/paceTone';
 import {
   USAGE_WINDOW_DURATION_LABELS,
   USAGE_WINDOW_LABELS,
   type DerivedWindowStatus,
-  type PaceStatus,
 } from '@/lib/usageTypes';
 import { PaceIndicator } from './PaceIndicator';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -20,20 +20,22 @@ export interface UsageWindowCardProps {
   now: Date;
 }
 
-const BAR_FILL_CLASSES: Record<PaceStatus, string> = {
-  ahead: 'bg-pace-ahead',
+const BAR_FILL_CLASSES: Record<PaceTone, string> = {
+  onPace: 'bg-pace-on-track',
+  aheadSlight: 'bg-pace-ahead-slight',
+  aheadModerate: 'bg-pace-ahead-moderate',
+  aheadSevere: 'bg-pace-ahead-severe',
   behind: 'bg-pace-behind',
-  onTrack: 'bg-pace-on-track',
 };
 
 function UsageBar({
   percentUsed,
   pacePercent,
-  paceStatus,
+  tone,
 }: {
   percentUsed: number;
   pacePercent: number;
-  paceStatus: PaceStatus;
+  tone: PaceTone;
 }) {
   return (
     <div
@@ -45,7 +47,7 @@ function UsageBar({
       aria-label="Usage"
     >
       <div
-        className={cn('h-full rounded-full transition-[width]', BAR_FILL_CLASSES[paceStatus])}
+        className={cn('h-full rounded-full transition-[width]', BAR_FILL_CLASSES[tone])}
         style={{ width: `${percentUsed}%` }}
       />
       {/* The even-burn line: where you would be if you spent this window evenly. */}
@@ -90,6 +92,9 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
     );
   }
 
+  // Derived once so the pill and the bar cannot end up different colours.
+  const tone = paceTone(status.paceStatus, status.paceSeverity);
+
   return (
     <Card>
       <CardHeader>
@@ -107,14 +112,10 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
             {Math.round(status.percentUsed)}
             <span className="text-muted-foreground ml-0.5 text-sm font-normal">% used</span>
           </span>
-          <PaceIndicator paceStatus={status.paceStatus} paceDeltaMs={status.paceDeltaMs} />
+          <PaceIndicator tone={tone} paceDeltaMs={status.paceDeltaMs} />
         </div>
 
-        <UsageBar
-          percentUsed={status.percentUsed}
-          pacePercent={status.pacePercent}
-          paceStatus={status.paceStatus}
-        />
+        <UsageBar percentUsed={status.percentUsed} pacePercent={status.pacePercent} tone={tone} />
 
         <div className="grid grid-cols-3 gap-2">
           <DetailRow label="Started" value={formatClockTimeWithDay(status.windowStartedAt, now)} />

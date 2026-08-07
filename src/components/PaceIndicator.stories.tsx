@@ -9,7 +9,7 @@ const meta = {
   title: 'Usage/PaceIndicator',
   component: PaceIndicator,
   args: {
-    paceStatus: 'onTrack',
+    tone: 'onPace',
     paceDeltaMs: 0,
   },
 } satisfies Meta<typeof PaceIndicator>;
@@ -17,35 +17,41 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const OnTrack: Story = {};
+export const OnPace: Story = {};
 
-/** 12 points of a five-hour window. */
-export const AheadOfPace: Story = {
-  args: { paceStatus: 'ahead', paceDeltaMs: 36 * MINUTES },
+/**
+ * The three rungs of the ahead ramp, at the five-hour window's thresholds:
+ * 15m is slightly bad, 30m is half bad, an hour is bad.
+ */
+export const SlightlyAhead: Story = {
+  args: { tone: 'aheadSlight', paceDeltaMs: 18 * MINUTES },
+};
+
+export const ModeratelyAhead: Story = {
+  args: { tone: 'aheadModerate', paceDeltaMs: 41 * MINUTES },
+};
+
+export const SeverelyAhead: Story = {
+  args: { tone: 'aheadSevere', paceDeltaMs: 1 * HOURS + 24 * MINUTES },
 };
 
 export const BehindPace: Story = {
-  args: { paceStatus: 'behind', paceDeltaMs: -(1 * HOURS + 5 * MINUTES) },
+  args: { tone: 'behind', paceDeltaMs: -(1 * HOURS + 5 * MINUTES) },
 };
 
 /**
- * Inside the ahead/behind tolerance: neutral colour, but the gap is still real
- * minutes and is still named. This is the case a bare "On pace" used to hide.
+ * Inside the thresholds: neutral colour, but the gap is still real minutes and
+ * is still named. This is the case a bare "On pace" used to hide.
  */
-export const WithinToleranceButNotZero: Story = {
-  args: { paceStatus: 'onTrack', paceDeltaMs: 11 * MINUTES },
+export const WithinThresholdsButNotZero: Story = {
+  args: { tone: 'onPace', paceDeltaMs: 11 * MINUTES },
 };
 
-/** A weekly window, where the same percentage gap is worth days. */
-export const WeeklyGapInDays: Story = {
-  args: { paceStatus: 'ahead', paceDeltaMs: 3 * DAYS + 7 * HOURS },
+/** The same ramp on a weekly window, where the rungs are 12h / 1d / 2d. */
+export const WeeklySeverelyAhead: Story = {
+  args: { tone: 'aheadSevere', paceDeltaMs: 2 * DAYS + 21 * HOURS },
 };
 
-/** Just under the day threshold, where a weekly gap still reads in hours. */
-export const WeeklyGapUnderADay: Story = {
-  args: { paceStatus: 'behind', paceDeltaMs: -(20 * HOURS + 9 * MINUTES) },
-};
-
-export const FarAheadOfPace: Story = {
-  args: { paceStatus: 'ahead', paceDeltaMs: 2 * HOURS + 20 * MINUTES },
+export const WeeklyBehind: Story = {
+  args: { tone: 'behind', paceDeltaMs: -(1 * DAYS + 14 * HOURS) },
 };

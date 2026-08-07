@@ -1,5 +1,6 @@
+import { paceTone, type PaceTone } from './paceTone';
 import { deriveUsageStatuses, highestUtilizationPercent } from './usagePace';
-import type { PaceStatus, UsageSnapshot } from './usageTypes';
+import type { UsageSnapshot } from './usageTypes';
 
 /**
  * The toolbar badge: the highest utilisation across every window, coloured by
@@ -15,28 +16,32 @@ export interface BadgeState {
   title: string;
 }
 
-const BADGE_COLORS: Record<PaceStatus, string> = {
-  ahead: '#B45309',
+/** The same ramp as the popup's pace pill, in the hex the badge API wants. */
+const BADGE_COLORS: Record<PaceTone, string> = {
+  onPace: '#3F3F46',
+  aheadSlight: '#A16207',
+  aheadModerate: '#C2410C',
+  aheadSevere: '#B91C1C',
   behind: '#1D4ED8',
-  onTrack: '#3F3F46',
 };
 
 export const EMPTY_BADGE_STATE: BadgeState = {
   text: '',
-  backgroundColor: BADGE_COLORS.onTrack,
+  backgroundColor: BADGE_COLORS.onPace,
   title: 'Claude Usage Optimizer',
 };
 
 export function deriveBadgeState(snapshot: UsageSnapshot, now: Date): BadgeState {
   const statuses = deriveUsageStatuses(snapshot, now);
   const weekly = statuses.find((status) => status.kind === 'sevenDay');
-  const paceStatus: PaceStatus = weekly?.isActive === true ? weekly.paceStatus : 'onTrack';
+  const tone: PaceTone =
+    weekly?.isActive === true ? paceTone(weekly.paceStatus, weekly.paceSeverity) : 'onPace';
 
   const highestPercent = Math.round(highestUtilizationPercent(snapshot));
 
   return {
     text: `${highestPercent}`,
-    backgroundColor: BADGE_COLORS[paceStatus],
+    backgroundColor: BADGE_COLORS[tone],
     title: `Claude usage: ${highestPercent}% of the closest limit`,
   };
 }

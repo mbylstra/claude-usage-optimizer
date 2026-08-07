@@ -41,9 +41,16 @@ export function windowStatusFixture(
   );
 }
 
-/** Five-hour window at its even-burn point. */
+/**
+ * Five-hour window at its even-burn point, and then each rung of the severity
+ * ramp. A percentage point of this window is three minutes, so the utilisations
+ * below land at 21m / 36m / 1h 24m ahead — one on each side of the 15m, 30m and
+ * 60m thresholds.
+ */
 export const FIVE_HOUR_ON_PACE = windowStatusFixture('fiveHour', 50);
-export const FIVE_HOUR_AHEAD = windowStatusFixture('fiveHour', 78);
+export const FIVE_HOUR_AHEAD_SLIGHT = windowStatusFixture('fiveHour', 57);
+export const FIVE_HOUR_AHEAD_MODERATE = windowStatusFixture('fiveHour', 62);
+export const FIVE_HOUR_AHEAD_SEVERE = windowStatusFixture('fiveHour', 78);
 export const FIVE_HOUR_BEHIND = windowStatusFixture('fiveHour', 22);
 export const FIVE_HOUR_INACTIVE = windowStatusFixture('fiveHour', 0, { resetsAt: null });
 /** Reset time already passed — the snapshot predates a reset. */
@@ -51,8 +58,14 @@ export const FIVE_HOUR_RESETTING = windowStatusFixture('fiveHour', 92, {
   resetsAt: '2026-08-07T15:29:00.000Z',
 });
 
+/**
+ * The weekly ramp. A point here is 1h 41m, so these land at 13h 54m / 1d 6h /
+ * 2d 21h ahead — one on each side of the 12h, 1d and 2d thresholds.
+ */
 export const SEVEN_DAY_ON_PACE = windowStatusFixture('sevenDay', 47);
-export const SEVEN_DAY_AHEAD = windowStatusFixture('sevenDay', 88);
+export const SEVEN_DAY_AHEAD_SLIGHT = windowStatusFixture('sevenDay', 55);
+export const SEVEN_DAY_AHEAD_MODERATE = windowStatusFixture('sevenDay', 65);
+export const SEVEN_DAY_AHEAD_SEVERE = windowStatusFixture('sevenDay', 88);
 export const SEVEN_DAY_BEHIND = windowStatusFixture('sevenDay', 24);
 
 export const SEVEN_DAY_OPUS_BEHIND = windowStatusFixture('sevenDayOpus', 12);

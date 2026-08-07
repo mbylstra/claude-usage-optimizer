@@ -16,14 +16,29 @@ For the 5-hour session window, the weekly window, and the weekly Opus window:
 - percent used, and when the window started and resets
 - how long is left
 - **pace**: how far your usage is ahead of, or behind, an even burn — expressed
-  as _time_, because that is the unit you can act on: "36m ahead of pace"
-  (amber), "1h 5m behind pace" (blue), or "On pace" (neutral)
+  as _time_, because that is the unit you can act on: "36m ahead of pace",
+  "1h 5m behind pace", or "On pace"
 
   The gap is measured along the window: being 36m ahead means you have already
   spent what an even burn would not reach until 36 minutes from now. The same
   percentage gap is worth minutes on the 5-hour window and days on the weekly
   one, which is why the raw percentage-point difference was never the number to
   show.
+
+### How loud the warning gets
+
+Being ahead escalates yellow → orange → red, at the point where the gap is
+actually worth acting on for that window:
+
+|                | slightly bad | half bad    | bad          |
+| -------------- | ------------ | ----------- | ------------ |
+| 5-hour session | 15m ahead    | 30m ahead   | 1h ahead     |
+| Weekly         | 12h ahead    | 1 day ahead | 2 days ahead |
+
+Below the first threshold the pill is neutral — but it still names the gap
+("11m ahead of pace") rather than collapsing to a dash. Being _behind_ has one
+colour at any size: headroom is good news, and grading it would imply a scale
+you cannot act on.
 
 Each bar carries a vertical line marking the even-burn point, so the number and
 the picture say the same thing.

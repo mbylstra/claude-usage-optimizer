@@ -145,10 +145,32 @@ carries `paceDeltaMs = paceDelta / 100 × windowDuration`, and the indicator rea
 "**36m ahead of pace**" / "**1h 5m behind pace**".
 
 The wording and the icon now come from the sign of `paceDeltaMs`, while only the
-colour comes from `paceStatus`. That decouples the two deliberately: a window
-inside the ±5-point tolerance stays neutral but still says "11m ahead of pace"
+colour comes from the classification. That decouples the two deliberately: a
+window inside the thresholds stays neutral but still says "11m ahead of pace"
 rather than collapsing to a bare dash, which was the other half of the
 complaint. "On pace" survives only for gaps under a minute.
+
+**And the ±5-point tolerance is gone with it.** One threshold in percentage
+points cannot serve both windows — 5 points is a quarter of an hour of a session
+and eight hours of a week. `PACE_SEVERITY_THRESHOLDS_MS` replaces it with
+wall-clock spans per window kind, and three rungs rather than one:
+
+| severity   | five-hour | weekly |
+| ---------- | --------- | ------ |
+| `slight`   | 15m       | 12h    |
+| `moderate` | 30m       | 1d     |
+| `severe`   | 1h        | 2d     |
+
+`ActiveWindowStatus` carries `paceSeverity` alongside `paceStatus`; both come out
+of the same classification, so `paceSeverity === 'none'` exactly when
+`paceStatus === 'onTrack'`. `paceTone(status, severity)` in `lib/paceTone.ts`
+collapses the pair into the one colour decision that the pace pill, the usage bar
+and the toolbar badge all read, so those three cannot disagree about how alarming
+a window is.
+
+Only being _ahead_ escalates (yellow → orange → red). Behind is one blue at any
+size — headroom is good news, and three shades of good news would imply a scale
+you cannot act on.
 
 ### Colour treatment — identical on both windows
 
