@@ -1,0 +1,42 @@
+import { deriveUsageStatuses, highestUtilizationPercent } from './usagePace';
+import type { PaceStatus, UsageSnapshot } from './usageTypes';
+
+/**
+ * The toolbar badge: the highest utilisation across every window, coloured by
+ * how the *weekly* window is pacing. The number answers "how much have I used",
+ * the colour answers "should I care", and the weekly window is the one where
+ * being ahead of pace is a real budget breach.
+ */
+
+export interface BadgeState {
+  text: string;
+  backgroundColor: string;
+  /** Screen-reader / tooltip text for the toolbar icon. */
+  title: string;
+}
+
+const BADGE_COLORS: Record<PaceStatus, string> = {
+  ahead: '#B45309',
+  behind: '#1D4ED8',
+  onTrack: '#3F3F46',
+};
+
+export const EMPTY_BADGE_STATE: BadgeState = {
+  text: '',
+  backgroundColor: BADGE_COLORS.onTrack,
+  title: 'Claude Usage Optimizer',
+};
+
+export function deriveBadgeState(snapshot: UsageSnapshot, now: Date): BadgeState {
+  const statuses = deriveUsageStatuses(snapshot, now);
+  const weekly = statuses.find((status) => status.kind === 'sevenDay');
+  const paceStatus: PaceStatus = weekly?.isActive === true ? weekly.paceStatus : 'onTrack';
+
+  const highestPercent = Math.round(highestUtilizationPercent(snapshot));
+
+  return {
+    text: `${highestPercent}`,
+    backgroundColor: BADGE_COLORS[paceStatus],
+    title: `Claude usage: ${highestPercent}% of the closest limit`,
+  };
+}

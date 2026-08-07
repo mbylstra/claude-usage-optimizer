@@ -8,13 +8,13 @@ even-burn rate for each window. No manual configuration of any kind.
 
 ## Requirements (from the brief)
 
-| # | Requirement | How it is met |
-|---|---|---|
-| 1 | No pasting an org ID | Service worker discovers it from `GET /api/organizations` |
-| 2 | Click toolbar icon → panel below the icon bar; click-outside closes | MV3 `action.default_popup` — this is exactly the native popup behaviour, no custom windowing |
-| 3 | 5-hour window: start, finish, time left, % used, pace % | `UsageWindowCard` component |
-| 4 | Weekly window: same fields | Same component, different props |
-| 5 | Refresh every 5 minutes | `chrome.alarms` in the service worker (not a popup timer — see note) |
+| #   | Requirement                                                         | How it is met                                                                                |
+| --- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 1   | No pasting an org ID                                                | Service worker discovers it from `GET /api/organizations`                                    |
+| 2   | Click toolbar icon → panel below the icon bar; click-outside closes | MV3 `action.default_popup` — this is exactly the native popup behaviour, no custom windowing |
+| 3   | 5-hour window: start, finish, time left, % used, pace %             | `UsageWindowCard` component                                                                  |
+| 4   | Weekly window: same fields                                          | Same component, different props                                                              |
+| 5   | Refresh every 5 minutes                                             | `chrome.alarms` in the service worker (not a popup timer — see note)                         |
 
 ---
 
@@ -46,9 +46,9 @@ Response shape (the fields we consume):
 
 ```jsonc
 {
-  "five_hour":       { "utilization": 42, "resets_at": "2026-08-07T18:00:00Z" },
-  "seven_day":       { "utilization": 61, "resets_at": "2026-08-11T09:00:00Z" },
-  "seven_day_opus":  { "utilization": 12, "resets_at": "2026-08-11T09:00:00Z" }
+  "five_hour": { "utilization": 42, "resets_at": "2026-08-07T18:00:00Z" },
+  "seven_day": { "utilization": 61, "resets_at": "2026-08-11T09:00:00Z" },
+  "seven_day_opus": { "utilization": 12, "resets_at": "2026-08-11T09:00:00Z" },
 }
 ```
 
@@ -157,7 +157,7 @@ type UsageWindowKind = 'fiveHour' | 'sevenDay';
 interface UsageWindowSnapshot {
   kind: UsageWindowKind;
   utilizationPercent: number;
-  resetsAt: string;           // ISO 8601
+  resetsAt: string; // ISO 8601
 }
 
 interface DerivedWindowStatus {
@@ -214,16 +214,16 @@ easiest path through Chrome Web Store review.
 
 All requested tools, with the roles they actually play:
 
-| Tool | Role |
-|---|---|
-| pnpm | package manager; `packageManager` field pinned in `package.json` |
-| TypeScript | strict mode (per `CLAUDE.md`), `@types/chrome` for extension APIs |
-| Vite | build, plus `@crxjs/vite-plugin` for MV3 (see risk below) |
-| React + Tailwind + shadcn/ui | popup UI, per `CLAUDE.md` stack |
-| Vitest | unit tests for `src/lib/*`, mocked-fetch tests for `claudeUsageClient` |
-| Storybook | every popup visual state as a story with fixtures |
-| ESLint + Prettier | `eslint-config-prettier` so they don't fight; Prettier owns formatting |
-| just | single entry point for every command |
+| Tool                         | Role                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| pnpm                         | package manager; `packageManager` field pinned in `package.json`       |
+| TypeScript                   | strict mode (per `CLAUDE.md`), `@types/chrome` for extension APIs      |
+| Vite                         | build, plus `@crxjs/vite-plugin` for MV3 (see risk below)              |
+| React + Tailwind + shadcn/ui | popup UI, per `CLAUDE.md` stack                                        |
+| Vitest                       | unit tests for `src/lib/*`, mocked-fetch tests for `claudeUsageClient` |
+| Storybook                    | every popup visual state as a story with fixtures                      |
+| ESLint + Prettier            | `eslint-config-prettier` so they don't fight; Prettier owns formatting |
+| just                         | single entry point for every command                                   |
 
 ### Build-tool risk
 
@@ -257,11 +257,13 @@ just package         # zip dist/ for Web Store upload
 ## 5. Phases
 
 ### Phase 0 — Scaffold
+
 pnpm init, TypeScript strict, Vite + React, Tailwind, shadcn init, ESLint, Prettier,
 Vitest, Storybook, justfile, `.gitignore`. Spike the MV3 build plugin choice.
 **Exit:** `just check` passes on an empty project; a hello-world popup loads unpacked.
 
 ### Phase 1 — Data layer (do this before any UI)
+
 `claudeUsageClient.ts` — org discovery, usage fetch, defensive normalisation,
 stale-org retry, typed error codes (`NOT_LOGGED_IN`, `NO_ORGS`, `HTTP_*`).
 **Verify the window-duration assumption against a real logged-in account here.**
@@ -269,27 +271,32 @@ stale-org retry, typed error codes (`NOT_LOGGED_IN`, `NO_ORGS`, `HTTP_*`).
 window-start derivation is confirmed or the pace model is revised.
 
 ### Phase 2 — Pace engine
+
 `usagePace.ts`, `formatDuration.ts`, `formatClockTime.ts`, all pure, all with `now`
 injected. Vitest covers: mid-window, window boundaries, ahead/behind/on-track
 thresholds, expired window (`resetsAt` in the past), missing `resetsAt`, clamping.
 **Exit:** full unit coverage of the maths, no UI yet.
 
 ### Phase 3 — UI in Storybook
+
 `UsageWindowCard`, `PaceIndicator`, `UsagePopup` built entirely against fixtures.
 Stories for: loading, no-cache-first-run, logged out, on pace, ahead, behind,
 window inactive, stale data. Light and dark.
 **Exit:** every state reviewable in Storybook without loading the extension.
 
 ### Phase 4 — Wire it up
+
 Service worker with `chrome.alarms`, storage cache, `PopupRoot` reading cache then
 refreshing, toolbar badge showing the higher of the two utilisations.
 **Exit:** loads unpacked, shows real data, auto-refreshes on the 5-minute alarm.
 
 ### Phase 5 — Polish
+
 Icons, manual refresh button, "updated Nm ago", error states, README, `just package`.
 
 ### Phase 6 — Update `CLAUDE.md`
-Once the extension is built and working, rewrite `CLAUDE.md` to describe *this*
+
+Once the extension is built and working, rewrite `CLAUDE.md` to describe _this_
 project rather than generic web-frontend guidance. It currently predates the
 codebase, so it says nothing about how the extension is actually laid out. Add:
 
@@ -326,7 +333,7 @@ Keep the existing naming-convention and TypeScript sections — they still apply
 
 The genuinely novel version of this feature, and the reason to keep history from day
 one. Time-proportional pace treats 3am Sunday the same as 10am Tuesday. If the weekly
-window's expected-burn curve were weighted by *your own* historical activity
+window's expected-burn curve were weighted by _your own_ historical activity
 distribution, "ahead of pace" would mean something real for people who don't work
 weekends. No existing extension does this — `tugrulcank-netizen` is the only one
 persisting any history and only uses it for cost estimation.
