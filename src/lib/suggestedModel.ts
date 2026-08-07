@@ -43,6 +43,23 @@ function paceBand(status: DerivedWindowStatus): PaceBand {
 }
 
 /**
+ * Deliberately later than the five-hour window's `aheadSlight` colour
+ * threshold (15 minutes — see `usageTypes.ts`): a model suggestion is a
+ * stronger nudge than a bar turning yellow, so it waits until the gap is
+ * clearly worth acting on rather than firing the moment pace tips ahead.
+ */
+const FIVE_HOUR_CAUTION_THRESHOLD_MS = 30 * 60 * 1000;
+
+function fiveHourPaceBand(status: DerivedWindowStatus): PaceBand {
+  if (!status.isActive) return 'favourable';
+  if (paceTone(status) === 'aheadSevere') return 'severe';
+  if (status.paceStatus === 'ahead' && status.paceDeltaMs >= FIVE_HOUR_CAUTION_THRESHOLD_MS) {
+    return 'caution';
+  }
+  return 'favourable';
+}
+
+/**
  * Opus when both gating windows have room to spare, Haiku the moment either
  * one is burning severely ahead of even pace, Sonnet for everything between.
  *
@@ -54,7 +71,7 @@ export function deriveSuggestedModel(windows: DerivedWindowStatus[]): SuggestedM
   const weeklyStatus = findWindowStatus(windows, 'sevenDay');
   if (fiveHourStatus === undefined || weeklyStatus === undefined) return null;
 
-  const bands = [paceBand(fiveHourStatus), paceBand(weeklyStatus)];
+  const bands = [fiveHourPaceBand(fiveHourStatus), paceBand(weeklyStatus)];
   if (bands.includes('severe')) return 'haiku';
   if (bands.includes('caution')) return 'sonnet';
   return 'opus';
