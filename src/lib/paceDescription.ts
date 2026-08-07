@@ -30,9 +30,30 @@ export function paceDirection(paceDeltaMs: number): PaceDirection {
 }
 
 export function paceDescription(paceDeltaMs: number): string {
-  const direction = paceDirection(paceDeltaMs);
-  if (direction === 'even') return 'On pace';
+  const headline = paceHeadline(paceDeltaMs);
+  return headline.qualifier === null ? headline.value : `${headline.value} ${headline.qualifier}`;
+}
 
-  const gap = formatDuration(Math.abs(paceDeltaMs));
-  return direction === 'ahead' ? `${gap} ahead of pace` : `${gap} behind pace`;
+/**
+ * The same sentence, split where the card sets it in two type sizes.
+ *
+ * The gap itself is the hero — it is the one number the extension exists to
+ * report — so it is separated from the words that qualify it rather than being
+ * one long string the component would have to slice up again.
+ */
+export interface PaceHeadline {
+  /** The span alone: "1h 12m". "On pace" when there is no gap worth naming. */
+  value: string;
+  /** "ahead of pace" / "behind pace", or null when `value` already says it. */
+  qualifier: string | null;
+}
+
+export function paceHeadline(paceDeltaMs: number): PaceHeadline {
+  const direction = paceDirection(paceDeltaMs);
+  if (direction === 'even') return { value: 'On pace', qualifier: null };
+
+  return {
+    value: formatDuration(Math.abs(paceDeltaMs)),
+    qualifier: direction === 'ahead' ? 'ahead of pace' : 'behind pace',
+  };
 }

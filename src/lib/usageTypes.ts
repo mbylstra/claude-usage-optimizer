@@ -97,6 +97,22 @@ export const PACE_SEVERITY_THRESHOLDS_MS: Record<UsageWindowKind, PaceSeverityTh
   sevenDayOpus: WEEKLY_PACE_SEVERITY_THRESHOLDS_MS,
 };
 
+/**
+ * How much headroom counts as *comfortably* under an even burn — the point at
+ * which a window goes green rather than staying the plain blue of "fine".
+ *
+ * One spare unit of the window's own scale: an hour of a five-hour session, a
+ * day of a week. Below that the headroom is real but not yet worth celebrating,
+ * which is why this is its own threshold rather than a rung of
+ * `PACE_SEVERITY_THRESHOLDS_MS` — those bands escalate a warning, and no rung of
+ * them lands on 1h and 1d together.
+ */
+export const COMFORTABLE_HEADROOM_THRESHOLD_MS: Record<UsageWindowKind, number> = {
+  fiveHour: MILLISECONDS_PER_HOUR,
+  sevenDay: MILLISECONDS_PER_DAY,
+  sevenDayOpus: MILLISECONDS_PER_DAY,
+};
+
 export interface ActiveWindowStatus {
   kind: UsageWindowKind;
   isActive: true;

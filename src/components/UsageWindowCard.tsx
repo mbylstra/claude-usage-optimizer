@@ -21,13 +21,48 @@ export interface UsageWindowCardProps {
   now: Date;
 }
 
+/** The fill is the region you have spent; the marker is its precise edge. */
 const BAR_FILL_CLASSES: Record<PaceTone, string> = {
-  onPace: 'bg-pace-on-track',
+  steady: 'bg-pace-steady/30',
+  headroom: 'bg-pace-headroom/30',
+  aheadSlight: 'bg-pace-ahead-slight/30',
+  aheadModerate: 'bg-pace-ahead-moderate/30',
+  aheadSevere: 'bg-pace-ahead-severe/30',
+};
+
+const USAGE_MARKER_CLASSES: Record<PaceTone, string> = {
+  steady: 'bg-pace-steady',
+  headroom: 'bg-pace-headroom',
   aheadSlight: 'bg-pace-ahead-slight',
   aheadModerate: 'bg-pace-ahead-moderate',
   aheadSevere: 'bg-pace-ahead-severe',
-  behind: 'bg-pace-behind',
 };
+
+/**
+ * One of the two lines the card is really about. Taller than the track it
+ * crosses, so it reads as a mark *against* a scale rather than as part of the
+ * bar, and ringed in the card colour so it stays legible wherever it lands.
+ */
+function BarMarker({
+  positionPercent,
+  colorClassName,
+  title,
+}: {
+  positionPercent: number;
+  colorClassName: string;
+  title: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'ring-card absolute inset-y-0 w-[3px] rounded-full ring-[1.5px]',
+        colorClassName,
+      )}
+      style={{ left: `calc(${positionPercent}% - 1.5px)` }}
+      title={title}
+    />
+  );
+}
 
 function UsageBar({
   percentUsed,
@@ -41,40 +76,51 @@ function UsageBar({
   tickMarks: WindowTickMark[];
 }) {
   return (
-    <div
-      className="bg-muted relative h-2 w-full overflow-hidden rounded-full"
-      role="progressbar"
-      aria-valuenow={Math.round(percentUsed)}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-label="Usage"
-    >
+    // Padded so the two markers can overhang the track without being clipped by
+    // the rounded overflow the fill needs.
+    <div className="relative py-1.5">
       <div
-        className={cn('h-full rounded-full transition-[width]', BAR_FILL_CLASSES[tone])}
-        style={{ width: `${percentUsed}%` }}
-      />
-      {/* Hour or day boundaries, so the bar reads as a scale and the even-burn
-          line below can be placed against it. Half-height and faint, so they
-          stay clearly subordinate to that line. */}
-      {tickMarks.map((tickMark) => (
+        className="bg-muted relative h-2.5 w-full overflow-hidden rounded-full"
+        role="progressbar"
+        aria-valuenow={Math.round(percentUsed)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Usage"
+      >
         <div
-          key={tickMark.label}
-          className="absolute bottom-0 h-1 w-px"
-          style={{
-            left: `${tickMark.positionPercent}%`,
-            backgroundColor: 'white',
-            mixBlendMode: 'screen',
-            opacity: 0.6,
-          }}
-          title={`${tickMark.label} into the window`}
-          aria-hidden="true"
+          className={cn('h-full rounded-full transition-[width]', BAR_FILL_CLASSES[tone])}
+          style={{ width: `${percentUsed}%` }}
         />
-      ))}
-      {/* The even-burn line: where you would be if you spent this window evenly. */}
-      <div
-        className="bg-foreground/45 absolute inset-y-0 w-0.5"
-        style={{ left: `calc(${pacePercent}% - 1px)` }}
+        {/* Hour or day boundaries, so the bar reads as a scale and the two
+            markers can be placed against it. Half-height and faint, so they
+            stay clearly subordinate to those markers. */}
+        {tickMarks.map((tickMark) => (
+          <div
+            key={tickMark.label}
+            className="absolute bottom-0 h-1 w-px"
+            style={{
+              left: `${tickMark.positionPercent}%`,
+              backgroundColor: 'white',
+              mixBlendMode: 'screen',
+              opacity: 0.6,
+            }}
+            title={`${tickMark.label} into the window`}
+            aria-hidden="true"
+          />
+        ))}
+      </div>
+
+      {/* Where an even burn would have you. Drawn first so that when the two
+          coincide it is the coloured one — the live figure — left on top. */}
+      <BarMarker
+        positionPercent={pacePercent}
+        colorClassName="bg-foreground"
         title="Even-burn pace"
+      />
+      <BarMarker
+        positionPercent={percentUsed}
+        colorClassName={USAGE_MARKER_CLASSES[tone]}
+        title="Where you are"
       />
     </div>
   );
@@ -112,8 +158,8 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
     );
   }
 
-  // Derived once so the pill and the bar cannot end up different colours.
-  const tone = paceTone(status.paceStatus, status.paceSeverity);
+  // Derived once so the hero and the bar cannot end up different colours.
+  const tone = paceTone(status);
 
   return (
     <Card>
@@ -126,13 +172,15 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
         </div>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-2.5 pt-2">
+      <CardContent className="flex flex-col gap-2 pt-2">
+        {/* The gap is the hero; the raw percentage is supporting detail, because
+            "72% used" means nothing until you know how far into the window you
+            are — which is exactly what the gap has already worked out. */}
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-2xl leading-none font-semibold tabular-nums">
-            {Math.round(status.percentUsed)}
-            <span className="text-muted-foreground ml-0.5 text-sm font-normal">% used</span>
-          </span>
           <PaceIndicator tone={tone} paceDeltaMs={status.paceDeltaMs} />
+          <span className="text-muted-foreground text-xs font-medium tabular-nums">
+            {Math.round(status.percentUsed)}% used
+          </span>
         </div>
 
         <UsageBar

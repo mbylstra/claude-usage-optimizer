@@ -99,6 +99,20 @@ function OpenClaudeButton({ onOpenClaude }: { onOpenClaude: () => void }) {
   );
 }
 
+/**
+ * A miniature of one of the bar markers, for the footer key. The "you" marker
+ * takes its colour from the window's pace, so its key is the whole ramp rather
+ * than any one hue — which is itself the thing worth knowing about it.
+ */
+function BarMarkerKey({ className }: { className: string }) {
+  return (
+    <span
+      className={cn('inline-block h-3 w-[3px] shrink-0 rounded-full', className)}
+      aria-hidden="true"
+    />
+  );
+}
+
 function LoadingState() {
   return (
     <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading usage">
@@ -167,9 +181,12 @@ export function UsagePopup({ data, now, isRefreshing, onRefresh, onOpenClaude }:
         ))}
       </div>
 
-      <footer className="flex items-center justify-between">
-        <span className="text-muted-foreground text-[11px]">
-          The line on each bar is an even burn.
+      <footer className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+          <BarMarkerKey className="bg-foreground" />
+          even burn
+          <BarMarkerKey className="from-pace-headroom via-pace-steady to-pace-ahead-severe bg-linear-to-b" />
+          you
         </span>
         <a
           href={CLAUDE_URL}

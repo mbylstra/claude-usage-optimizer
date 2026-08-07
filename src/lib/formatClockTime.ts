@@ -6,7 +6,10 @@
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** "6 PM" or "6:30 PM" — omit :00 minutes. */
+/**
+ * "6pm" or "6:30pm" — omit :00 minutes, and set the meridiem tight against the
+ * hour in lower case so it reads as one token rather than two words.
+ */
 export function formatClockTime(moment: Date): string {
   if (Number.isNaN(moment.getTime())) return '—';
 
@@ -18,10 +21,10 @@ export function formatClockTime(moment: Date): string {
 
   const hour = parts.find((p) => p.type === 'hour')?.value ?? '';
   const minute = parts.find((p) => p.type === 'minute')?.value ?? '';
-  const meridiem = parts.find((p) => p.type === 'dayPeriod')?.value ?? '';
+  const meridiem = (parts.find((p) => p.type === 'dayPeriod')?.value ?? '').toLowerCase();
 
-  if (minute === '00') return `${hour} ${meridiem}`;
-  return `${hour}:${minute} ${meridiem}`;
+  if (minute === '00') return `${hour}${meridiem}`;
+  return `${hour}:${minute}${meridiem}`;
 }
 
 function startOfCalendarDay(moment: Date): Date {
@@ -41,13 +44,13 @@ function calendarDaysApart(moment: Date, now: Date): number {
 }
 
 /**
- * "6 PM" for today, "Yesterday, 9 AM" / "Tomorrow, 9 AM" for the days
- * either side, and "Tue 4, 9 AM" beyond that.
+ * "6pm" for today, "Yesterday, 9am" / "Tomorrow, 9am" for the days either side,
+ * and "Tue, 9am" beyond that.
  *
- * The day number is not decoration: a seven-day window starts and ends on the
- * same weekday, so "Tue" alone would render a window's start and its reset
- * identically. Yesterday and tomorrow need no such disambiguation, and reading
- * them as words is faster than counting back from a date.
+ * Deliberately no calendar date. A weekday and a time is what you need to plan
+ * around a reset; the number is one more thing to read past. The cost is that a
+ * seven-day window — which begins and ends on the same weekday — can render its
+ * start and its reset identically, so the two are told apart by their labels.
  */
 export function formatClockTimeWithDay(moment: Date, now: Date): string {
   if (Number.isNaN(moment.getTime())) return '—';
@@ -57,6 +60,6 @@ export function formatClockTimeWithDay(moment: Date, now: Date): string {
   if (daysApart === -1) return `Yesterday, ${formatClockTime(moment)}`;
   if (daysApart === 1) return `Tomorrow, ${formatClockTime(moment)}`;
 
-  const day = moment.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
-  return `${day}, ${formatClockTime(moment)}`;
+  const weekday = moment.toLocaleDateString(undefined, { weekday: 'short' });
+  return `${weekday}, ${formatClockTime(moment)}`;
 }

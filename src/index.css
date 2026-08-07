@@ -5,12 +5,16 @@
 /**
  * shadcn/ui design tokens, plus a small pace palette of our own.
  *
- * The pace colours are semantic, not decorative: blue means "you have headroom",
- * neutral means "on pace", and being ahead of an even burn escalates yellow ->
- * orange -> red as the gap grows past this window's thresholds.
+ * The pace colours are semantic, not decorative: blue is the resting state
+ * (on pace, or slack too small to spend), green means a spare hour of the
+ * session or a spare day of the week, and being ahead of an even burn escalates
+ * yellow -> orange -> red as the gap grows past this window's thresholds.
+ *
+ * There is no grey in the ramp. Every one of these states is a measurement, and
+ * grey would read as "no reading yet".
  *
  * `--pace-ahead` is the plain warning colour — banners, error icons — and is
- * deliberately the middle of that ramp rather than a fourth hue.
+ * deliberately the middle of that ramp rather than a sixth hue.
  */
 :root {
   --radius: 0.625rem;
@@ -32,20 +36,15 @@
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
 
-  /* Lightness picked so each pill clears 4.5:1 against its own surface. */
+  /* Lightness picked so each one clears 4.5:1 as text on the card. */
+  --pace-steady: oklch(0.52 0.16 255);
+  --pace-headroom: oklch(0.5 0.14 152);
   --pace-ahead-slight: oklch(0.52 0.13 85);
-  --pace-ahead-slight-surface: oklch(0.96 0.05 92);
   --pace-ahead-moderate: oklch(0.55 0.17 50);
-  --pace-ahead-moderate-surface: oklch(0.96 0.04 70);
   --pace-ahead-severe: oklch(0.5 0.21 27);
-  --pace-ahead-severe-surface: oklch(0.95 0.04 25);
 
   --pace-ahead: var(--pace-ahead-moderate);
-  --pace-ahead-surface: var(--pace-ahead-moderate-surface);
-  --pace-behind: oklch(0.55 0.16 255);
-  --pace-behind-surface: oklch(0.96 0.03 255);
-  --pace-on-track: oklch(0.53 0.01 260);
-  --pace-on-track-surface: oklch(0.97 0 0);
+  --pace-ahead-surface: oklch(0.96 0.04 70);
 
   --brand: oklch(0.66 0.13 40);
 }
@@ -68,19 +67,14 @@
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
 
+  --pace-steady: oklch(0.74 0.13 250);
+  --pace-headroom: oklch(0.77 0.16 155);
   --pace-ahead-slight: oklch(0.83 0.13 92);
-  --pace-ahead-slight-surface: oklch(0.3 0.05 92);
   --pace-ahead-moderate: oklch(0.78 0.14 62);
-  --pace-ahead-moderate-surface: oklch(0.3 0.05 62);
   --pace-ahead-severe: oklch(0.72 0.19 25);
-  --pace-ahead-severe-surface: oklch(0.31 0.08 25);
 
   --pace-ahead: var(--pace-ahead-moderate);
-  --pace-ahead-surface: var(--pace-ahead-moderate-surface);
-  --pace-behind: oklch(0.74 0.12 250);
-  --pace-behind-surface: oklch(0.29 0.05 255);
-  --pace-on-track: oklch(0.72 0.01 260);
-  --pace-on-track-surface: oklch(0.27 0 0);
+  --pace-ahead-surface: oklch(0.3 0.05 62);
 
   --brand: oklch(0.74 0.12 40);
 }
@@ -110,15 +104,10 @@
   --color-pace-ahead: var(--pace-ahead);
   --color-pace-ahead-surface: var(--pace-ahead-surface);
   --color-pace-ahead-slight: var(--pace-ahead-slight);
-  --color-pace-ahead-slight-surface: var(--pace-ahead-slight-surface);
   --color-pace-ahead-moderate: var(--pace-ahead-moderate);
-  --color-pace-ahead-moderate-surface: var(--pace-ahead-moderate-surface);
   --color-pace-ahead-severe: var(--pace-ahead-severe);
-  --color-pace-ahead-severe-surface: var(--pace-ahead-severe-surface);
-  --color-pace-behind: var(--pace-behind);
-  --color-pace-behind-surface: var(--pace-behind-surface);
-  --color-pace-on-track: var(--pace-on-track);
-  --color-pace-on-track-surface: var(--pace-on-track-surface);
+  --color-pace-steady: var(--pace-steady);
+  --color-pace-headroom: var(--pace-headroom);
   --color-brand: var(--brand);
 }
 
