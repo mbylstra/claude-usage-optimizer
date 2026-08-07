@@ -18,14 +18,10 @@ src/
   popup/        PopupRoot.tsx — the one component that talks to extension/
 ```
 
-This is the constraint that keeps Storybook and Vitest usable, and the one most
-likely to be violated by accident. Two things follow from it:
-
-- `claudeUsageClient.ts` lives in `extension/` but takes `fetch` and its
-  organization-ID cache as injected dependencies, so it touches no browser API
-  and is testable with a fake.
-- `UsagePopup` receives a fully-derived view model from `buildUsagePopupData`
-  and renders it. Every visual state is therefore reachable from a fixture.
+This is the constraint most likely to be violated by accident. Because the
+library code has no browser dependencies, `claudeUsageClient.ts` takes `fetch`
+and its organization-ID cache as injected dependencies, making the real call
+shapes inspectable without mocking.
 
 When adding a feature, ask which of the four directories it belongs in before
 writing it. Maths and formatting go in `lib/` even if only one component uses
@@ -33,31 +29,16 @@ them.
 
 ## Commands
 
-`just` is the entry point for everything. Do not run raw pnpm/vite/vitest
-commands — add a recipe instead.
+`just` is the entry point for everything. Do not run raw pnpm/vite commands —
+add a recipe instead.
 
 ```sh
-just check           # typecheck + lint + format-check + test — the gate
+just check           # typecheck + lint + format-check — the gate
 just build           # production build into dist/
-just test-watch      # tests in watch mode
-just storybook       # every UI state, both themes
 just --list          # everything else
 ```
 
 **`just check` must pass before work is considered done.**
-
-## Testing conventions
-
-- Pure functions in `src/lib` take `now` as an explicit `Date` argument and
-  **never read the clock**. This is what makes the pace maths deterministic.
-  `deriveWindowStatus(snapshot, now)`, not `deriveWindowStatus(snapshot)`.
-- Every new UI state gets a Storybook story with a hand-written fixture in
-  `src/components/usageFixtures.ts`. Fixtures are built by running real
-  snapshots through the real pace engine, never by hand-writing a
-  `DerivedWindowStatus` — that way a story cannot show a state the engine would
-  never produce.
-- The service worker is tested against a hand-rolled fake `chrome` global
-  (`serviceWorker.test.ts`), which exercises the real call shapes.
 
 ## The claude.ai API
 

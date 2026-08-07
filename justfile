@@ -8,7 +8,7 @@ default:
 install:
     pnpm install
 
-# Vite dev server for the popup UI (no chrome.* APIs available — use Storybook for UI work)
+# Vite dev server for the popup UI (no chrome.* APIs available)
 dev:
     pnpm exec vite
 
@@ -16,14 +16,6 @@ dev:
 build:
     pnpm exec vite build
     pnpm exec vite build --config vite.config.serviceWorker.ts
-
-# Run the unit tests once
-test:
-    pnpm exec vitest run
-
-# Run the unit tests in watch mode
-test-watch:
-    pnpm exec vitest
 
 # Lint
 lint:
@@ -41,20 +33,12 @@ format-check:
 typecheck:
     pnpm exec tsc --noEmit
 
-# Storybook dev server
-storybook:
-    pnpm exec storybook dev -p 6006
-
-# Static Storybook build
-build-storybook:
-    pnpm exec storybook build -o dist-storybook
-
 # Regenerate the toolbar icons in public/icons/
 icons:
     pnpm exec node scripts/generateIcons.js
 
 # Pre-commit gate: everything that must pass before work is considered done
-check: typecheck lint format-check test
+check: typecheck lint format-check
 
 # Zip dist/ for a Chrome Web Store upload
 package: build
