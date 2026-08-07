@@ -1,8 +1,9 @@
-import { AlertTriangle, ExternalLink, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ExternalLink, RefreshCw, Settings } from 'lucide-react';
 import { formatTimeAgo } from '@/lib/formatDuration';
 import { SUGGESTED_MODEL_LABELS, type SuggestedModel } from '@/lib/suggestedModel';
 import type { UsagePopupData } from '@/lib/usagePopupData';
 import type { UsageErrorInfo } from '@/lib/usageTypes';
+import { PopupFrame } from './PopupFrame';
 import { UsageWindowCard } from './UsageWindowCard';
 import { Button } from './ui/button';
 import { cn } from './ui/utils';
@@ -20,17 +21,10 @@ export interface UsagePopupProps {
   isRefreshing: boolean;
   onRefresh: () => void;
   onOpenClaude: () => void;
+  onOpenSettings: () => void;
 }
 
 const CLAUDE_URL = 'https://claude.ai';
-
-function PopupFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="bg-background text-foreground flex w-[22rem] flex-col gap-3 p-3.5">
-      {children}
-    </div>
-  );
-}
 
 function SuggestedModelRow({ model }: { model: SuggestedModel }) {
   return (
@@ -47,10 +41,12 @@ function SuggestedModelRow({ model }: { model: SuggestedModel }) {
 function PopupHeader({
   isRefreshing,
   onRefresh,
+  onOpenSettings,
   subtitle,
 }: {
   isRefreshing: boolean;
   onRefresh: () => void;
+  onOpenSettings: () => void;
   subtitle: React.ReactNode;
 }) {
   return (
@@ -59,16 +55,27 @@ function PopupHeader({
         <h1 className="text-sm font-semibold">Claude usage</h1>
         <div className="text-muted-foreground text-xs">{subtitle}</div>
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onRefresh}
-        disabled={isRefreshing}
-        aria-label="Refresh usage"
-        title="Refresh"
-      >
-        <RefreshCw className={cn('size-4', isRefreshing && 'animate-spin')} aria-hidden="true" />
-      </Button>
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          aria-label="Refresh usage"
+          title="Refresh"
+        >
+          <RefreshCw className={cn('size-4', isRefreshing && 'animate-spin')} aria-hidden="true" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onOpenSettings}
+          aria-label="Open settings"
+          title="Settings"
+        >
+          <Settings className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
     </header>
   );
 }
@@ -135,11 +142,23 @@ function ErrorState({ error, onOpenClaude }: { error: UsageErrorInfo; onOpenClau
   );
 }
 
-export function UsagePopup({ data, now, isRefreshing, onRefresh, onOpenClaude }: UsagePopupProps) {
+export function UsagePopup({
+  data,
+  now,
+  isRefreshing,
+  onRefresh,
+  onOpenClaude,
+  onOpenSettings,
+}: UsagePopupProps) {
   if (data.state === 'loading') {
     return (
       <PopupFrame>
-        <PopupHeader isRefreshing={isRefreshing} onRefresh={onRefresh} subtitle="Loading…" />
+        <PopupHeader
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
+          onOpenSettings={onOpenSettings}
+          subtitle="Loading…"
+        />
         <LoadingState />
       </PopupFrame>
     );
@@ -148,7 +167,12 @@ export function UsagePopup({ data, now, isRefreshing, onRefresh, onOpenClaude }:
   if (data.state === 'error') {
     return (
       <PopupFrame>
-        <PopupHeader isRefreshing={isRefreshing} onRefresh={onRefresh} subtitle="No data yet" />
+        <PopupHeader
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
+          onOpenSettings={onOpenSettings}
+          subtitle="No data yet"
+        />
         <ErrorState error={data.error} onOpenClaude={onOpenClaude} />
       </PopupFrame>
     );
@@ -158,6 +182,7 @@ export function UsagePopup({ data, now, isRefreshing, onRefresh, onOpenClaude }:
     <PopupFrame>
       <PopupHeader
         isRefreshing={isRefreshing}
+        onOpenSettings={onOpenSettings}
         onRefresh={onRefresh}
         subtitle={
           <span className={cn(data.isStale && 'text-pace-ahead')}>

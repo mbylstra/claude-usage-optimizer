@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
+import { SettingsPage } from '@/components/SettingsPage';
 import { UsagePopup } from '@/components/UsagePopup';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
+import { DEFAULT_EXTENSION_SETTINGS, type ExtensionSettings } from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
 import { REFRESH_USAGE_MESSAGE, type RefreshUsageResponse } from '@/extension/messages';
+import {
+  readExtensionSettings,
+  SETTINGS_CHANGE_KEY,
+  writeExtensionSettings,
+} from '@/extension/settingsStorage';
 import { readUsageCache, USAGE_CACHE_CHANGE_KEY } from '@/extension/usageStorage';
 
 /**
@@ -29,10 +36,14 @@ function useTickingClock(): Date {
   return now;
 }
 
+type PopupView = 'usage' | 'settings';
+
 export function PopupRoot() {
+  const [view, setView] = useState<PopupView>('usage');
   const [cacheEntry, setCacheEntry] = useState<UsageCacheEntry | null>(null);
   const [hasLoadedCache, setHasLoadedCache] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_EXTENSION_SETTINGS);
   const now = useTickingClock();
 
   const requestRefresh = useCallback(() => {
@@ -65,16 +76,32 @@ export function PopupRoot() {
     };
   }, [requestRefresh]);
 
-  // Pick up refreshes triggered by the alarm while the popup happens to be open.
+  useEffect(() => {
+    let isMounted = true;
+
+    void readExtensionSettings().then((loaded) => {
+      if (isMounted) setSettings(loaded);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Pick up refreshes triggered by the alarm, and settings changes from another
+  // copy of the popup, while this one happens to be open.
   useEffect(() => {
     const handleStorageChange = (
       changes: Record<string, chrome.storage.StorageChange>,
       areaName: string,
     ) => {
       if (areaName !== 'local') return;
-      const change = changes[USAGE_CACHE_CHANGE_KEY];
-      if (change === undefined) return;
-      setCacheEntry(change.newValue as UsageCacheEntry);
+
+      const usageChange = changes[USAGE_CACHE_CHANGE_KEY];
+      if (usageChange !== undefined) setCacheEntry(usageChange.newValue as UsageCacheEntry);
+
+      const settingsChange = changes[SETTINGS_CHANGE_KEY];
+      if (settingsChange !== undefined) setSettings(settingsChange.newValue as ExtensionSettings);
     };
 
     chrome.storage.onChanged.addListener(handleStorageChange);
@@ -85,6 +112,27 @@ export function PopupRoot() {
     void chrome.tabs.create({ url: CLAUDE_URL });
     window.close();
   }, []);
+
+  const openSettings = useCallback(() => setView('settings'), []);
+  const closeSettings = useCallback(() => setView('usage'), []);
+
+  const handleNotificationsEnabledChange = useCallback((notificationsEnabled: boolean) => {
+    setSettings((current) => {
+      const next: ExtensionSettings = { ...current, notificationsEnabled };
+      void writeExtensionSettings(next);
+      return next;
+    });
+  }, []);
+
+  if (view === 'settings') {
+    return (
+      <SettingsPage
+        notificationsEnabled={settings.notificationsEnabled}
+        onNotificationsEnabledChange={handleNotificationsEnabledChange}
+        onBack={closeSettings}
+      />
+    );
+  }
 
   // Before the cache read resolves we genuinely know nothing — show the loading
   // state rather than flashing "no data yet".
@@ -97,6 +145,7 @@ export function PopupRoot() {
       isRefreshing={isRefreshing}
       onRefresh={requestRefresh}
       onOpenClaude={openClaude}
+      onOpenSettings={openSettings}
     />
   );
 }

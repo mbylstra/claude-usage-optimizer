@@ -17,7 +17,12 @@ function sessionEntry(percent: number, hoursUntilReset: number): UsageCacheEntry
   return {
     snapshot: {
       windows: [
-        { kind: 'fiveHour', utilizationPercent: percent, resetsAt: hours(hoursUntilReset), startedAt: null },
+        {
+          kind: 'fiveHour',
+          utilizationPercent: percent,
+          resetsAt: hours(hoursUntilReset),
+          startedAt: null,
+        },
         { kind: 'sevenDay', utilizationPercent: percent, resetsAt: days(3.5), startedAt: null },
       ],
     },
@@ -39,10 +44,7 @@ const CASES: { label: string; entry: UsageCacheEntry }[] = [
 
 function Column({ dark }: { dark: boolean }) {
   return (
-    <div
-      className={dark ? 'dark' : ''}
-      style={{ background: dark ? '#111' : '#fff', padding: 8 }}
-    >
+    <div className={dark ? 'dark' : ''} style={{ background: dark ? '#111' : '#fff', padding: 8 }}>
       {CASES.map(({ label, entry }) => (
         <div key={label}>
           <div
@@ -60,6 +62,7 @@ function Column({ dark }: { dark: boolean }) {
             isRefreshing={false}
             onRefresh={() => {}}
             onOpenClaude={() => {}}
+            onOpenSettings={() => {}}
           />
         </div>
       ))}
