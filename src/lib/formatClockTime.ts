@@ -6,16 +6,22 @@
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
-const TIME_FORMAT: Intl.DateTimeFormatOptions = {
-  hour: 'numeric',
-  minute: '2-digit',
-  hour12: true,
-};
-
-/** "6:00 PM" */
+/** "6 PM" or "6:30 PM" — omit :00 minutes. */
 export function formatClockTime(moment: Date): string {
   if (Number.isNaN(moment.getTime())) return '—';
-  return moment.toLocaleTimeString(undefined, TIME_FORMAT);
+
+  const parts = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(moment);
+
+  const hour = parts.find((p) => p.type === 'hour')?.value ?? '';
+  const minute = parts.find((p) => p.type === 'minute')?.value ?? '';
+  const meridiem = parts.find((p) => p.type === 'dayPeriod')?.value ?? '';
+
+  if (minute === '00') return `${hour} ${meridiem}`;
+  return `${hour}:${minute} ${meridiem}`;
 }
 
 function startOfCalendarDay(moment: Date): Date {
@@ -35,8 +41,8 @@ function calendarDaysApart(moment: Date, now: Date): number {
 }
 
 /**
- * "6:00 PM" for today, "Yesterday, 9:00 AM" / "Tomorrow, 9:00 AM" for the days
- * either side, and "Tue 4, 9:00 AM" beyond that.
+ * "6 PM" for today, "Yesterday, 9 AM" / "Tomorrow, 9 AM" for the days
+ * either side, and "Tue 4, 9 AM" beyond that.
  *
  * The day number is not decoration: a seven-day window starts and ends on the
  * same weekday, so "Tue" alone would render a window's start and its reset
