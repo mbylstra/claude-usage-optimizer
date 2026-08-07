@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SettingsPage } from '@/components/SettingsPage';
 import { UsagePopup } from '@/components/UsagePopup';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
@@ -45,6 +45,28 @@ export function PopupRoot() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_EXTENSION_SETTINGS);
   const now = useTickingClock();
+
+  // Chrome sizes the popup to whatever is currently rendered, so switching to
+  // the shorter settings view and back would otherwise make it visibly shrink
+  // and regrow. Tracking the tallest height any view has needed and enforcing
+  // it as a floor keeps the popup a constant size without hard-coding one.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [minContentHeightPx, setMinContentHeightPx] = useState<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const node = contentRef.current;
+    if (node === null) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height === undefined) return;
+      setMinContentHeightPx((current) =>
+        current === undefined ? height : Math.max(current, height),
+      );
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const requestRefresh = useCallback(() => {
     setIsRefreshing(true);
@@ -124,28 +146,31 @@ export function PopupRoot() {
     });
   }, []);
 
-  if (view === 'settings') {
-    return (
-      <SettingsPage
-        notificationsEnabled={settings.notificationsEnabled}
-        onNotificationsEnabledChange={handleNotificationsEnabledChange}
-        onBack={closeSettings}
-      />
-    );
-  }
-
   // Before the cache read resolves we genuinely know nothing — show the loading
   // state rather than flashing "no data yet".
   const data = buildUsagePopupData(hasLoadedCache ? cacheEntry : null, now);
 
   return (
-    <UsagePopup
-      data={data}
-      now={now}
-      isRefreshing={isRefreshing}
-      onRefresh={requestRefresh}
-      onOpenClaude={openClaude}
-      onOpenSettings={openSettings}
-    />
+    <div
+      ref={contentRef}
+      style={minContentHeightPx === undefined ? undefined : { minHeight: minContentHeightPx }}
+    >
+      {view === 'settings' ? (
+        <SettingsPage
+          notificationsEnabled={settings.notificationsEnabled}
+          onNotificationsEnabledChange={handleNotificationsEnabledChange}
+          onBack={closeSettings}
+        />
+      ) : (
+        <UsagePopup
+          data={data}
+          now={now}
+          isRefreshing={isRefreshing}
+          onRefresh={requestRefresh}
+          onOpenClaude={openClaude}
+          onOpenSettings={openSettings}
+        />
+      )}
+    </div>
   );
 }
