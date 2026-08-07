@@ -14,8 +14,9 @@ describe('paceDescription', () => {
     expect(paceDescription(-(2 * HOURS + 10 * MINUTES))).toBe('2h 10m behind pace');
   });
 
-  it('uses the compact two-unit span for week-sized gaps', () => {
-    expect(paceDescription(-(3 * DAYS + 4 * HOURS))).toBe('3d 4h behind pace');
+  it('states a week-sized gap in days rather than hours', () => {
+    expect(paceDescription(-(3 * DAYS + 4 * HOURS))).toBe('3.2d behind pace');
+    expect(paceDescription(23 * HOURS)).toBe('23h ahead of pace');
   });
 
   it('says "On pace" only when the gap is under a minute', () => {

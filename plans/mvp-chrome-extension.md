@@ -144,6 +144,12 @@ eyes. We show a **scalar** as well, because that is the number you actually act 
 carries `paceDeltaMs = paceDelta / 100 × windowDuration`, and the indicator reads
 "**36m ahead of pace**" / "**1h 5m behind pace**".
 
+`formatPaceGap` renders it at the granularity the window deserves: a gap of a day
+or more reads in days to one decimal ("2.9d", "3d"), and only below a day does it
+fall back to `formatDuration`'s hours and minutes. No per-window branching is
+needed for that — a five-hour window cannot be a day off an even burn, so only
+the weekly ones ever cross the threshold.
+
 The wording and the icon now come from the sign of `paceDeltaMs`, while only the
 colour comes from `paceStatus`. That decouples the two deliberately: a window
 inside the ±5-point tolerance stays neutral but still says "11m ahead of pace"

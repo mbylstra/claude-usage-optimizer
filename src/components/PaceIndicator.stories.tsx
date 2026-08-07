@@ -41,6 +41,11 @@ export const WeeklyGapInDays: Story = {
   args: { paceStatus: 'ahead', paceDeltaMs: 3 * DAYS + 7 * HOURS },
 };
 
+/** Just under the day threshold, where a weekly gap still reads in hours. */
+export const WeeklyGapUnderADay: Story = {
+  args: { paceStatus: 'behind', paceDeltaMs: -(20 * HOURS + 9 * MINUTES) },
+};
+
 export const FarAheadOfPace: Story = {
   args: { paceStatus: 'ahead', paceDeltaMs: 2 * HOURS + 20 * MINUTES },
 };

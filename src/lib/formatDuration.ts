@@ -21,6 +21,27 @@ export function formatDuration(durationMs: number): string {
 }
 
 /**
+ * A pace gap, which wants a coarser unit than a countdown does: once the gap
+ * passes a day it reads in days alone — "2.9d", "3d" — and only below a day does
+ * it fall back to hours and minutes.
+ *
+ * Only the weekly windows can produce a gap of a day or more (a five-hour window
+ * cannot be more than five hours off an even burn), so this needs no per-window
+ * branching — the magnitude picks the unit on its own.
+ */
+export function formatPaceGap(gapMs: number): string {
+  const magnitude = Math.abs(gapMs);
+  if (!Number.isFinite(magnitude) || magnitude < MILLISECONDS_PER_DAY) {
+    return formatDuration(magnitude);
+  }
+
+  // One decimal place: whole days alone would round 2d 21h down to "2d", which
+  // is most of a day of headroom thrown away.
+  const days = (magnitude / MILLISECONDS_PER_DAY).toFixed(1);
+  return `${days.endsWith('.0') ? days.slice(0, -2) : days}d`;
+}
+
+/**
  * "updated 2m ago" style freshness text for the cached snapshot.
  */
 export function formatTimeAgo(pastMoment: Date, now: Date): string {

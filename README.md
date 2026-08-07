@@ -23,8 +23,9 @@ For the 5-hour session window, the weekly window, and the weekly Opus window:
   spent what an even burn would not reach until 36 minutes from now. The same
   percentage gap is worth minutes on the 5-hour window and days on the weekly
   one, which is why the raw percentage-point difference was never the number to
-  show. Colour follows a ±5 percentage-point tolerance; inside it the pill goes
-  neutral but still names the gap.
+  show. A gap of a day or more reads in days — "2.9d ahead of pace" — and only
+  below a day does it descend to hours. Colour follows a ±5 percentage-point
+  tolerance; inside it the pill goes neutral but still names the gap.
 
 Each bar carries a vertical line marking the even-burn point, so the number and
 the picture say the same thing.
