@@ -54,6 +54,6 @@ export function paceHeadline(paceDeltaMs: number): PaceHeadline {
 
   return {
     value: formatDuration(Math.abs(paceDeltaMs)),
-    qualifier: direction === 'ahead' ? 'ahead of pace' : 'behind pace',
+    qualifier: direction === 'ahead' ? 'ahead of optimal pace' : 'behind optimal pace',
   };
 }
