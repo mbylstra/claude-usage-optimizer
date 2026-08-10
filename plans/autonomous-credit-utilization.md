@@ -6,13 +6,13 @@ Automatically run Claude Code in the middle of the night when weekly usage is be
 
 ## Requirements
 
-| #   | Requirement                                            | How it is met                                                                        |
-| --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| 1   | Check weekly pace before running work                  | Extension writes pace delta to `.claude-usage.json` (repo root)                      |
-| 2   | Trigger Claude Code autonomously at scheduled time     | Shell script run by launchd at 2 AM daily                                            |
-| 3   | Run with full shell access                             | Use `claude -p` mode with `--permission-mode auto`                                   |
-| 4   | No human intervention required                         | Scheduled by OS, scripted entirely, logged to file                                   |
-| 5   | Skip if not behind pace                                | Script reads pace delta and exits early if threshold not met (default 2h behind)     |
+| #   | Requirement                                        | How it is met                                                                       |
+| --- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| 1   | Check weekly pace before running work              | Extension writes pace delta to `~/Downloads/claude-usage.json` via chrome.downloads |
+| 2   | Trigger Claude Code autonomously at scheduled time | Shell script run by launchd at 2 AM daily                                           |
+| 3   | Run with full shell access                         | Use `claude -p` mode with `--permission-mode auto`                                  |
+| 4   | No human intervention required                     | Scheduled by OS, scripted entirely, logged to file                                  |
+| 5   | Skip if not behind pace                            | Script reads pace delta and exits early if threshold not met (default 2h behind)    |
 
 ---
 
@@ -21,7 +21,8 @@ Automatically run Claude Code in the middle of the night when weekly usage is be
 The extension's service worker already derives the pace delta for every window. To make it accessible to the cron script:
 
 **What to add to `src/extension/usageStorage.ts`:**
-- After every successful usage fetch, call `downloadUsageSnapshot()` 
+
+- After every successful usage fetch, call `downloadUsageSnapshot()`
 - Function creates a JSON blob and uses `chrome.downloads.download()` to write to `~/Downloads/claude-usage.json`
 - File format:
   ```json
@@ -38,30 +39,33 @@ The extension's service worker already derives the pace delta for every window. 
 - Use `conflictAction: 'overwrite'` to replace the file on each refresh
 
 **Implementation sketch:**
+
 ```typescript
 async function downloadUsageSnapshot(data: UsageSnapshot) {
   const json = JSON.stringify(data);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  
+
   await chrome.downloads.download({
     url: url,
     filename: 'claude-usage.json',
     saveAs: false,
-    conflictAction: 'overwrite'
+    conflictAction: 'overwrite',
   });
-  
+
   URL.revokeObjectURL(url);
 }
 ```
 
 **Why this way:**
+
 - Decouples extension from scheduler (no IPC/HTTP/native messaging needed)
 - Uses standard MV3 `chrome.downloads` API (no extra permissions)
 - Simple to debug (file is at a well-known path: `~/Downloads/claude-usage.json`)
 - Pace delta already computed by extension's pace engine, just needs exposure
 
 **Caveat:**
+
 - File lives in `~/Downloads`, not project-local
 - User should avoid deleting/moving Downloads folder (would break scheduler)
 - If needed later, could move to proper location with native messaging or HTTP server
@@ -102,6 +106,7 @@ Commit fixes if appropriate.
 ```
 
 **Notes:**
+
 - Each prompt can specify a `REPO` (defaults to `~/code/auto-claude` if omitted)
 - Prompts can span multiple lines; everything after `REPO` (or first non-header line) is the prompt
 - Users add prompts by creating new sections, edit/remove by deleting sections
@@ -133,6 +138,7 @@ Clean up unused dependencies and update docs.
 ```
 
 **Format:**
+
 - Sections separated by 3+ `=` on their own line
 - Each section starts with `STATUS: <status>` (one of: `todo`, `completed`, `error`)
 - Optional `REPO: <path>` field (defaults to `~/code/auto-claude` if omitted)
@@ -140,11 +146,13 @@ Clean up unused dependencies and update docs.
 - `~` in paths expands to `$HOME`
 
 **Status values:**
+
 - `todo` — queued for execution
 - `completed` — ran successfully (exit code 0)
 - `error` — ran but failed (non-zero exit code); skipped by scheduler
 
 **Git configuration:**
+
 - Add `.claude-scripts/prompts.queue.txt` to repo (checked in, user-editable)
 - Runtime state files (usage.json, logs) stay in `.gitignore`
 
@@ -155,11 +163,13 @@ Clean up unused dependencies and update docs.
 Create `.claude-scripts/run-autonomous-work.py` in repo to read pace data, find next todo prompt, and execute it.
 
 **Python version management:**
+
 - Use `uv` to manage Python version and dependencies
 - Create `pyproject.toml` in `.claude-scripts/` to declare dependencies (e.g., `requests` if needed for future features)
 - Script uses `#!/usr/bin/env uv run` shebang to ensure it runs with correct Python version when scheduled
 
 **Create `.claude-scripts/pyproject.toml`:**
+
 ```toml
 [project]
 name = "autonomous-work"
@@ -210,32 +220,32 @@ def check_pace_data() -> dict | None:
     if not USAGE_FILE.exists():
         log_message(f"No usage data found at {USAGE_FILE} (extension not running?)")
         return None
-    
+
     try:
         with open(USAGE_FILE) as f:
             data = json.load(f)
     except Exception as e:
         log_message(f"Failed to read usage file: {e}")
         return None
-    
+
     # Check if data is fresh
     fetched_at_str = data.get("fetchedAt")
     if not fetched_at_str:
         log_message("No fetchedAt field in usage data")
         return None
-    
+
     try:
         fetched_at = datetime.fromisoformat(fetched_at_str.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         age_secs = (now - fetched_at).total_seconds()
-        
+
         if age_secs > DATA_STALENESS_THRESHOLD_SECS:
             log_message(f"Usage data stale ({age_secs}s old)")
             return None
     except Exception as e:
         log_message(f"Failed to parse timestamp: {e}")
         return None
-    
+
     return data
 
 
@@ -244,18 +254,18 @@ def parse_queue_file() -> tuple[str, str] | None:
     if not QUEUE_FILE.exists():
         log_message(f"No prompt queue found at {QUEUE_FILE}")
         return None
-    
+
     try:
         with open(QUEUE_FILE) as f:
             content = f.read()
     except Exception as e:
         log_message(f"Failed to read queue file: {e}")
         return None
-    
+
     # Split by separator (3+ equals signs on a line)
     sections = []
     current_section = []
-    
+
     for line in content.split("\n"):
         if line.startswith("==="):
             if current_section:
@@ -263,20 +273,20 @@ def parse_queue_file() -> tuple[str, str] | None:
             current_section = []
         else:
             current_section.append(line)
-    
+
     if current_section:
         sections.append("\n".join(current_section))
-    
+
     # Parse each section
     for section in sections:
         lines = section.strip().split("\n")
         if not lines:
             continue
-        
+
         status = None
         repo = None
         prompt_lines = []
-        
+
         for line in lines:
             if line.startswith("STATUS:"):
                 status = line.split("STATUS:")[1].strip()
@@ -286,14 +296,14 @@ def parse_queue_file() -> tuple[str, str] | None:
             elif status is not None and line.strip():
                 # Accumulate prompt content
                 prompt_lines.append(line)
-        
+
         # Check if this is a todo section
         if status == "todo" and prompt_lines:
             if repo is None:
                 repo = str(Path.home() / "code" / "auto-claude")
             prompt = "\n".join(prompt_lines)
             return repo, prompt
-    
+
     log_message("No todo prompts in queue (all completed or error)")
     return None
 
@@ -303,13 +313,13 @@ def update_queue_status(new_status: str) -> None:
     try:
         with open(QUEUE_FILE) as f:
             content = f.read()
-        
+
         # Replace first "STATUS: todo" with new status
         updated = content.replace("STATUS: todo", f"STATUS: {new_status}", 1)
-        
+
         with open(QUEUE_FILE, "w") as f:
             f.write(updated)
-        
+
         log_message(f"Queue updated (first todo → {new_status})")
     except Exception as e:
         log_message(f"Failed to update queue: {e}")
@@ -319,35 +329,35 @@ def main() -> int:
     """Main entry point."""
     # Ensure log file exists
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Check pace data
     pace_data = check_pace_data()
     if not pace_data:
         return 0
-    
+
     pace_delta_ms = pace_data.get("weeklyPaceDeltaMs", 0)
-    
+
     # Check if behind pace threshold
     if pace_delta_ms > PACE_THRESHOLD_MS:
         hours_behind = pace_delta_ms / -3600000
         log_message(f"Not behind pace threshold ({hours_behind:.1f}h behind, need 2h+)")
         return 0
-    
+
     # Behind pace — find and run next todo prompt
     hours_behind = pace_delta_ms / -3600000
     log_message(f"Behind pace by {hours_behind:.1f}h, checking prompt queue")
-    
+
     result = parse_queue_file()
     if not result:
         return 0
-    
+
     work_repo, work_prompt = result
-    
+
     try:
         repo_path = Path(work_repo)
         repo_path.mkdir(parents=True, exist_ok=True)
         log_message(f"Found todo prompt (repo: {work_repo})")
-        
+
         # Run claude from the specified repo
         result = subprocess.run(
             [
@@ -356,7 +366,6 @@ def main() -> int:
                 work_prompt,
                 "--permission-mode",
                 "auto",
-                "--safe-mode",
                 "--output-format",
                 "json",
             ],
@@ -364,22 +373,22 @@ def main() -> int:
             capture_output=True,
             text=True,
         )
-        
+
         # Log output
         if result.stdout:
             log_message(f"Claude stdout: {result.stdout}")
         if result.stderr:
             log_message(f"Claude stderr: {result.stderr}")
-        
+
         exit_code = result.returncode
         log_message(f"Prompt execution completed with exit code {exit_code}")
-        
+
         # Update queue status
         new_status = "completed" if exit_code == 0 else "error"
         update_queue_status(new_status)
-        
+
         return exit_code
-    
+
     except Exception as e:
         log_message(f"Error running prompt: {e}")
         update_queue_status("error")
@@ -391,6 +400,7 @@ if __name__ == "__main__":
 ```
 
 **Design notes:**
+
 - Written in Python with `uv run` shebang for reproducible execution (works in scheduled contexts)
 - `uv` manages Python version (3.10+) and future dependencies via `pyproject.toml`
 - Reads from `.claude-scripts/prompts.queue.txt` instead of hardcoded prompt
@@ -400,7 +410,6 @@ if __name__ == "__main__":
 - Automatically updates the first todo's status to `completed` (exit 0) or `error` (non-zero)
 - Logs all activity to `.claude-scripts/autonomous-work.log` for debugging
 - Exits silently (exit code 0) if pace OK, queue missing, or no todo prompts
-- `--safe-mode` disables hooks, plugins, MCP, custom commands (reproducible), but keeps subscription auth and permissions intact
 - `--permission-mode auto` auto-approves permission requests (necessary for unattended execution)
 - `--output-format json` for structured results
 - Handles edge cases: missing usage file, stale data, malformed JSON, file I/O errors
@@ -453,6 +462,7 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
 **Important: Ensure PATH includes uv and claude**
 
 Before installing, verify that both `uv` and `claude` are in the PATH that launchd will see:
+
 ```bash
 # Check where uv is installed
 which uv  # e.g., /usr/local/bin/uv
@@ -464,6 +474,7 @@ which claude  # e.g., /usr/local/bin/claude
 If either is in a non-standard location, update the `PATH` in the plist accordingly. The default PATH in the plist includes `/usr/local/bin`, which covers most Homebrew installations.
 
 **To install:**
+
 ```bash
 # Script is already in repo at .claude-scripts/run-autonomous-work.py
 # Create the plist file and install it:
@@ -471,15 +482,16 @@ launchctl load ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.pl
 ```
 
 **To verify:**
+
 ```bash
 launchctl list | grep claudeusageoptimizer
 ```
 
 **To uninstall:**
+
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist
 ```
-
 
 ---
 
@@ -489,7 +501,7 @@ launchctl unload ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.
 Chrome Extension                    Home Directory & Project Root
 ├── src/lib/usagePace.ts            ~/Downloads/
 │   └── derives pace delta           └── claude-usage.json (runtime, auto-updated by extension)
-│                                    
+│
 ├── src/extension/usageStorage.ts   Project Root/
 │   └── downloads usage + pace       .claude-scripts/
 │       to ~/Downloads/              ├── run-autonomous-work.sh (executable script)
@@ -521,6 +533,7 @@ Chrome Extension                    Home Directory & Project Root
 ## 6. Implementation phases
 
 ### Phase 0 — Data exposure
+
 - Add `downloadUsageSnapshot()` to `usageStorage.ts`
   - Derives `weeklyPaceDeltaMs` and `weeklyPaceStatus` from existing pace engine
   - Creates JSON blob and downloads to `~/Downloads/claude-usage.json` via `chrome.downloads.download()`
@@ -530,6 +543,7 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** `~/Downloads/claude-usage.json` is written on every refresh, contains valid JSON with pace delta
 
 ### Phase 1 — Python script scaffolding
+
 - Create `.claude-scripts/pyproject.toml` with Python 3.10+ requirement
 - Create `.claude-scripts/run-autonomous-work.py` with `#!/usr/bin/env uv run` shebang
 - Implement pace checks (usage file freshness, threshold comparison)
@@ -542,6 +556,7 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** Script parses queue correctly, exits cleanly (logs "no todo prompts" if queue missing/empty)
 
 ### Phase 2 — Prompt queue and status tracking
+
 - Create `.claude-scripts/prompts.queue.txt` with demo todo prompts (see section 2a)
 - Verify script correctly finds and extracts first `STATUS: todo` prompt
 - Verify script correctly updates status: `STATUS: todo` → `STATUS: completed` (on success) or `STATUS: error` (on failure)
@@ -552,6 +567,7 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** Queue parsing and status updates work correctly; prompts run in the specified directories; queue is user-editable
 
 ### Phase 3 — Claude Code integration
+
 - Replace test prompts with real work prompts (analyze code, run tests, etc.)
 - Test manually: `bash .claude-scripts/run-autonomous-work.sh` from project root
 - Verify `claude -p` runs autonomously and output is captured
@@ -559,6 +575,7 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** Claude Code executes with real prompts, logs are readable, status tracking works end-to-end
 
 ### Phase 4 — Scheduling
+
 - Verify `uv` and `claude` are in PATH (in a location visible to launchd, typically `/usr/local/bin`)
 - Create the launchd plist file with correct PATH
 - Install via `launchctl load ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`
@@ -570,6 +587,7 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** launchd fires at scheduled time, script runs with correct PATH, queue progresses
 
 ### Phase 5 — Polish
+
 - Document the setup in `CLAUDE.md` (queue format, adding prompts, monitoring)
 - Provide install/uninstall instructions
 - Consider: make pace threshold configurable, add notification support (future)
