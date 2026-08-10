@@ -8,7 +8,7 @@ Automatically run Claude Code in the middle of the night when weekly usage is be
 
 | #   | Requirement                                            | How it is met                                                                        |
 | --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| 1   | Check weekly pace before running work                  | Extension writes pace delta to `~/.claude-usage/current-usage.json`                  |
+| 1   | Check weekly pace before running work                  | Extension writes pace delta to `.claude-usage.json` (repo root)                      |
 | 2   | Trigger Claude Code autonomously at scheduled time     | Shell script run by launchd at 2 AM daily                                            |
 | 3   | Run with full shell access                             | Use `claude -p` mode with `--permission-mode auto`                                   |
 | 4   | No human intervention required                         | Scheduled by OS, scripted entirely, logged to file                                   |
@@ -296,7 +296,7 @@ Chrome Extension                    Local Scheduling
 ## 8. Success criteria
 
 - Extension computes weekly pace delta via existing pace engine ✅
-- Extension writes pace data to `~/.claude-usage/current-usage.json` on every refresh ✅
+- Extension writes pace data to `.claude-usage.json` (repo root) on every refresh ✅
 - Shell script reads pace delta and exits if on-pace (not behind threshold) ✅
 - Shell script triggers when behind by 2+ hours ✅
 - `claude -p` invocation runs successfully and logs output ✅
