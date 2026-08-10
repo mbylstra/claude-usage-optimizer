@@ -68,6 +68,48 @@ async function downloadUsageSnapshot(data: UsageSnapshot) {
 
 ---
 
+## 2a. Demo queue file
+
+Create `.claude-scripts/prompts.queue.txt` with starter prompts. Users can edit this file to add/remove work items:
+
+```
+===
+STATUS: todo
+REPO: ~/code/current/claude-usage-optimizer
+Analyze recent code changes in this project and suggest improvements.
+Look for opportunities to refactor, simplify, or optimize.
+Report findings and implement high-value changes.
+
+===
+STATUS: todo
+REPO: ~/code/auto-claude
+Review and update project documentation.
+Check for outdated links, missing sections, or unclear explanations.
+Make improvements where you see them.
+
+===
+STATUS: todo
+Clean up and organize project files.
+Look for dead code, unused dependencies, or obsolete configs.
+Remove what's no longer needed and update build/test scripts as needed.
+
+===
+STATUS: todo
+REPO: ~/code/current/claude-usage-optimizer
+Run `just check` to verify project health.
+Fix any lint, type, or format errors.
+Commit fixes if appropriate.
+```
+
+**Notes:**
+- Each prompt can specify a `REPO` (defaults to `~/code/auto-claude` if omitted)
+- Prompts can span multiple lines; everything after `REPO` (or first non-header line) is the prompt
+- Users add prompts by creating new sections, edit/remove by deleting sections
+- Status auto-updates: `todo` → `completed` (on success) or `error` (on failure)
+- Scheduler picks first `todo` and runs it; if it fails, changes status to `error` and waits for user to fix
+
+---
+
 ## 2. Prompt queue file
 
 Create `.claude-scripts/prompts.queue.txt` in repo to define work items:
@@ -500,13 +542,14 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** Script parses queue correctly, exits cleanly (logs "no todo prompts" if queue missing/empty)
 
 ### Phase 2 — Prompt queue and status tracking
-- Create `.claude-scripts/prompts.queue.txt` with sample todo prompts
+- Create `.claude-scripts/prompts.queue.txt` with demo todo prompts (see section 2a)
 - Verify script correctly finds and extracts first `STATUS: todo` prompt
 - Verify script correctly updates status: `STATUS: todo` → `STATUS: completed` (on success) or `STATUS: error` (on failure)
 - Test with a simple prompt that logs something and exits 0
 - Test error case: run with a prompt that exits non-zero, verify status becomes `error`
 - Test queue progression: run twice, verify first prompt completes and second runs
-- **Exit criterion:** Queue parsing and status updates work correctly; prompts run in the specified directories
+- Verify queue file can be edited to add/remove prompts and requeue failed items (change `error` back to `todo`)
+- **Exit criterion:** Queue parsing and status updates work correctly; prompts run in the specified directories; queue is user-editable
 
 ### Phase 3 — Claude Code integration
 - Replace test prompts with real work prompts (analyze code, run tests, etc.)
