@@ -12,7 +12,13 @@ export interface RefreshUsageMessage {
   type: typeof REFRESH_USAGE_MESSAGE;
 }
 
-export type ExtensionMessage = RefreshUsageMessage;
+export const TEST_NOTIFICATION_MESSAGE = 'TEST_NOTIFICATION' as const;
+
+export interface TestNotificationMessage {
+  type: typeof TEST_NOTIFICATION_MESSAGE;
+}
+
+export type ExtensionMessage = RefreshUsageMessage | TestNotificationMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
 
@@ -21,5 +27,13 @@ export function isRefreshUsageMessage(message: unknown): message is RefreshUsage
     typeof message === 'object' &&
     message !== null &&
     (message as { type?: unknown }).type === REFRESH_USAGE_MESSAGE
+  );
+}
+
+export function isTestNotificationMessage(message: unknown): message is TestNotificationMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === TEST_NOTIFICATION_MESSAGE
   );
 }

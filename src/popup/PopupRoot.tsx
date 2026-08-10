@@ -4,7 +4,11 @@ import { UsagePopup } from '@/components/UsagePopup';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
 import { DEFAULT_EXTENSION_SETTINGS, type ExtensionSettings } from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
-import { REFRESH_USAGE_MESSAGE, type RefreshUsageResponse } from '@/extension/messages';
+import {
+  REFRESH_USAGE_MESSAGE,
+  TEST_NOTIFICATION_MESSAGE,
+  type RefreshUsageResponse,
+} from '@/extension/messages';
 import {
   readExtensionSettings,
   SETTINGS_CHANGE_KEY,
@@ -80,6 +84,16 @@ export function PopupRoot() {
         setCacheEntry(response);
       },
     );
+  }, []);
+
+  const requestTestNotification = useCallback(() => {
+    chrome.runtime.sendMessage({ type: TEST_NOTIFICATION_MESSAGE }, (response) => {
+      if (chrome.runtime.lastError !== undefined) {
+        console.error('Test notification error:', chrome.runtime.lastError);
+      } else {
+        console.log('Test notification sent:', response);
+      }
+    });
   }, []);
 
   // Paint from cache, then refresh.
@@ -159,6 +173,7 @@ export function PopupRoot() {
         <SettingsPage
           notificationsEnabled={settings.notificationsEnabled}
           onNotificationsEnabledChange={handleNotificationsEnabledChange}
+          onTestNotification={requestTestNotification}
           onBack={closeSettings}
         />
       ) : (

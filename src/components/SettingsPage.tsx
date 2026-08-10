@@ -14,12 +14,14 @@ import { Switch } from './ui/switch';
 export interface SettingsPageProps {
   notificationsEnabled: boolean;
   onNotificationsEnabledChange: (enabled: boolean) => void;
+  onTestNotification: () => void;
   onBack: () => void;
 }
 
 export function SettingsPage({
   notificationsEnabled,
   onNotificationsEnabledChange,
+  onTestNotification,
   onBack,
 }: SettingsPageProps) {
   return (
@@ -32,21 +34,25 @@ export function SettingsPage({
       </header>
 
       <Card>
-        <CardContent className="flex items-start justify-between gap-4 pt-3.5">
-          <div className="flex flex-col gap-0.5">
-            <label htmlFor="notifications-enabled" className="text-sm font-medium">
-              Notifications
-            </label>
-            <p className="text-muted-foreground text-xs">
-              Get notified as a usage window approaches its limit. Not implemented yet — this only
-              saves your preference for now.
-            </p>
+        <CardContent className="flex flex-col gap-4 pt-3.5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-0.5">
+              <label htmlFor="notifications-enabled" className="text-sm font-medium">
+                Notifications
+              </label>
+              <p className="text-muted-foreground text-xs">
+                Get notified when the recommended model changes based on your usage pace.
+              </p>
+            </div>
+            <Switch
+              id="notifications-enabled"
+              checked={notificationsEnabled}
+              onCheckedChange={onNotificationsEnabledChange}
+            />
           </div>
-          <Switch
-            id="notifications-enabled"
-            checked={notificationsEnabled}
-            onCheckedChange={onNotificationsEnabledChange}
-          />
+          <Button variant="outline" size="sm" onClick={onTestNotification}>
+            Send test notification
+          </Button>
         </CardContent>
       </Card>
     </PopupFrame>

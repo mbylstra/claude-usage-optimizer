@@ -18,6 +18,7 @@ export type { UsageCacheEntry };
 const ORGANIZATION_ID_STORAGE_KEY = 'organizationId';
 const USAGE_CACHE_STORAGE_KEY = 'usageCache';
 const USAGE_HISTORY_STORAGE_KEY = 'usageHistory';
+const SUGGESTED_MODEL_STORAGE_KEY = 'suggestedModel';
 
 const ORGANIZATION_ID_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -142,4 +143,12 @@ export async function appendUsageHistorySample(
 export async function readUsageHistory(): Promise<UsageHistorySample[]> {
   const stored = await readStorageValue<UsageHistorySample[]>(USAGE_HISTORY_STORAGE_KEY);
   return Array.isArray(stored) ? stored : [];
+}
+
+export async function readPreviousSuggestedModel(): Promise<string | null> {
+  return readStorageValue<string>(SUGGESTED_MODEL_STORAGE_KEY);
+}
+
+export async function writeSuggestedModel(model: string): Promise<void> {
+  await chrome.storage.local.set({ [SUGGESTED_MODEL_STORAGE_KEY]: model });
 }

@@ -1,14 +1,24 @@
 import { DEFAULT_TOOLBAR_TITLE, deriveToolbarTitle } from '@/lib/usageToolbarTitle';
+import { deriveSuggestedModel, type SuggestedModel } from '@/lib/suggestedModel';
+import { deriveModelChangeReason } from '@/lib/modelChangeReason';
+import { deriveUsageStatuses } from '@/lib/usagePace';
 import type { UsageSnapshot } from '@/lib/usageTypes';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
-import { isRefreshUsageMessage, type RefreshUsageResponse } from './messages';
+import {
+  isRefreshUsageMessage,
+  isTestNotificationMessage,
+  type RefreshUsageResponse,
+} from './messages';
 import {
   appendUsageHistorySample,
   chromeOrganizationIdCache,
   readUsageCache,
   writeUsageCache,
+  readPreviousSuggestedModel,
+  writeSuggestedModel,
   type UsageCacheEntry,
 } from './usageStorage';
+import { readExtensionSettings } from './settingsStorage';
 
 /**
  * MV3 service worker: owns the refresh loop, the storage cache and the toolbar
@@ -26,6 +36,63 @@ async function applyToolbarTitle(snapshot: UsageSnapshot | null): Promise<void> 
   await chrome.action.setTitle({
     title: snapshot === null ? DEFAULT_TOOLBAR_TITLE : deriveToolbarTitle(snapshot),
   });
+}
+
+async function notifyModelChange(
+  previousModel: string | null,
+  newModel: SuggestedModel,
+  windows: ReturnType<typeof deriveUsageStatuses>,
+): Promise<void> {
+  const settings = await readExtensionSettings();
+  if (!settings.notificationsEnabled) return;
+
+  const reason = deriveModelChangeReason(previousModel, newModel, windows);
+  const modelLabels: Record<string, string> = {
+    opus: 'Opus',
+    sonnet: 'Sonnet',
+    haiku: 'Haiku',
+  };
+
+  try {
+    if (Notification.permission !== 'granted') {
+      console.warn('Notification permission not granted');
+      return;
+    }
+
+    const timestamp = Date.now();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (self as any).registration.showNotification(
+      `Recommended model: ${modelLabels[newModel] || newModel}`,
+      {
+        icon: chrome.runtime.getURL('icons/icon-128.png'),
+        body: reason,
+        tag: `model-recommendation-${timestamp}`,
+      },
+    );
+  } catch (error) {
+    console.error('Failed to send model change notification:', error);
+  }
+}
+
+async function sendTestNotification(): Promise<void> {
+  try {
+    if (Notification.permission !== 'granted') {
+      console.warn('Notification permission not granted');
+      return;
+    }
+
+    const timestamp = Date.now();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (self as any).registration.showNotification('Recommended model: Opus', {
+      icon: chrome.runtime.getURL('icons/icon-128.png'),
+      body: 'This is a test notification. Your notifications are working!',
+      tag: `model-recommendation-${timestamp}`,
+    });
+    console.log('Test notification sent successfully');
+  } catch (error) {
+    console.error('Failed to send test notification:', error);
+    throw error;
+  }
 }
 
 /**
@@ -47,6 +114,16 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
     await writeUsageCache(entry);
     await appendUsageHistorySample(snapshot, fetchedAt);
     await applyToolbarTitle(snapshot);
+
+    const windows = deriveUsageStatuses(snapshot, new Date());
+    const newModel = deriveSuggestedModel(windows);
+    if (newModel !== null) {
+      const previousModel = await readPreviousSuggestedModel();
+      if (previousModel !== newModel) {
+        await notifyModelChange(previousModel, newModel, windows);
+        await writeSuggestedModel(newModel);
+      }
+    }
 
     return entry;
   } catch (error) {
@@ -89,20 +166,30 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!isRefreshUsageMessage(message)) return false;
+  if (isRefreshUsageMessage(message)) {
+    refreshUsage().then(
+      (entry) => sendResponse(entry satisfies RefreshUsageResponse),
+      (error: unknown) =>
+        sendResponse({
+          snapshot: null,
+          fetchedAt: null,
+          error: toUsageErrorInfo(error),
+        } satisfies RefreshUsageResponse),
+    );
+    return true;
+  }
 
-  refreshUsage().then(
-    (entry) => sendResponse(entry satisfies RefreshUsageResponse),
-    (error: unknown) =>
-      sendResponse({
-        snapshot: null,
-        fetchedAt: null,
-        error: toUsageErrorInfo(error),
-      } satisfies RefreshUsageResponse),
-  );
+  if (isTestNotificationMessage(message)) {
+    void sendTestNotification()
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => {
+        console.error('Test notification error:', error);
+        sendResponse({ success: false, error: String(error) });
+      });
+    return true;
+  }
 
-  // Keeps the message channel open for the async `sendResponse` above.
-  return true;
+  return false;
 });
 
 // A worker that was woken for any other reason still ought to have its alarm.

@@ -81,3 +81,5 @@ createRoot(container).render(
     </div>
   </StrictMode>,
 );
+
+export { Column };
