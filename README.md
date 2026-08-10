@@ -25,6 +25,10 @@ to. The scheduler is opt-in and takes two commands to set up.
 
 Not in the Chrome Web Store — you load it unpacked from this checkout.
 
+That is a fair few system-wide dependencies for one small extension, and no
+apology beyond this sentence: every one of them is a genuinely good tool, worth
+having on a development machine whether or not you ever run this project.
+
 On macOS, the prerequisites are:
 
 ```sh
