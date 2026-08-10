@@ -495,6 +495,37 @@ launchctl unload ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.
 
 ---
 
+## 4a. Manual trigger via justfile
+
+Add a command to `justfile` to manually trigger autonomous work (for testing or immediate execution):
+
+```justfile
+# Trigger autonomous work immediately (for testing or manual execution)
+[no-exit-message]
+trigger-autonomous-work:
+  uv run .claude-scripts/run-autonomous-work.py
+```
+
+**Usage:**
+```bash
+just trigger-autonomous-work
+```
+
+**When to use:**
+- Testing the setup during installation (Phase 1-3)
+- Manually running work when you don't want to wait for 2 AM
+- Debugging: re-run a failed prompt after fixing the issue
+- Verifying queue progression after editing `prompts.queue.txt`
+
+**What happens:**
+- Runs the Python script immediately (doesn't wait for launchd trigger)
+- Checks pace data from `~/Downloads/claude-usage.json`
+- Finds and executes first `STATUS: todo` prompt
+- Updates queue status and logs output
+- Exits with same code as the prompt execution
+
+---
+
 ## 5. Architecture and constraints
 
 ```
@@ -550,7 +581,8 @@ Chrome Extension                    Home Directory & Project Root
 - Implement queue parsing logic (read first `STATUS: todo` section)
 - Extract REPO and prompt text correctly
 - Make it executable: `chmod +x .claude-scripts/run-autonomous-work.py`
-- Test manually: `uv run .claude-scripts/run-autonomous-work.py` runs without error
+- Add `trigger-autonomous-work` command to `justfile` (see section 4a)
+- Test manually: `just trigger-autonomous-work` runs without error
 - Test with launchd PATH: ensure `uv` and `claude` are available in launchd environment
 - Verify logs appear in `.claude-scripts/autonomous-work.log`
 - **Exit criterion:** Script parses queue correctly, exits cleanly (logs "no todo prompts" if queue missing/empty)
