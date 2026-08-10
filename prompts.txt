@@ -13,27 +13,5 @@
 
 ===
 STATUS: todo
-REPO: ~/code/current/claude-usage-optimizer
-Analyze recent code changes in this project and suggest improvements.
-Look for opportunities to refactor, simplify, or optimize.
-Report findings and implement high-value changes.
+Create a html/js based tic tac toe game in ~/code/current/agentic-claude-experiments
 
-===
-STATUS: todo
-REPO: ~/code/auto-claude
-Review and update project documentation.
-Check for outdated links, missing sections, or unclear explanations.
-Make improvements where you see them.
-
-===
-STATUS: todo
-Clean up and organize project files.
-Look for dead code, unused dependencies, or obsolete configs.
-Remove what's no longer needed and update build/test scripts as needed.
-
-===
-STATUS: todo
-REPO: ~/code/current/claude-usage-optimizer
-Run `just check` to verify project health.
-Fix any lint, type, or format errors.
-Leave the changes uncommitted for review.
