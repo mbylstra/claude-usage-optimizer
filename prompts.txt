@@ -10,8 +10,11 @@
 # The scheduler runs the first 'todo' section and rewrites its status to
 # 'completed' (exit 0) or 'error' (anything else). Re-queue a failed item by
 # editing its status back to 'todo'.
-
 ===
 STATUS: todo
-Create a html/js based tic tac toe game in ~/code/current/agentic-claude-experiments
+Look for low hanging fruit in clearing disk space on this computer. Write a report and put it in 
+~/code/current/agentic-claude-experiments/clear-disk-space-plan
 
+===
+STATUS: completed
+Create a html/js based tic tac toe game in ~/code/current/agentic-claude-experiments
