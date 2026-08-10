@@ -77,6 +77,12 @@ DEFAULT_REPOSITORY = environment_path(
 PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", -2 * MILLISECONDS_PER_HOUR)
 # A wedged unattended session must not run until morning.
 CLAUDE_TIMEOUT_SECONDS = environment_int("AUTONOMOUS_WORK_TIMEOUT_SECONDS", 3600)
+# Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
+# which is tuned for interactive use and has already silently switched a nightly
+# run to Haiku. The whole point is to spend the weekly window, so the model this
+# job runs on should not be a side effect of an unrelated interactive preference.
+# Only the main thread is pinned — a subagent that names its own model keeps it.
+CLAUDE_MODEL = os.environ.get("AUTONOMOUS_WORK_MODEL") or "claude-opus-5"
 
 # Deliberately *not* `--bare`, which would authenticate with ANTHROPIC_API_KEY
 # instead of the subscription session — spending the wrong budget defeats the
@@ -84,6 +90,8 @@ CLAUDE_TIMEOUT_SECONDS = environment_int("AUTONOMOUS_WORK_TIMEOUT_SECONDS", 3600
 # `stream-json` (which requires `--verbose`) emits an event per step, so the log
 # can be followed live. Plain `json` would withhold everything until the end.
 CLAUDE_BASE_ARGUMENTS = [
+    "--model",
+    CLAUDE_MODEL,
     "--permission-mode",
     "auto",
     "--output-format",
