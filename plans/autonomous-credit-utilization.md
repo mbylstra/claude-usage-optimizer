@@ -21,7 +21,7 @@ Automatically run Claude Code in the middle of the night when weekly usage is be
 The extension's service worker already derives the pace delta for every window. To make it accessible to local scripts:
 
 **What to add to `src/extension/usageStorage.ts`:**
-- After every successful usage fetch, write a normalized JSON file to `.claude-usage.json` (repo root)
+- After every successful usage fetch, write a normalized JSON file to `.claude-scripts/usage.json`
 - File format:
   ```json
   {
@@ -34,10 +34,11 @@ The extension's service worker already derives the pace delta for every window. 
   ```
   - `weeklyPaceDeltaMs`: negative = behind pace (e.g., -7200000 = 2 hours behind)
   - `weeklyPaceStatus`: one of `"behind"`, `"onTrack"`, `"ahead"`
+- Create `.claude-scripts/` directory if it does not exist
 - Overwrite on each refresh (not append — the script reads the latest)
 
 **Git configuration:**
-- Add `.claude-usage.json` to `.gitignore` (runtime artifact)
+- Add `.claude-scripts/` to `.gitignore` (runtime artifacts)
 
 **Why this way:**
 - Decouples the extension from the scheduler (no IPC/HTTP needed)
@@ -49,15 +50,15 @@ The extension's service worker already derives the pace delta for every window. 
 
 ## 2. Shell script: Check pace and invoke Claude Code
 
-Create `~/.claude-scripts/run-autonomous-work.sh`:
+Create `.claude-scripts/run-autonomous-work.sh` in repo:
 
 ```bash
 #!/bin/bash
 set -eu
 
 PROJECT_ROOT="$(pwd)"
-USAGE_FILE="$PROJECT_ROOT/.claude-usage.json"
-LOG_FILE="$PROJECT_ROOT/.claude-scripts-log"
+USAGE_FILE="$PROJECT_ROOT/.claude-scripts/usage.json"
+LOG_FILE="$PROJECT_ROOT/.claude-scripts/autonomous-work.log"
 PACE_THRESHOLD_MS=-7200000  # -2 hours (negative = behind)
 
 # Exit early if usage file missing or too old (>30 min)
@@ -112,7 +113,7 @@ exit $EXIT_CODE
 ```
 
 **Design notes:**
-- Log to `~/.claude-scripts/autonomous-work.log` — keep output for review
+- Log to `.claude-scripts/autonomous-work.log` — keep output for review
 - Pace threshold is configurable (default 2 hours behind)
 - Negative values mean behind pace; positive means on-track or ahead
 - Exits silently if data is missing, stale, or pace is acceptable
@@ -137,7 +138,7 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/michaelbylstra/.claude-scripts/run-autonomous-work.sh</string>
+    <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts/run-autonomous-work.sh</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -147,9 +148,9 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
     <integer>0</integer>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts-log</string>
+  <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts/system.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts-log</string>
+  <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts/system.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -163,8 +164,8 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
 
 **To install:**
 ```bash
-mkdir -p ~/.claude-scripts
-# (create the plist file)
+# Script is already in repo at .claude-scripts/run-autonomous-work.sh
+# Create the plist file and install it:
 launchctl load ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist
 ```
 
@@ -184,14 +185,13 @@ launchctl unload ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.
 ## 4. Architecture and constraints
 
 ```
-Chrome Extension                    Local Scheduling
-├── src/lib/usagePace.ts            Project Root
-│   └── derives pace delta           ├── .claude-usage.json (runtime, gitignored)
-│                                    └── .claude-scripts-log (runtime, gitignored)
-├── src/extension/usageStorage.ts   
-│   └── writes usage + pace          ~/.claude-scripts/
-│       to .claude-usage.json        └── run-autonomous-work.sh
-│                                    
+Chrome Extension                    Project Root
+├── src/lib/usagePace.ts            .claude-scripts/ (gitignored)
+│   └── derives pace delta           ├── run-autonomous-work.sh (executable script)
+│                                    ├── usage.json (data, runtime)
+├── src/extension/usageStorage.ts   ├── autonomous-work.log (output, runtime)
+│   └── writes usage + pace          └── system.log (launchd output, runtime)
+│       to .claude-scripts/usage.json
 └── (5-min refresh via alarms)      ~/Library/LaunchAgents/
                                     └── com.claudeusageoptimizer.autonomouswork.plist
 ```
@@ -213,30 +213,32 @@ Chrome Extension                    Local Scheduling
 ### Phase 0 — Data exposure
 - Add `writeCurrentUsageSnapshot()` to `usageStorage.ts`
   - Derives `weeklyPaceDeltaMs` and `weeklyPaceStatus` from existing pace engine
-  - Writes to `.claude-usage.json` in project root
+  - Writes to `.claude-scripts/usage.json`
+  - Creates `.claude-scripts/` directory if missing
 - Call it after every successful usage fetch in `serviceWorker.ts`
-- Add `.claude-usage.json` and `.claude-scripts-log` to `.gitignore`
-- **Exit criterion:** `.claude-usage.json` is written on every refresh, contains valid JSON with pace delta
+- Add `.claude-scripts/` to `.gitignore`
+- **Exit criterion:** `.claude-scripts/usage.json` is written on every refresh, contains valid JSON with pace delta
 
 ### Phase 1 — Script scaffolding
-- Create `~/.claude-scripts/run-autonomous-work.sh` with stub work (just logs)
-- Test that `bash ~/.claude-scripts/run-autonomous-work.sh` runs without error
-- Verify that log output lands in `~/.claude-scripts/autonomous-work.log`
-- **Exit criterion:** script runs, logs successful execution, correct credits read from JSON
+- Create `.claude-scripts/run-autonomous-work.sh` with stub work (just logs)
+- Make it executable: `chmod +x .claude-scripts/run-autonomous-work.sh`
+- Test that `bash .claude-scripts/run-autonomous-work.sh` runs without error
+- Verify that log output lands in `.claude-scripts/autonomous-work.log`
+- **Exit criterion:** script runs, logs successful execution, correct pace delta read from JSON
 
 ### Phase 2 — Claude Code integration
 - Replace stub with real `claude -p` invocation
 - Define actual work prompt (adjust the example as needed)
-- Test manually: `bash ~/.claude-scripts/run-autonomous-work.sh`
+- Test manually: `bash .claude-scripts/run-autonomous-work.sh` from project root
 - Verify Claude Code runs and logs output correctly
-- **Exit criterion:** Claude Code executes autonomously, output is captured in log
+- **Exit criterion:** Claude Code executes autonomously, output is captured in `.claude-scripts/autonomous-work.log`
 
 ### Phase 3 — Scheduling
 - Create the launchd plist file
 - Install via `launchctl load`
 - Verify via `launchctl list`
 - Wait for next 2 AM or manually trigger for testing
-- Review logs in `~/.claude-scripts/launchd.log` and `~/.claude-scripts/autonomous-work.log`
+- Review logs in `.claude-scripts/system.log` and `.claude-scripts/autonomous-work.log`
 - **Exit criterion:** launchd fires at scheduled time, script runs, output is logged
 
 ### Phase 4 — Polish
@@ -296,7 +298,7 @@ Chrome Extension                    Local Scheduling
 ## 8. Success criteria
 
 - Extension computes weekly pace delta via existing pace engine ✅
-- Extension writes pace data to `.claude-usage.json` (repo root) on every refresh ✅
+- Extension writes pace data to `.claude-scripts/usage.json` on every refresh ✅
 - Shell script reads pace delta and exits if on-pace (not behind threshold) ✅
 - Shell script triggers when behind by 2+ hours ✅
 - `claude -p` invocation runs successfully and logs output ✅
