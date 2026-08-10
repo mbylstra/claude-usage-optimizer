@@ -57,6 +57,16 @@ trigger-autonomous-work *args:
 autonomous-dry-run:
     {{ autonomous_script }} --force --dry-run
 
+# Stop any in-flight run (the scheduler and the claude session it spawned)
+[no-exit-message]
+cancel-autonomous-work:
+    @python3 .claude-scripts/cancel-autonomous-work.py
+
+# Is a run in flight right now?
+[no-exit-message]
+autonomous-running:
+    @pgrep -fl "run-autonomous-work|claude -p" || echo "nothing running"
+
 # Schedule the nightly 2 AM run
 install-autonomous-work:
     @command -v uv >/dev/null || { echo "uv not found on PATH"; exit 1; }
