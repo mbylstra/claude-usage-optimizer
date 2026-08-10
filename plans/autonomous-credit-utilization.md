@@ -200,7 +200,7 @@ mkdir -p "$WORK_REPO"
 cd "$WORK_REPO"
 claude -p "$WORK_PROMPT" \
   --permission-mode auto \
-  --bare \
+  --safe-mode \
   --output-format json >> "$LOG_FILE" 2>&1
 
 EXIT_CODE=$?
@@ -237,7 +237,8 @@ exit $EXIT_CODE
 - Automatically updates the first todo's status to `completed` (exit 0) or `error` (non-zero)
 - Logs all activity to `.claude-scripts/autonomous-work.log` for debugging
 - Exits silently if queue is missing, empty, or no todo prompts remain
-- `--bare` flag makes it reproducible in CI (no hooks)
+- `--safe-mode` disables hooks, plugins, MCP, custom commands (reproducible), but keeps subscription auth and permissions intact
+- `--permission-mode auto` auto-approves permission requests (necessary for unattended execution)
 - `--output-format json` for structured results
 
 ---
