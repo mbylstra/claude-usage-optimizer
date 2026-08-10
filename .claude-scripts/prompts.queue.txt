@@ -1,0 +1,39 @@
+# Autonomous work queue.
+#
+# Sections are separated by a line of three or more '=' characters. Each section
+# is:
+#
+#   STATUS: todo | completed | error   (required, first line of the section)
+#   REPO: ~/path/to/project            (optional, defaults to ~/code/auto-claude)
+#   <everything else is the prompt, and may span multiple lines>
+#
+# The scheduler runs the first 'todo' section and rewrites its status to
+# 'completed' (exit 0) or 'error' (anything else). Re-queue a failed item by
+# editing its status back to 'todo'.
+
+===
+STATUS: todo
+REPO: ~/code/current/claude-usage-optimizer
+Analyze recent code changes in this project and suggest improvements.
+Look for opportunities to refactor, simplify, or optimize.
+Report findings and implement high-value changes.
+
+===
+STATUS: todo
+REPO: ~/code/auto-claude
+Review and update project documentation.
+Check for outdated links, missing sections, or unclear explanations.
+Make improvements where you see them.
+
+===
+STATUS: todo
+Clean up and organize project files.
+Look for dead code, unused dependencies, or obsolete configs.
+Remove what's no longer needed and update build/test scripts as needed.
+
+===
+STATUS: todo
+REPO: ~/code/current/claude-usage-optimizer
+Run `just check` to verify project health.
+Fix any lint, type, or format errors.
+Leave the changes uncommitted for review.

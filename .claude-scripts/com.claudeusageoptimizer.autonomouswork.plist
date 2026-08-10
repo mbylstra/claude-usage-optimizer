@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template. `just install-autonomous-work` substitutes __HOME__ and
+  __PROJECT_ROOT__ and copies the result into ~/Library/LaunchAgents.
+
+  PATH matters more than anything else here: launchd starts jobs with a bare
+  environment, and both `uv` and `claude` install into ~/.local/bin, which is
+  not on the default path. A missing PATH entry shows up as "command not found"
+  in system.log and nothing else.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claudeusageoptimizer.autonomouswork</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>uv</string>
+    <string>run</string>
+    <string>--script</string>
+    <string>__PROJECT_ROOT__/.claude-scripts/run-autonomous-work.py</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/.claude-scripts/system.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/.claude-scripts/system.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

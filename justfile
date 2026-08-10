@@ -40,6 +40,44 @@ icons:
 # Pre-commit gate: everything that must pass before work is considered done
 check: typecheck lint format-check
 
+### Autonomous work — see plans/autonomous-credit-utilization.md
+
+autonomous_script := ".claude-scripts/run-autonomous-work.py"
+launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
+launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
+
+# Run the next queued prompt now, if weekly usage is behind pace
+[no-exit-message]
+trigger-autonomous-work *args:
+    uv run --script {{ autonomous_script }} {{ args }}
+
+# Show what would run next, without invoking Claude or touching the queue
+[no-exit-message]
+autonomous-dry-run:
+    uv run --script {{ autonomous_script }} --force --dry-run
+
+# Schedule the nightly 2 AM run
+install-autonomous-work:
+    @command -v uv >/dev/null || { echo "uv not found on PATH"; exit 1; }
+    @command -v claude >/dev/null || { echo "claude not found on PATH"; exit 1; }
+    mkdir -p "{{ home_directory() }}/Library/LaunchAgents"
+    launchctl unload {{ launch_agent_plist }} 2>/dev/null || true
+    sed -e 's|__PROJECT_ROOT__|{{ justfile_directory() }}|g' \
+        -e 's|__HOME__|{{ home_directory() }}|g' \
+        .claude-scripts/{{ launch_agent_label }}.plist > {{ launch_agent_plist }}
+    launchctl load {{ launch_agent_plist }}
+    @echo "Loaded {{ launch_agent_label }} — runs daily at 02:00"
+
+# Unschedule the nightly run
+uninstall-autonomous-work:
+    launchctl unload {{ launch_agent_plist }} 2>/dev/null || true
+    rm -f {{ launch_agent_plist }}
+    @echo "Removed {{ launch_agent_label }}"
+
+# Is the nightly run scheduled?
+autonomous-status:
+    @launchctl list | grep {{ launch_agent_label }} || echo "not loaded"
+
 # Zip dist/ for a Chrome Web Store upload
 package: build
     rm -f claude-usage-optimizer.zip

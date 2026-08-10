@@ -80,6 +80,55 @@ duration when both ends are known.
 - The build is two Vite passes: the popup, then the service worker as a single
   self-contained ES module with no shared chunks for Chrome to resolve.
 
+## Autonomous work scheduler
+
+`.claude-scripts/` holds a launchd job that runs a queued Claude Code prompt at
+2 AM, but **only when the weekly window is behind an even burn** — the point is
+to keep subscription burn-rate level, so being on pace means nothing runs and
+nothing is spent. Design rationale in `plans/autonomous-credit-utilization.md`.
+
+The extension is the data source. After each successful refresh
+`downloadUsageSnapshotFile` writes `~/Downloads/claude-usage.json` — MV3 has no
+filesystem API, so `chrome.downloads` is the only route out, using a `data:` URL
+because `URL.createObjectURL` does not exist in a service worker. The download's
+history entry is erased afterwards; the file stays.
+
+```sh
+just autonomous-dry-run          # what would run next, without running it
+just trigger-autonomous-work     # run now if behind pace (--force to ignore pace)
+just install-autonomous-work     # schedule the nightly 2 AM run
+just uninstall-autonomous-work   # unschedule it
+just autonomous-status           # is it scheduled?
+```
+
+**Editing the queue.** `.claude-scripts/prompts.queue.txt` is checked in and
+user-editable. Sections split on a line of `===`; each has a required
+`STATUS: todo|completed|error`, an optional `REPO:` (default
+`~/code/auto-claude`), and a multi-line prompt. The scheduler takes the first
+`todo`, runs it, and rewrites that status to `completed` or `error`. Failed
+items are skipped until you edit them back to `todo`.
+
+Every knob is an environment variable rather than a code edit —
+`AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default −2h),
+`AUTONOMOUS_WORK_TIMEOUT_SECONDS`, `AUTONOMOUS_WORK_DEFAULT_REPO`, and the
+file-path overrides used by the tests.
+
+**The newest snapshot is used however old it is — there is no freshness gate.**
+That is deliberate: the extension can only refresh while Chrome is running, so
+gating on age would mean the nightly job almost never fires on a machine whose
+browser is closed at 2 AM. The trade is that a long-closed browser can have the
+job act on figures from days ago; the age is logged on every decision so that is
+visible after the fact. A missing `weeklyPaceDeltaMs` still skips the run, since
+an inactive weekly window is genuinely no data rather than a stale reading.
+
+**launchd starts jobs with a bare environment.** `uv` and `claude` live in
+`~/.local/bin`, which is why the plist sets `PATH` explicitly. A missing entry
+surfaces only as "command not found" in `.claude-scripts/system.log`.
+
+The `claude -p` invocation is deliberately plain apart from `--permission-mode
+auto`. Notably it does **not** pass `--bare`, which would authenticate with
+`ANTHROPIC_API_KEY` and so spend the wrong budget entirely.
+
 ## Tech Stack
 
 - **Language**: TypeScript with strict mode enabled

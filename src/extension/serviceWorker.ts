@@ -12,6 +12,7 @@ import {
 import {
   appendUsageHistorySample,
   chromeOrganizationIdCache,
+  downloadUsageSnapshotFile,
   readUsageCache,
   writeUsageCache,
   readPreviousSuggestedModel,
@@ -108,14 +109,16 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
       organizationIdCache: chromeOrganizationIdCache,
     });
 
-    const fetchedAt = new Date().toISOString();
+    const fetchedAtDate = new Date();
+    const fetchedAt = fetchedAtDate.toISOString();
     const entry: UsageCacheEntry = { snapshot, fetchedAt, error: null };
 
     await writeUsageCache(entry);
     await appendUsageHistorySample(snapshot, fetchedAt);
     await applyToolbarTitle(snapshot);
+    await downloadUsageSnapshotFile(snapshot, fetchedAtDate);
 
-    const windows = deriveUsageStatuses(snapshot, new Date());
+    const windows = deriveUsageStatuses(snapshot, fetchedAtDate);
     const newModel = deriveSuggestedModel(windows);
     if (newModel !== null) {
       const previousModel = await readPreviousSuggestedModel();

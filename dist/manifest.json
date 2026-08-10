@@ -3,7 +3,7 @@
   "name": "Claude Usage Optimizer",
   "version": "0.1.0",
   "description": "See your Claude.ai 5-hour and weekly usage limits, and whether you are ahead of or behind pace.",
-  "permissions": ["storage", "alarms", "notifications"],
+  "permissions": ["storage", "alarms", "notifications", "downloads"],
   "host_permissions": ["https://claude.ai/*"],
   "background": {
     "service_worker": "serviceWorker.js",

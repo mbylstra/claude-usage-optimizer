@@ -1,0 +1,13 @@
+# Declares the Python floor for the autonomous-work scheduler.
+#
+# `run-autonomous-work.py` carries the same requirement inline (PEP 723) and is
+# invoked with `uv run --script`, so this file is documentation rather than the
+# thing uv actually reads. It is deliberately not a buildable package — there is
+# nothing here to install, only one script to run.
+
+[project]
+name = "autonomous-work"
+version = "0.1.0"
+description = "Runs queued Claude Code prompts when weekly usage is behind pace."
+requires-python = ">=3.10"
+dependencies = []

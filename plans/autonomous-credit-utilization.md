@@ -507,17 +507,20 @@ trigger-autonomous-work:
 ```
 
 **Usage:**
+
 ```bash
 just trigger-autonomous-work
 ```
 
 **When to use:**
+
 - Testing the setup during installation (Phase 1-3)
 - Manually running work when you don't want to wait for 2 AM
 - Debugging: re-run a failed prompt after fixing the issue
 - Verifying queue progression after editing `prompts.queue.txt`
 
 **What happens:**
+
 - Runs the Python script immediately (doesn't wait for launchd trigger)
 - Checks pace data from `~/Downloads/claude-usage.json`
 - Finds and executes first `STATUS: todo` prompt
