@@ -4,3 +4,6 @@ dist-storybook/
 .DS_Store
 *.log
 .vite/
+
+# Runtime snapshot written by the native-messaging host
+.claude-scripts/claude-usage.json

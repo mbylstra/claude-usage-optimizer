@@ -79,6 +79,41 @@ uninstall-autonomous-work:
 autonomous-status:
     @launchctl list | grep {{ launch_agent_label }} || echo "not loaded"
 
+native_host_name := "com.claudeusageoptimizer.usagehost"
+native_host_dir := home_directory() / "Library/Application Support/Google/Chrome/NativeMessagingHosts"
+
+# Print the extension ID Chrome derives from dist/
+[no-exit-message]
+extension-id:
+    @python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist"
+
+# Register the native host that writes .claude-scripts/claude-usage.json
+install-usage-host extension_id="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    extension_id="{{ extension_id }}"
+    if [ -z "$extension_id" ]; then
+      extension_id="$(python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist")"
+    fi
+    mkdir -p "{{ native_host_dir }}"
+    chmod +x .claude-scripts/usage-host.py
+    sed -e 's|__PROJECT_ROOT__|{{ justfile_directory() }}|g' \
+        -e "s|__EXTENSION_ID__|$extension_id|g" \
+        ".claude-scripts/{{ native_host_name }}.json" \
+        > "{{ native_host_dir }}/{{ native_host_name }}.json"
+    echo "Registered {{ native_host_name }} for extension $extension_id"
+    echo "Check that ID matches chrome://extensions, then reload the extension."
+
+# Remove the native host registration
+uninstall-usage-host:
+    rm -f "{{ native_host_dir }}/{{ native_host_name }}.json"
+    @echo "Removed {{ native_host_name }}"
+
+# Exercise the native host directly, without Chrome
+[no-exit-message]
+test-usage-host:
+    @python3 .claude-scripts/test-usage-host.py
+
 # Zip dist/ for a Chrome Web Store upload
 package: build
     rm -f claude-usage-optimizer.zip

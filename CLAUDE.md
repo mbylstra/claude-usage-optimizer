@@ -88,18 +88,48 @@ to keep subscription burn-rate level, so being on pace means nothing runs and
 nothing is spent. Design rationale in `plans/autonomous-credit-utilization.md`.
 
 The extension is the data source. After each successful refresh
-`downloadUsageSnapshotFile` writes `~/Downloads/claude-usage.json` — MV3 has no
-filesystem API, so `chrome.downloads` is the only route out, using a `data:` URL
-because `URL.createObjectURL` does not exist in a service worker. The download's
-history entry is erased afterwards; the file stays.
+`exportUsageSnapshot` hands the figures to a **native-messaging host**,
+`.claude-scripts/usage-host.py`, which writes
+`.claude-scripts/claude-usage.json`.
+
+MV3 has no filesystem API, and the obvious escape hatch — `chrome.downloads` —
+was tried first and abandoned: Chrome can put a confirmation dialog in front of a
+download, which is fatal for something firing every five minutes unattended, and
+each write churned the download history. Native messaging costs a one-time host
+registration and in exchange never prompts and keeps the file inside the repo.
+
+The host is stdlib-only Python 3.9 and deliberately depends on nothing —
+**Chrome spawns it with an environment we do not control**, so a `uv` or
+package dependency would fail in ways that are near-undebuggable from inside a
+browser. Its stdout is the wire protocol; anything diagnostic goes to
+`usage-host.log`, because a stray `print` corrupts the stream and the extension
+just sees the host die.
 
 ```sh
+just install-usage-host          # register the native host (needs the extension built)
+just test-usage-host             # exercise the host directly, without Chrome
+just extension-id                # the ID Chrome derives from dist/
+just uninstall-usage-host
+
 just autonomous-dry-run          # what would run next, without running it
 just trigger-autonomous-work     # run now if behind pace (--force to ignore pace)
 just install-autonomous-work     # schedule the nightly 2 AM run
 just uninstall-autonomous-work   # unschedule it
 just autonomous-status           # is it scheduled?
 ```
+
+**Triggering a run from the popup.** Settings has a "Run now" button, which goes
+popup → service worker → native host → detached scheduler process, and reports
+only whether the run _started_: the work itself outlives the message by up to an
+hour and reports into `autonomous-work.log`. It passes `--force`, since a button
+press is an explicit instruction and applying the nightly pace gate to it would
+just make the button look broken.
+
+The host manifest names one `allowed_origins` extension ID. For an unpacked
+extension Chrome derives that ID from the absolute load path, which
+`extension-id.py` recomputes — so moving or renaming `dist/` changes the ID and
+silently breaks the connection. Re-run `just install-usage-host` if that happens,
+or pass an explicit ID as an argument.
 
 **Editing the queue.** `.claude-scripts/prompts.queue.txt` is checked in and
 user-editable. Sections split on a line of `===`; each has a required

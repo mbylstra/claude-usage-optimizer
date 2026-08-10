@@ -55,8 +55,9 @@ def environment_int(name: str, default: int) -> int:
 
 
 # All tunable without rebuilding the extension or editing this file.
+# Written by the native-messaging host (`usage-host.py`), not by a download.
 USAGE_SNAPSHOT_FILE = environment_path(
-    "AUTONOMOUS_WORK_USAGE_FILE", Path.home() / "Downloads" / "claude-usage.json"
+    "AUTONOMOUS_WORK_USAGE_FILE", SCRIPT_DIRECTORY / "claude-usage.json"
 )
 QUEUE_FILE = environment_path("AUTONOMOUS_WORK_QUEUE_FILE", SCRIPT_DIRECTORY / "prompts.queue.txt")
 LOG_FILE = environment_path("AUTONOMOUS_WORK_LOG_FILE", SCRIPT_DIRECTORY / "autonomous-work.log")

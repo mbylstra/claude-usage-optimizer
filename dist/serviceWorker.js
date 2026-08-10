@@ -29,55 +29,55 @@ function l(e, t) {
 	let n = o[e], r = Math.abs(t);
 	return r >= n.severe ? "severe" : r >= n.moderate ? "moderate" : r >= n.slight ? "slight" : "none";
 }
-function u(e, t) {
+function ee(e, t) {
 	return e === "none" ? "onTrack" : t > 0 ? "ahead" : "behind";
 }
-function d(e) {
+function u(e) {
 	if (e === null) return null;
 	let t = new Date(e);
 	return Number.isNaN(t.getTime()) ? null : t;
 }
-function f(e, t) {
-	let n = c(e.utilizationPercent), i = d(e.resetsAt);
+function d(e, t) {
+	let n = c(e.utilizationPercent), i = u(e.resetsAt);
 	if (i === null) return {
 		kind: e.kind,
 		isActive: !1,
 		percentUsed: n
 	};
-	let a = r[e.kind], o = d(e.startedAt) ?? new Date(i.getTime() - a), s = Math.max(1, i.getTime() - o.getTime()), f = c((t.getTime() - o.getTime()) / s * 100), p = n - f, m = i.getTime() - t.getTime(), h = p / 100 * s, g = l(e.kind, h);
+	let a = r[e.kind], o = u(e.startedAt) ?? new Date(i.getTime() - a), s = Math.max(1, i.getTime() - o.getTime()), d = c((t.getTime() - o.getTime()) / s * 100), f = n - d, p = i.getTime() - t.getTime(), m = f / 100 * s, h = l(e.kind, m);
 	return {
 		kind: e.kind,
 		isActive: !0,
 		windowStartedAt: o,
 		windowResetsAt: i,
-		timeRemainingMs: Math.max(0, m),
-		hasResetElapsed: m <= 0,
+		timeRemainingMs: Math.max(0, p),
+		hasResetElapsed: p <= 0,
 		percentUsed: n,
-		pacePercent: f,
-		paceDeltaPercentagePoints: p,
-		paceDeltaMs: h,
-		paceStatus: u(g, h),
-		paceSeverity: g
+		pacePercent: d,
+		paceDeltaPercentagePoints: f,
+		paceDeltaMs: m,
+		paceStatus: ee(h, m),
+		paceSeverity: h
 	};
 }
-function p(e, t) {
-	return e.windows.map((e) => f(e, t));
+function f(e, t) {
+	return e.windows.map((e) => d(e, t));
 }
-function m(e) {
+function p(e) {
 	return e.windows.reduce((e, t) => Math.max(e, c(t.utilizationPercent)), 0);
 }
-function h(e, t) {
+function m(e, t) {
 	return e.find((e) => e.kind === t);
 }
 //#endregion
 //#region src/lib/usageToolbarTitle.ts
-var g = "Claude Usage Optimizer";
-function ee(e) {
-	return `Claude usage: ${Math.round(m(e))}% of the closest limit`;
+var h = "Claude Usage Optimizer";
+function te(e) {
+	return `Claude usage: ${Math.round(p(e))}% of the closest limit`;
 }
 //#endregion
 //#region src/lib/paceTone.ts
-function _(e) {
+function g(e) {
 	if (e.paceStatus === "ahead") switch (e.paceSeverity) {
 		case "severe": return "aheadSevere";
 		case "moderate": return "aheadModerate";
@@ -87,35 +87,35 @@ function _(e) {
 }
 //#endregion
 //#region src/lib/suggestedModel.ts
-function v(e) {
+function ne(e) {
 	if (!e.isActive) return "favourable";
-	switch (_(e)) {
+	switch (g(e)) {
 		case "aheadSevere": return "severe";
 		case "aheadSlight":
 		case "aheadModerate": return "caution";
 		default: return "favourable";
 	}
 }
-var y = 18e5;
-function b(e) {
-	return e.isActive ? _(e) === "aheadSevere" ? "severe" : e.paceStatus === "ahead" && e.paceDeltaMs >= y ? "caution" : "favourable" : "favourable";
+var re = 18e5;
+function ie(e) {
+	return e.isActive ? g(e) === "aheadSevere" ? "severe" : e.paceStatus === "ahead" && e.paceDeltaMs >= re ? "caution" : "favourable" : "favourable";
 }
-function te(e) {
-	let t = h(e, "fiveHour"), n = h(e, "sevenDay");
+function ae(e) {
+	let t = m(e, "fiveHour"), n = m(e, "sevenDay");
 	if (t === void 0 || n === void 0) return null;
-	let r = [b(t), v(n)];
+	let r = [ie(t), ne(n)];
 	return r.includes("severe") ? "haiku" : r.includes("caution") ? "sonnet" : "opus";
 }
 //#endregion
 //#region src/lib/modelChangeReason.ts
-function ne(e, t, n) {
-	let r = h(n, "fiveHour"), i = h(n, "sevenDay");
+function _(e, t, n) {
+	let r = m(n, "fiveHour"), i = m(n, "sevenDay");
 	if (e === null) return "Initial recommendation";
 	if (e === t) return "Recommendation unchanged";
-	let a = r?.isActive ? _(r) : null, o = i?.isActive ? _(i) : null;
-	return re(t, e) ? ie(a, o, t) : ae(a, o, t);
+	let a = r?.isActive ? g(r) : null, o = i?.isActive ? g(i) : null;
+	return v(t, e) ? y(a, o, t) : b(a, o, t);
 }
-function re(e, t) {
+function v(e, t) {
 	let n = {
 		haiku: 0,
 		sonnet: 1,
@@ -123,7 +123,7 @@ function re(e, t) {
 	};
 	return (n[e] ?? -1) > (n[t] ?? -1);
 }
-function ie(e, t, n) {
+function y(e, t, n) {
 	let r = ![
 		"aheadSlight",
 		"aheadModerate",
@@ -135,7 +135,7 @@ function ie(e, t, n) {
 	].includes(t || "");
 	return r && i ? n === "opus" ? "Usage back on track, try Opus" : "Usage improving" : n === "sonnet" ? r && !i ? "5-hour session is healthy, weekly pace improving" : !r && i ? "Weekly pace is healthy, 5-hour session improving" : "Usage improving" : "Usage improving";
 }
-function ae(e, t, n) {
+function b(e, t, n) {
 	let r = e === "aheadSevere", i = t === "aheadSevere";
 	if (n === "haiku") return r && i ? "Both windows at critical pace — switch to Haiku to conserve" : r ? "5-hour session at critical pace — switch to Haiku to conserve" : i ? "Weekly usage at critical pace — switch to Haiku to conserve" : "Usage accelerating — switch to Haiku to conserve";
 	if (n === "sonnet") {
@@ -146,34 +146,34 @@ function ae(e, t, n) {
 }
 //#endregion
 //#region src/extension/claudeUsageClient.ts
-var oe = "https://claude.ai/api", x = class extends Error {
+var x = "https://claude.ai/api", S = class extends Error {
 	code;
 	httpStatus;
 	constructor(e, t, n) {
 		super(t), this.name = "ClaudeUsageError", this.code = e, this.httpStatus = n;
 	}
-}, S = {
+}, C = {
 	fiveHour: ["five_hour", "fiveHour"],
 	sevenDay: ["seven_day", "sevenDay"],
 	sevenDayOpus: ["seven_day_opus", "sevenDayOpus"]
-}, C = [
+}, oe = [
 	"utilization",
 	"utilization_pct",
 	"utilizationPercent"
-], w = [
+], se = [
 	"resets_at",
 	"reset_at",
 	"resetsAt"
-], T = [
+], ce = [
 	"starts_at",
 	"started_at",
 	"window_start",
 	"startsAt"
 ];
-function E(e) {
+function w(e) {
 	return typeof e == "object" && !!e && !Array.isArray(e);
 }
-function D(e, t) {
+function le(e, t) {
 	for (let n of t) {
 		let t = e[n];
 		if (typeof t == "number" && Number.isFinite(t)) return t;
@@ -184,75 +184,75 @@ function D(e, t) {
 	}
 	return null;
 }
-function O(e, t) {
+function T(e, t) {
 	for (let n of t) {
 		let t = e[n];
 		if (typeof t == "string" && t.trim() !== "") return t;
 	}
 	return null;
 }
-async function k(e, t) {
+async function E(e, t) {
 	let n;
 	try {
-		n = await e.fetch(`${oe}${t}`, {
+		n = await e.fetch(`${x}${t}`, {
 			method: "GET",
 			credentials: "include",
 			headers: { Accept: "application/json" }
 		});
 	} catch {
-		throw new x("NETWORK_ERROR", "Could not reach claude.ai. Check your connection.");
+		throw new S("NETWORK_ERROR", "Could not reach claude.ai. Check your connection.");
 	}
-	if (n.status === 401 || n.status === 403) throw new x("NOT_LOGGED_IN", "Not logged in to Claude.ai.", n.status);
-	if (!n.ok) throw new x("HTTP_ERROR", `Claude.ai returned an unexpected response (${n.status}).`, n.status);
+	if (n.status === 401 || n.status === 403) throw new S("NOT_LOGGED_IN", "Not logged in to Claude.ai.", n.status);
+	if (!n.ok) throw new S("HTTP_ERROR", `Claude.ai returned an unexpected response (${n.status}).`, n.status);
 	try {
 		return await n.json();
 	} catch {
-		throw new x("MALFORMED_RESPONSE", "Could not read the response from Claude.ai.");
+		throw new S("MALFORMED_RESPONSE", "Could not read the response from Claude.ai.");
 	}
 }
-async function se(e) {
-	let t = await k(e, "/organizations");
-	if (!Array.isArray(t) || t.length === 0) throw new x("NO_ORGANIZATIONS", "No Claude.ai organizations found.");
-	let n = t.filter(E), r = n.find((e) => {
+async function ue(e) {
+	let t = await E(e, "/organizations");
+	if (!Array.isArray(t) || t.length === 0) throw new S("NO_ORGANIZATIONS", "No Claude.ai organizations found.");
+	let n = t.filter(w), r = n.find((e) => {
 		let t = e.capabilities;
 		return Array.isArray(t) && t.includes("chat");
-	}) ?? n[0], i = r === void 0 ? null : O(r, ["uuid", "id"]);
-	if (i === null) throw new x("NO_ORGANIZATIONS", "No Claude.ai organizations found.");
+	}) ?? n[0], i = r === void 0 ? null : T(r, ["uuid", "id"]);
+	if (i === null) throw new S("NO_ORGANIZATIONS", "No Claude.ai organizations found.");
 	return i;
 }
-function ce(e, t) {
-	let n = S[t].map((t) => e[t]).find((e) => E(e));
+function de(e, t) {
+	let n = C[t].map((t) => e[t]).find((e) => w(e));
 	if (n === void 0) return null;
-	let r = D(n, C);
+	let r = le(n, oe);
 	return r === null ? null : {
 		kind: t,
 		utilizationPercent: r,
-		resetsAt: O(n, w),
-		startedAt: O(n, T)
+		resetsAt: T(n, se),
+		startedAt: T(n, ce)
 	};
 }
-function A(e) {
-	if (!E(e)) throw new x("MALFORMED_RESPONSE", "Unexpected usage response from Claude.ai.");
-	let t = Object.keys(S).map((t) => ce(e, t)).filter((e) => e !== null);
-	if (t.length === 0) throw new x("MALFORMED_RESPONSE", "Claude.ai did not report any usage windows.");
+function fe(e) {
+	if (!w(e)) throw new S("MALFORMED_RESPONSE", "Unexpected usage response from Claude.ai.");
+	let t = Object.keys(C).map((t) => de(e, t)).filter((e) => e !== null);
+	if (t.length === 0) throw new S("MALFORMED_RESPONSE", "Claude.ai did not report any usage windows.");
 	return { windows: t };
 }
-async function j(e, t) {
-	return A(await k(e, `/organizations/${encodeURIComponent(t)}/usage`));
+async function D(e, t) {
+	return fe(await E(e, `/organizations/${encodeURIComponent(t)}/usage`));
 }
-async function M(e) {
+async function pe(e) {
 	let t = await e.organizationIdCache.read();
 	if (t !== null) try {
-		return await j(e, t);
+		return await D(e, t);
 	} catch (t) {
-		if (t instanceof x && t.code === "NOT_LOGGED_IN") throw t;
+		if (t instanceof S && t.code === "NOT_LOGGED_IN") throw t;
 		await e.organizationIdCache.clear();
 	}
-	let n = await se(e), r = await j(e, n);
+	let n = await ue(e), r = await D(e, n);
 	return await e.organizationIdCache.write(n), r;
 }
-function N(e) {
-	return e instanceof x ? e.httpStatus === void 0 ? {
+function O(e) {
+	return e instanceof S ? e.httpStatus === void 0 ? {
 		code: e.code,
 		message: e.message
 	} : {
@@ -264,67 +264,113 @@ function N(e) {
 		message: e instanceof Error ? e.message : "Something went wrong fetching usage."
 	};
 }
-function P(e) {
+function k(e) {
 	return typeof e == "object" && !!e && e.type === "REFRESH_USAGE";
 }
-function F(e) {
+function A(e) {
 	return typeof e == "object" && !!e && e.type === "TEST_NOTIFICATION";
+}
+function j(e) {
+	return typeof e == "object" && !!e && e.type === "RUN_AUTONOMOUS_WORK";
 }
 //#endregion
 //#region src/lib/usageSnapshotExport.ts
-function I(e, t) {
-	return h(e, t)?.percentUsed ?? null;
+function M(e, t) {
+	return m(e, t)?.percentUsed ?? null;
 }
-function L(e, t) {
-	let n = p(e, t), r = h(n, "sevenDay");
+function N(e, t) {
+	let n = f(e, t), r = m(n, "sevenDay");
 	return {
 		fetchedAt: t.toISOString(),
 		weeklyPaceDeltaMs: r?.isActive ? r.paceDeltaMs : null,
 		weeklyPaceStatus: r?.isActive ? r.paceStatus : null,
-		fiveHourPercent: I(n, "fiveHour"),
-		sevenDayPercent: I(n, "sevenDay"),
-		sevenDayOpusPercent: I(n, "sevenDayOpus")
+		fiveHourPercent: M(n, "fiveHour"),
+		sevenDayPercent: M(n, "sevenDay"),
+		sevenDayOpusPercent: M(n, "sevenDayOpus")
 	};
 }
 //#endregion
+//#region src/extension/usageSnapshotExporter.ts
+var P = "com.claudeusageoptimizer.usagehost", F = !1;
+function I(e) {
+	F || (F = !0, console.info(`Usage snapshot not exported (native host "${P}" unavailable). This is expected unless you installed it with \`just install-usage-host\`. Reason: ${String(e)}`));
+}
+var L = "snapshot", R = "runAutonomousWork";
+async function z(e, t) {
+	try {
+		let n = N(e, t), r = await chrome.runtime.sendNativeMessage(P, {
+			type: L,
+			snapshot: n
+		});
+		if (typeof r == "object" && r && "error" in r) {
+			I(r.error);
+			return;
+		}
+		F = !1;
+	} catch (e) {
+		I(e);
+	}
+}
+async function B() {
+	try {
+		let e = await chrome.runtime.sendNativeMessage(P, { type: R });
+		if (typeof e == "object" && e && "ok" in e) {
+			let { ok: t, error: n } = e;
+			return t === !0 ? { started: !0 } : {
+				started: !1,
+				error: n === void 0 ? "Host refused the request" : String(n)
+			};
+		}
+		return {
+			started: !1,
+			error: "Host sent no reply"
+		};
+	} catch (e) {
+		return {
+			started: !1,
+			error: String(e)
+		};
+	}
+}
+//#endregion
 //#region src/extension/usageStorage.ts
-var R = "organizationId", z = "usageCache", B = "usageHistory", V = "suggestedModel", H = 864e5, U = 2e3;
-async function W(e) {
+var V = "organizationId", H = "usageCache", U = "usageHistory", W = "suggestedModel", me = 864e5, he = 2e3;
+async function G(e) {
 	let t = (await chrome.storage.local.get(e))[e];
 	return t === void 0 ? null : t;
 }
-async function G() {
-	let e = await W(R);
+async function ge() {
+	let e = await G(V);
 	if (e === null || typeof e.organizationId != "string") return null;
 	let t = new Date(e.cachedAt).getTime();
-	return Number.isNaN(t) || Date.now() - t > H ? null : e.organizationId;
+	return Number.isNaN(t) || Date.now() - t > me ? null : e.organizationId;
 }
-async function le(e) {
+async function _e(e) {
 	let t = {
 		organizationId: e,
 		cachedAt: (/* @__PURE__ */ new Date()).toISOString()
 	};
-	await chrome.storage.local.set({ [R]: t });
+	await chrome.storage.local.set({ [V]: t });
 }
-async function ue() {
-	await chrome.storage.local.remove(R);
+async function ve() {
+	await chrome.storage.local.remove(V);
 }
-var de = {
-	read: G,
-	write: le,
-	clear: ue
+var ye = {
+	read: ge,
+	write: _e,
+	clear: ve
 };
-async function fe() {
-	return W(z);
+async function be() {
+	return G(H);
 }
 async function K(e) {
-	await chrome.storage.local.set({ [z]: e });
+	await chrome.storage.local.set({ [H]: e });
 }
 function q(e, t) {
 	return e.windows.find((e) => e.kind === t);
 }
-async function pe(e, t) {
-	let n = await W(B) ?? [], r = Array.isArray(n) ? n : [], i = q(e, "fiveHour"), a = q(e, "sevenDay"), o = q(e, "sevenDayOpus"), s = {
+async function xe(e, t) {
+	let n = await G(U) ?? [], r = Array.isArray(n) ? n : [], i = q(e, "fiveHour"), a = q(e, "sevenDay"), o = q(e, "sevenDayOpus"), s = {
 		fetchedAt: t,
 		fiveHourPercent: i?.utilizationPercent ?? null,
 		sevenDayPercent: a?.utilizationPercent ?? null,
@@ -332,60 +378,34 @@ async function pe(e, t) {
 		fiveHourResetsAt: i?.resetsAt ?? null,
 		sevenDayResetsAt: a?.resetsAt ?? null,
 		sevenDayOpusResetsAt: o?.resetsAt ?? null
-	}, c = [...r, s], l = c.slice(Math.max(0, c.length - U));
-	await chrome.storage.local.set({ [B]: l });
+	}, c = [...r, s], l = c.slice(Math.max(0, c.length - he));
+	await chrome.storage.local.set({ [U]: l });
 }
-var me = "claude-usage.json", he = 1e4;
-function ge(e) {
-	return new Promise((t) => {
-		function n(t) {
-			t.id === e && t.state !== void 0 && (t.state.current === "complete" || t.state.current === "interrupted") && r();
-		}
-		let r = () => {
-			clearTimeout(i), chrome.downloads.onChanged.removeListener(n), t();
-		};
-		chrome.downloads.onChanged.addListener(n);
-		let i = setTimeout(r, he);
-	});
+async function Se() {
+	return G(W);
 }
-async function _e(e, t) {
-	try {
-		let n = L(e, t), r = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(n, null, 2))}`, i = await chrome.downloads.download({
-			url: r,
-			filename: me,
-			saveAs: !1,
-			conflictAction: "overwrite"
-		});
-		await ge(i), await chrome.downloads.erase({ id: i });
-	} catch (e) {
-		console.warn("Failed to export usage snapshot to the download directory:", e);
-	}
-}
-async function ve() {
-	return W(V);
-}
-async function J(e) {
-	await chrome.storage.local.set({ [V]: e });
+async function Ce(e) {
+	await chrome.storage.local.set({ [W]: e });
 }
 //#endregion
 //#region src/lib/settingsTypes.ts
-var ye = { notificationsEnabled: !1 }, Y = "settings";
-async function be() {
-	let e = (await chrome.storage.local.get(Y))[Y];
+var we = { notificationsEnabled: !1 }, J = "settings";
+async function Y() {
+	let e = (await chrome.storage.local.get(J))[J];
 	return {
-		...ye,
+		...we,
 		...e
 	};
 }
 //#endregion
 //#region src/extension/serviceWorker.ts
-var X = "refreshUsage", xe = 5;
+var X = "refreshUsage", Te = 5;
 async function Z(e) {
-	await chrome.action.setTitle({ title: e === null ? g : ee(e) });
+	await chrome.action.setTitle({ title: e === null ? h : te(e) });
 }
-async function Se(e, t, n) {
-	if (!(await be()).notificationsEnabled) return;
-	let r = ne(e, t, n), i = {
+async function Ee(e, t, n) {
+	if (!(await Y()).notificationsEnabled) return;
+	let r = _(e, t, n), i = {
 		opus: "Opus",
 		sonnet: "Sonnet",
 		haiku: "Haiku"
@@ -405,7 +425,7 @@ async function Se(e, t, n) {
 		console.error("Failed to send model change notification:", e);
 	}
 }
-async function Ce() {
+async function De() {
 	try {
 		if (Notification.permission !== "granted") {
 			console.warn("Notification permission not granted");
@@ -423,33 +443,33 @@ async function Ce() {
 }
 async function Q() {
 	try {
-		let e = await M({
+		let e = await pe({
 			fetch: globalThis.fetch.bind(globalThis),
-			organizationIdCache: de
+			organizationIdCache: ye
 		}), t = /* @__PURE__ */ new Date(), n = t.toISOString(), r = {
 			snapshot: e,
 			fetchedAt: n,
 			error: null
 		};
-		await K(r), await pe(e, n), await Z(e), await _e(e, t);
-		let i = p(e, t), a = te(i);
+		await K(r), await xe(e, n), await Z(e), await z(e, t);
+		let i = f(e, t), a = ae(i);
 		if (a !== null) {
-			let e = await ve();
-			e !== a && (await Se(e, a, i), await J(a));
+			let e = await Se();
+			e !== a && (await Ee(e, a, i), await Ce(a));
 		}
 		return r;
 	} catch (e) {
-		let t = await fe(), n = {
+		let t = await be(), n = {
 			snapshot: t?.snapshot ?? null,
 			fetchedAt: t?.fetchedAt ?? null,
-			error: N(e)
+			error: O(e)
 		};
 		return await K(n), await Z(n.snapshot), n;
 	}
 }
 function $() {
 	chrome.alarms.create(X, {
-		periodInMinutes: xe,
+		periodInMinutes: Te,
 		delayInMinutes: .1
 	});
 }
@@ -459,11 +479,11 @@ chrome.runtime.onInstalled.addListener(() => {
 	$(), Q();
 }), chrome.alarms.onAlarm.addListener((e) => {
 	e.name === X && Q();
-}), chrome.runtime.onMessage.addListener((e, t, n) => P(e) ? (Q().then((e) => n(e), (e) => n({
+}), chrome.runtime.onMessage.addListener((e, t, n) => k(e) ? (Q().then((e) => n(e), (e) => n({
 	snapshot: null,
 	fetchedAt: null,
-	error: N(e)
-})), !0) : F(e) ? (Ce().then(() => n({ success: !0 })).catch((e) => {
+	error: O(e)
+})), !0) : j(e) ? (B().then((e) => n(e)), !0) : A(e) ? (De().then(() => n({ success: !0 })).catch((e) => {
 	console.error("Test notification error:", e), n({
 		success: !1,
 		error: String(e)

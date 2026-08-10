@@ -4,7 +4,6 @@ import type {
   UsageWindowKind,
   UsageWindowSnapshot,
 } from '@/lib/usageTypes';
-import { buildUsageSnapshotExport } from '@/lib/usageSnapshotExport';
 import type { OrganizationIdCache } from './claudeUsageClient';
 
 export type { UsageCacheEntry };
@@ -144,83 +143,6 @@ export async function appendUsageHistorySample(
 export async function readUsageHistory(): Promise<UsageHistorySample[]> {
   const stored = await readStorageValue<UsageHistorySample[]>(USAGE_HISTORY_STORAGE_KEY);
   return Array.isArray(stored) ? stored : [];
-}
-
-/**
- * Where the autonomous-work scheduler expects to find the snapshot. Relative to
- * the browser's download directory, which is `~/Downloads` unless the user has
- * moved it — see `plans/autonomous-credit-utilization.md` §1.
- */
-const USAGE_SNAPSHOT_DOWNLOAD_FILENAME = 'claude-usage.json';
-
-/** Long enough for a few-hundred-byte local write; short enough not to leak listeners. */
-const DOWNLOAD_COMPLETION_TIMEOUT_MS = 10_000;
-
-/**
- * Resolves once Chrome reports the download as finished, either way.
- *
- * `chrome.downloads.download` resolves as soon as the download is *created*, and
- * erasing an item that is still in flight is not something the API promises
- * anything sensible about, so the history tidy-up below has to wait for the
- * terminal state first.
- */
-function waitForDownloadToSettle(downloadId: number): Promise<void> {
-  return new Promise((resolve) => {
-    function handleChange(delta: chrome.downloads.DownloadDelta): void {
-      if (delta.id !== downloadId || delta.state === undefined) return;
-      if (delta.state.current === 'complete' || delta.state.current === 'interrupted') finish();
-    }
-
-    // `timeoutId` is only read from `finish`, which cannot run before the timer
-    // below has been created.
-    const finish = (): void => {
-      clearTimeout(timeoutId);
-      chrome.downloads.onChanged.removeListener(handleChange);
-      resolve();
-    };
-
-    chrome.downloads.onChanged.addListener(handleChange);
-    const timeoutId = setTimeout(finish, DOWNLOAD_COMPLETION_TIMEOUT_MS);
-  });
-}
-
-/**
- * Writes the snapshot to the download directory so a scheduled shell job can
- * read it. This is the extension's only route to the filesystem — MV3 has no
- * file-write API, and `chrome.downloads` avoids standing up native messaging.
- *
- * The payload is a `data:` URL rather than a blob URL because
- * `URL.createObjectURL` does not exist in a service-worker global scope.
- *
- * The download's *history entry* is erased once the write lands. The file stays
- * on disk; without this a five-minute refresh cadence would bury the user's real
- * downloads under three hundred identical rows a day.
- *
- * Failures are swallowed: a snapshot that cannot be exported must not take the
- * refresh loop — or the popup — down with it.
- */
-export async function downloadUsageSnapshotFile(
-  snapshot: UsageSnapshot,
-  fetchedAt: Date,
-): Promise<void> {
-  try {
-    const exported = buildUsageSnapshotExport(snapshot, fetchedAt);
-    const dataUrl = `data:application/json;charset=utf-8,${encodeURIComponent(
-      JSON.stringify(exported, null, 2),
-    )}`;
-
-    const downloadId = await chrome.downloads.download({
-      url: dataUrl,
-      filename: USAGE_SNAPSHOT_DOWNLOAD_FILENAME,
-      saveAs: false,
-      conflictAction: 'overwrite',
-    });
-
-    await waitForDownloadToSettle(downloadId);
-    await chrome.downloads.erase({ id: downloadId });
-  } catch (error) {
-    console.warn('Failed to export usage snapshot to the download directory:', error);
-  }
 }
 
 export async function readPreviousSuggestedModel(): Promise<string | null> {

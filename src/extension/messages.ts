@@ -18,9 +18,22 @@ export interface TestNotificationMessage {
   type: typeof TEST_NOTIFICATION_MESSAGE;
 }
 
-export type ExtensionMessage = RefreshUsageMessage | TestNotificationMessage;
+export const RUN_AUTONOMOUS_WORK_MESSAGE = 'RUN_AUTONOMOUS_WORK' as const;
+
+export interface RunAutonomousWorkMessage {
+  type: typeof RUN_AUTONOMOUS_WORK_MESSAGE;
+}
+
+export type ExtensionMessage =
+  RefreshUsageMessage | TestNotificationMessage | RunAutonomousWorkMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
+
+/** Whether the native host accepted the request, not whether the work succeeded. */
+export interface RunAutonomousWorkResponse {
+  started: boolean;
+  error?: string;
+}
 
 export function isRefreshUsageMessage(message: unknown): message is RefreshUsageMessage {
   return (
@@ -35,5 +48,13 @@ export function isTestNotificationMessage(message: unknown): message is TestNoti
     typeof message === 'object' &&
     message !== null &&
     (message as { type?: unknown }).type === TEST_NOTIFICATION_MESSAGE
+  );
+}
+
+export function isRunAutonomousWorkMessage(message: unknown): message is RunAutonomousWorkMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === RUN_AUTONOMOUS_WORK_MESSAGE
   );
 }

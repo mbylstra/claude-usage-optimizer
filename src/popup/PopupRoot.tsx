@@ -6,9 +6,12 @@ import { DEFAULT_EXTENSION_SETTINGS, type ExtensionSettings } from '@/lib/settin
 import type { UsageCacheEntry } from '@/lib/usageTypes';
 import {
   REFRESH_USAGE_MESSAGE,
+  RUN_AUTONOMOUS_WORK_MESSAGE,
   TEST_NOTIFICATION_MESSAGE,
   type RefreshUsageResponse,
+  type RunAutonomousWorkResponse,
 } from '@/extension/messages';
+import { IDLE_AUTONOMOUS_WORK_STATUS, type AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
 import {
   readExtensionSettings,
   SETTINGS_CHANGE_KEY,
@@ -48,6 +51,9 @@ export function PopupRoot() {
   const [hasLoadedCache, setHasLoadedCache] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_EXTENSION_SETTINGS);
+  const [autonomousWorkStatus, setAutonomousWorkStatus] = useState<AutonomousWorkStatus>(
+    IDLE_AUTONOMOUS_WORK_STATUS,
+  );
   const now = useTickingClock();
 
   // Chrome sizes the popup to whatever is currently rendered, so switching to
@@ -82,6 +88,29 @@ export function PopupRoot() {
         // the storage listener below will still deliver the result if it lands.
         if (chrome.runtime.lastError !== undefined || response === undefined) return;
         setCacheEntry(response);
+      },
+    );
+  }, []);
+
+  const runAutonomousWork = useCallback(() => {
+    setAutonomousWorkStatus({ kind: 'starting' });
+    chrome.runtime.sendMessage(
+      { type: RUN_AUTONOMOUS_WORK_MESSAGE },
+      (response?: RunAutonomousWorkResponse) => {
+        if (chrome.runtime.lastError !== undefined) {
+          setAutonomousWorkStatus({
+            kind: 'failed',
+            error: chrome.runtime.lastError.message ?? '',
+          });
+          return;
+        }
+        if (response === undefined) {
+          setAutonomousWorkStatus({ kind: 'failed', error: 'No response from the extension' });
+          return;
+        }
+        setAutonomousWorkStatus(
+          response.started ? { kind: 'started' } : { kind: 'failed', error: response.error ?? '' },
+        );
       },
     );
   }, []);
@@ -174,6 +203,8 @@ export function PopupRoot() {
           notificationsEnabled={settings.notificationsEnabled}
           onNotificationsEnabledChange={handleNotificationsEnabledChange}
           onTestNotification={requestTestNotification}
+          autonomousWorkStatus={autonomousWorkStatus}
+          onRunAutonomousWork={runAutonomousWork}
           onBack={closeSettings}
         />
       ) : (

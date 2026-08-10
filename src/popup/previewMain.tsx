@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { UsagePopup } from '@/components/UsagePopup';
+import { SettingsPage } from '@/components/SettingsPage';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
+import type { AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
 import '@/index.css';
 
@@ -42,9 +44,39 @@ const CASES: { label: string; entry: UsageCacheEntry }[] = [
   { label: 'barely started (2%)', entry: sessionEntry(2, 4.9) },
 ];
 
+const AUTONOMOUS_WORK_CASES: { label: string; status: AutonomousWorkStatus }[] = [
+  { label: 'settings — idle', status: { kind: 'idle' } },
+  { label: 'settings — started', status: { kind: 'started' } },
+  {
+    label: 'settings — host missing',
+    status: { kind: 'failed', error: 'Specified native messaging host not found.' },
+  },
+];
+
 function Column({ dark }: { dark: boolean }) {
   return (
     <div className={dark ? 'dark' : ''} style={{ background: dark ? '#111' : '#fff', padding: 8 }}>
+      {AUTONOMOUS_WORK_CASES.map(({ label, status }) => (
+        <div key={label}>
+          <div
+            style={{
+              font: '11px system-ui',
+              color: dark ? '#888' : '#666',
+              padding: '10px 14px 0',
+            }}
+          >
+            {label}
+          </div>
+          <SettingsPage
+            notificationsEnabled={true}
+            onNotificationsEnabledChange={() => {}}
+            onTestNotification={() => {}}
+            autonomousWorkStatus={status}
+            onRunAutonomousWork={() => {}}
+            onBack={() => {}}
+          />
+        </div>
+      ))}
       {CASES.map(({ label, entry }) => (
         <div key={label}>
           <div

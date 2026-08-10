@@ -1,0 +1,7 @@
+{
+  "name": "com.claudeusageoptimizer.usagehost",
+  "description": "Writes the Claude usage snapshot for the autonomous work scheduler.",
+  "path": "__PROJECT_ROOT__/.claude-scripts/usage-host.py",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://__EXTENSION_ID__/"]
+}

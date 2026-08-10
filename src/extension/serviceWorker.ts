@@ -6,13 +6,15 @@ import type { UsageSnapshot } from '@/lib/usageTypes';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
   isRefreshUsageMessage,
+  isRunAutonomousWorkMessage,
   isTestNotificationMessage,
   type RefreshUsageResponse,
+  type RunAutonomousWorkResponse,
 } from './messages';
+import { exportUsageSnapshot, requestAutonomousWorkRun } from './usageSnapshotExporter';
 import {
   appendUsageHistorySample,
   chromeOrganizationIdCache,
-  downloadUsageSnapshotFile,
   readUsageCache,
   writeUsageCache,
   readPreviousSuggestedModel,
@@ -116,7 +118,7 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
     await writeUsageCache(entry);
     await appendUsageHistorySample(snapshot, fetchedAt);
     await applyToolbarTitle(snapshot);
-    await downloadUsageSnapshotFile(snapshot, fetchedAtDate);
+    await exportUsageSnapshot(snapshot, fetchedAtDate);
 
     const windows = deriveUsageStatuses(snapshot, fetchedAtDate);
     const newModel = deriveSuggestedModel(windows);
@@ -178,6 +180,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           fetchedAt: null,
           error: toUsageErrorInfo(error),
         } satisfies RefreshUsageResponse),
+    );
+    return true;
+  }
+
+  if (isRunAutonomousWorkMessage(message)) {
+    void requestAutonomousWorkRun().then((result) =>
+      sendResponse(result satisfies RunAutonomousWorkResponse),
     );
     return true;
   }
