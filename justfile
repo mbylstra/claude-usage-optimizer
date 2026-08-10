@@ -67,6 +67,30 @@ cancel-autonomous-work:
 autonomous-running:
     @pgrep -fl "run-autonomous-work|claude -p" || echo "nothing running"
 
+# Follow the run log live (ctrl-C to stop watching; the run keeps going)
+[no-exit-message]
+autonomous-log lines="40":
+    @touch .claude-scripts/autonomous-work.log
+    @tail -n {{ lines }} -f .claude-scripts/autonomous-work.log
+
+# Follow the raw stream-json events, for when a summary line is not enough
+[no-exit-message]
+autonomous-log-raw lines="10":
+    @touch .claude-scripts/autonomous-work.jsonl
+    @tail -n {{ lines }} -f .claude-scripts/autonomous-work.jsonl
+
+# Start a run and follow it in one go
+[no-exit-message]
+autonomous-run-and-watch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    touch .claude-scripts/autonomous-work.log
+    tail -n 0 -f .claude-scripts/autonomous-work.log &
+    tail_pid=$!
+    trap 'kill $tail_pid 2>/dev/null || true' EXIT
+    {{ autonomous_script }} --force || true
+    sleep 0.5
+
 # Schedule the nightly 2 AM run
 install-autonomous-work:
     @command -v uv >/dev/null || { echo "uv not found on PATH"; exit 1; }

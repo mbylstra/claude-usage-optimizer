@@ -7,3 +7,4 @@ dist-storybook/
 
 # Runtime snapshot written by the native-messaging host
 .claude-scripts/claude-usage.json
+.claude-scripts/autonomous-work.jsonl

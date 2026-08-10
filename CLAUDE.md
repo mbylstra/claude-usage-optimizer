@@ -113,10 +113,33 @@ just uninstall-usage-host
 
 just autonomous-dry-run          # what would run next, without running it
 just trigger-autonomous-work     # run now if behind pace (--force to ignore pace)
+just autonomous-run-and-watch    # run now and follow the log in one go
 just install-autonomous-work     # schedule the nightly 2 AM run
 just uninstall-autonomous-work   # unschedule it
 just autonomous-status           # is it scheduled?
+
+just autonomous-log              # follow the run live
+just autonomous-log-raw          # follow the raw stream-json events
+just autonomous-running          # is a run in flight?
+just cancel-autonomous-work      # stop an in-flight run
 ```
+
+**Following a run live** is why `claude` is invoked with `--output-format
+stream-json --verbose` and read line by line through `Popen`, rather than
+`subprocess.run(capture_output=True)`. Plain `json` emits one blob only after the
+run ends — nothing to follow. Each event is summarised into
+`autonomous-work.log` as it arrives, with the raw events kept alongside in
+`autonomous-work.jsonl`.
+
+Two details that cost time to rediscover: `stdin` must be `DEVNULL` or `claude`
+spends three seconds waiting on an inherited stdin and warns about it; and
+`stderr` is merged into `stdout` because a second unread pipe can deadlock.
+
+**Cancelling** needs `just cancel-autonomous-work` rather than a plain kill.
+The host starts the scheduler in its own session so the run survives Chrome
+tearing the native host down, and `claude` has been observed to outlive a group
+signal aimed at the scheduler — so the cancel script matches both by command
+line, SIGTERMs, waits, then SIGKILLs the survivors.
 
 **Triggering a run from the popup.** Settings has a "Run now" button, which goes
 popup → service worker → native host → detached scheduler process, and reports

@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,11 @@ USAGE_SNAPSHOT_FILE = environment_path(
 )
 QUEUE_FILE = environment_path("AUTONOMOUS_WORK_QUEUE_FILE", SCRIPT_DIRECTORY / "prompts.queue.txt")
 LOG_FILE = environment_path("AUTONOMOUS_WORK_LOG_FILE", SCRIPT_DIRECTORY / "autonomous-work.log")
+# Every raw stream-json event, kept beside the readable log for when a summary
+# line is not enough to work out what happened.
+RAW_EVENT_FILE = environment_path(
+    "AUTONOMOUS_WORK_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-work.jsonl"
+)
 DEFAULT_REPOSITORY = environment_path(
     "AUTONOMOUS_WORK_DEFAULT_REPO", Path.home() / "code" / "auto-claude"
 )
@@ -72,7 +78,15 @@ CLAUDE_TIMEOUT_SECONDS = environment_int("AUTONOMOUS_WORK_TIMEOUT_SECONDS", 3600
 # Deliberately *not* `--bare`, which would authenticate with ANTHROPIC_API_KEY
 # instead of the subscription session — spending the wrong budget defeats the
 # whole point. A plain run keeps subscription auth and its CLAUDE.md context.
-CLAUDE_BASE_ARGUMENTS = ["--permission-mode", "auto", "--output-format", "json"]
+# `stream-json` (which requires `--verbose`) emits an event per step, so the log
+# can be followed live. Plain `json` would withhold everything until the end.
+CLAUDE_BASE_ARGUMENTS = [
+    "--permission-mode",
+    "auto",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+]
 
 
 def log_message(message: str) -> None:
@@ -305,6 +319,62 @@ def write_queue_status(status_line_index: int, new_status: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def shorten(text: str, limit: int = 160) -> str:
+    """One line, bounded — the log is meant to be followed, not waded through."""
+    collapsed = " ".join(text.split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
+
+
+def describe_tool_input(tool_name: str, tool_input: object) -> str:
+    """The one field that says what a tool call is actually doing."""
+    if not isinstance(tool_input, dict):
+        return ""
+
+    for interesting_field in ("command", "file_path", "pattern", "path", "url", "description"):
+        value = tool_input.get(interesting_field)
+        if isinstance(value, str) and value:
+            return value
+
+    return ", ".join(sorted(tool_input)[:3])
+
+
+def summarise_stream_event(event: dict) -> list[str]:
+    """Human-readable lines for one stream-json event; empty to stay quiet."""
+    event_type = event.get("type")
+
+    if event_type == "system" and event.get("subtype") == "init":
+        session_id = str(event.get("session_id") or "")[:8]
+        return [f"claude started (model {event.get('model')}, session {session_id})"]
+
+    if event_type == "assistant":
+        lines = []
+        content = event.get("message", {}).get("content", [])
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = str(block.get("text", "")).strip()
+                if text:
+                    lines.append(f"  claude: {shorten(text)}")
+            elif block.get("type") == "tool_use":
+                tool_name = str(block.get("name", "?"))
+                detail = describe_tool_input(tool_name, block.get("input"))
+                lines.append(f"  → {tool_name}({shorten(detail, 120)})")
+        return lines
+
+    if event_type == "result":
+        duration_seconds = float(event.get("duration_ms") or 0) / 1000
+        cost = event.get("total_cost_usd")
+        cost_text = f", ${cost:.2f}" if isinstance(cost, (int, float)) else ""
+        outcome = "error" if event.get("is_error") else str(event.get("subtype", "done"))
+        return [
+            f"claude finished: {outcome} "
+            f"({event.get('num_turns')} turns, {duration_seconds:.0f}s{cost_text})"
+        ]
+
+    return []
+
+
 def run_claude(entry: QueueEntry) -> int:
     try:
         entry.repository_path.mkdir(parents=True, exist_ok=True)
@@ -315,27 +385,69 @@ def run_claude(entry: QueueEntry) -> int:
     log_message(f"Running queued prompt in {entry.repository_path}")
 
     try:
-        completed = subprocess.run(
+        # Streamed rather than captured, so `just autonomous-log` shows progress
+        # as it happens. `--output-format json` emits a single blob only once the
+        # run is over, which is useless to follow; `stream-json` emits an event
+        # per step. stderr is merged in so nothing is lost or deadlocks on a
+        # second unread pipe.
+        process = subprocess.Popen(
             ["claude", "-p", entry.prompt, *CLAUDE_BASE_ARGUMENTS],
             cwd=entry.repository_path,
-            capture_output=True,
+            # Without this `claude` spends three seconds waiting on an inherited
+            # stdin that is never going to produce anything, and warns about it.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=CLAUDE_TIMEOUT_SECONDS,
+            bufsize=1,
         )
     except FileNotFoundError:
         log_message("`claude` not found on PATH — check the launchd PATH setting")
         return 1
-    except subprocess.TimeoutExpired:
-        log_message(f"Prompt timed out after {CLAUDE_TIMEOUT_SECONDS}s")
+
+    # A wedged session must not run until morning, and `Popen` has no timeout of
+    # its own once we are reading its output line by line.
+    timed_out = False
+
+    def stop_for_timeout() -> None:
+        nonlocal timed_out
+        timed_out = True
+        process.kill()
+
+    watchdog = threading.Timer(CLAUDE_TIMEOUT_SECONDS, stop_for_timeout)
+    watchdog.daemon = True
+    watchdog.start()
+
+    try:
+        with RAW_EVENT_FILE.open("a", encoding="utf-8") as raw_handle:
+            for line in process.stdout or []:
+                raw_handle.write(line)
+                raw_handle.flush()
+
+                stripped_line = line.strip()
+                if not stripped_line:
+                    continue
+
+                try:
+                    event = json.loads(stripped_line)
+                except json.JSONDecodeError:
+                    log_message(f"  {shorten(stripped_line)}")  # plain stderr text
+                    continue
+
+                if isinstance(event, dict):
+                    for summary in summarise_stream_event(event):
+                        log_message(summary)
+
+        exit_code = process.wait()
+    finally:
+        watchdog.cancel()
+
+    if timed_out:
+        log_message(f"Prompt timed out after {CLAUDE_TIMEOUT_SECONDS}s and was killed")
         return 1
 
-    if completed.stdout:
-        log_message(f"claude stdout:\n{completed.stdout.strip()}")
-    if completed.stderr:
-        log_message(f"claude stderr:\n{completed.stderr.strip()}")
-
-    log_message(f"Prompt finished with exit code {completed.returncode}")
-    return completed.returncode
+    log_message(f"Prompt finished with exit code {exit_code}")
+    return exit_code
 
 
 def main() -> int:
