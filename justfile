@@ -42,19 +42,20 @@ check: typecheck lint format-check
 
 ### Autonomous work — see plans/autonomous-credit-utilization.md
 
-autonomous_script := ".claude-scripts/run-autonomous-work.py"
+# The same entry point launchd uses, so a manual run exercises the real path
+autonomous_script := ".claude-scripts/claude-usage-autonomous-work"
 launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
 launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
 
 # Run the next queued prompt now, if weekly usage is behind pace
 [no-exit-message]
 trigger-autonomous-work *args:
-    uv run --script {{ autonomous_script }} {{ args }}
+    {{ autonomous_script }} {{ args }}
 
 # Show what would run next, without invoking Claude or touching the queue
 [no-exit-message]
 autonomous-dry-run:
-    uv run --script {{ autonomous_script }} --force --dry-run
+    {{ autonomous_script }} --force --dry-run
 
 # Schedule the nightly 2 AM run
 install-autonomous-work:

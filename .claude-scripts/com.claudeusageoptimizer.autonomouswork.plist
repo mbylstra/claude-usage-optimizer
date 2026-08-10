@@ -2,26 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template. `just install-autonomous-work` substitutes __HOME__ and
-  __PROJECT_ROOT__ and copies the result into ~/Library/LaunchAgents.
+  Template. `just install-autonomous-work` expands the placeholders below and
+  copies the result into ~/Library/LaunchAgents. Do not edit the installed copy;
+  edit this one and re-run the recipe.
 
   PATH matters more than anything else here: launchd starts jobs with a bare
-  environment, and both `uv` and `claude` install into ~/.local/bin, which is
-  not on the default path. A missing PATH entry shows up as "command not found"
-  in system.log and nothing else.
+  environment, and both `uv` and `claude` install under the home directory
+  rather than on the default path. A missing PATH entry shows up as
+  "command not found" in system.log and nothing else.
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>com.claudeusageoptimizer.autonomouswork</string>
 
+  <!-- A named wrapper rather than /usr/bin/env, so listings show
+       "claude-usage-autonomous-work" instead of "env". -->
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/env</string>
-    <string>uv</string>
-    <string>run</string>
-    <string>--script</string>
-    <string>__PROJECT_ROOT__/.claude-scripts/run-autonomous-work.py</string>
+    <string>__PROJECT_ROOT__/.claude-scripts/claude-usage-autonomous-work</string>
   </array>
 
   <key>StartCalendarInterval</key>

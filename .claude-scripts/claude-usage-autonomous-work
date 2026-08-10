@@ -1,0 +1,15 @@
+#!/bin/bash
+# Wrapper whose only job is to be well named.
+#
+# launchd shows whatever sits at ProgramArguments[0], so pointing the job
+# straight at `/usr/bin/env` made it appear as "env" in process listings and in
+# System Settings — uninformative, and indistinguishable from every other job
+# that does the same thing. Naming this file after the work it does means the
+# entry identifies itself.
+#
+# uv is resolved via PATH, which the plist sets explicitly because launchd
+# starts jobs with a bare environment.
+set -euo pipefail
+
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec uv run --script "$script_directory/run-autonomous-work.py" "$@"
