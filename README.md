@@ -21,6 +21,49 @@ No configuration of any kind for the indicator — the extension discovers your
 organization itself and rides on the claude.ai session you are already signed in
 to. The scheduler is opt-in and takes two commands to set up.
 
+## Quick start
+
+Not in the Chrome Web Store — you load it unpacked from this checkout.
+
+```sh
+just install                    # dependencies
+just build                      # produces dist/
+```
+
+**1. Load the extension.** In Chrome, go to `chrome://extensions`, turn on
+**Developer mode** (top right), click **Load unpacked** and pick the `dist/`
+directory. Pin it, and make sure you are signed in to <https://claude.ai>. That
+is the whole popup — no configuration. ([More detail](#install-it-locally).)
+
+**2. Queue some work.** Edit `prompts.txt` at the repository root. Sections are
+separated by a line of `===`; the first `todo` one is what runs next:
+
+```
+===
+STATUS: todo
+REPO: ~/code/current/claude-usage-optimizer
+Run `just check` and fix any lint, type, or format errors.
+Leave the changes uncommitted for review.
+```
+
+([Full format](#editing-the-queue).)
+
+**3. Wire up the scheduler.**
+
+```sh
+just install-usage-host         # let the extension write usage to disk
+just install-autonomous-work    # schedule the nightly 2 AM run
+```
+
+Then reload the extension in `chrome://extensions` so it picks up the host.
+([More detail](#setting-it-up).)
+
+**4. Test it end to end.** Open the popup, go to **Settings**, and press
+**Run now** — it runs the first `todo` prompt immediately, ignoring the pace
+gate. The button only reports whether the run _started_; follow the run itself
+with `just autonomous-log`. If the button errors, the native host is not
+connected — rebuild, re-run `just install-usage-host`, and reload the extension.
+
 ## What it shows
 
 For the 5-hour session window, the weekly window, and the weekly Opus window:
