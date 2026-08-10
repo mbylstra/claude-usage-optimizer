@@ -108,158 +108,260 @@ Clean up unused dependencies and update docs.
 
 ---
 
-## 3. Shell script: Check pace and invoke queued Claude Code
+## 3. Python script: Check pace and invoke queued Claude Code
 
-Create `.claude-scripts/run-autonomous-work.sh` in repo:
+Create `.claude-scripts/run-autonomous-work.py` in repo to read pace data, find next todo prompt, and execute it.
 
-```bash
-#!/bin/bash
-set -eu
+**Python version management:**
+- Use `uv` to manage Python version and dependencies
+- Create `pyproject.toml` in `.claude-scripts/` to declare dependencies (e.g., `requests` if needed for future features)
+- Script uses `#!/usr/bin/env uv run` shebang to ensure it runs with correct Python version when scheduled
 
-PROJECT_ROOT="$(pwd)"
-USAGE_FILE="$HOME/Downloads/claude-usage.json"
-QUEUE_FILE="$PROJECT_ROOT/.claude-scripts/prompts.queue.txt"
-LOG_FILE="$PROJECT_ROOT/.claude-scripts/autonomous-work.log"
-PACE_THRESHOLD_MS=-7200000  # -2 hours (negative = behind)
+**Create `.claude-scripts/pyproject.toml`:**
+```toml
+[project]
+name = "autonomous-work"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
 
-# Exit early if usage file missing or too old (>30 min)
-if [ ! -f "$USAGE_FILE" ]; then
-  echo "$(date): No usage data found at $USAGE_FILE (extension not running?)" >> "$LOG_FILE"
-  exit 0
-fi
+[build-system]
+build-backend = "hatchling.build"
+build-requires = ["hatchling"]
+```
 
-FETCHED_AT=$(jq -r .fetchedAt "$USAGE_FILE")
-FETCHED_EPOCH=$(date -f "%Y-%m-%dT%H:%M:%SZ" "+%s" <<< "$FETCHED_AT")
-NOW_EPOCH=$(date "+%s")
-AGE_SECS=$((NOW_EPOCH - FETCHED_EPOCH))
+**Create `.claude-scripts/run-autonomous-work.py`:**
 
-if [ $AGE_SECS -gt 1800 ]; then
-  echo "$(date): Usage data stale (${AGE_SECS}s old)" >> "$LOG_FILE"
-  exit 0
-fi
+```python
+#!/usr/bin/env uv run
+# /// script
+# requires-python = ">=3.10"
+# ///
 
-PACE_DELTA=$(jq -r .weeklyPaceDeltaMs "$USAGE_FILE")
-PACE_STATUS=$(jq -r .weeklyPaceStatus "$USAGE_FILE")
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
-# Check if behind pace threshold
-if [ "$PACE_DELTA" -gt "$PACE_THRESHOLD_MS" ]; then
-  HOURS_BEHIND=$(echo "scale=1; $PACE_DELTA / -3600000" | bc)
-  echo "$(date): Not behind pace threshold (${HOURS_BEHIND}h behind, need 2h+)" >> "$LOG_FILE"
-  exit 0
-fi
+# Configuration
+PROJECT_ROOT = Path.cwd()
+USAGE_FILE = Path.home() / "Downloads" / "claude-usage.json"
+QUEUE_FILE = PROJECT_ROOT / ".claude-scripts" / "prompts.queue.txt"
+LOG_FILE = PROJECT_ROOT / ".claude-scripts" / "autonomous-work.log"
+PACE_THRESHOLD_MS = -7200000  # -2 hours (negative = behind)
+DATA_STALENESS_THRESHOLD_SECS = 1800  # 30 minutes
 
-# Behind pace — check for prompts in queue
-if [ ! -f "$QUEUE_FILE" ]; then
-  echo "$(date): No prompt queue found at $QUEUE_FILE" >> "$LOG_FILE"
-  exit 0
-fi
 
-HOURS_BEHIND=$(echo "scale=1; $PACE_DELTA / -3600000" | bc)
-echo "$(date): Behind pace by ${HOURS_BEHIND}h, checking prompt queue" >> "$LOG_FILE"
+def log_message(msg: str) -> None:
+    """Log a message with timestamp."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_msg = f"{timestamp}: {msg}"
+    print(log_msg)
+    with open(LOG_FILE, "a") as f:
+        f.write(log_msg + "\n")
 
-# Extract first todo prompt from queue (skip completed and error statuses)
-# Use awk to parse sections and find the first STATUS: todo
-TEMP_REPO=$(mktemp)
-TEMP_PROMPT=$(mktemp)
-trap "rm -f $TEMP_REPO $TEMP_PROMPT" EXIT
 
-awk -v repo_file="$TEMP_REPO" -v prompt_file="$TEMP_PROMPT" '
-BEGIN { in_section = 0; found_todo = 0; current_status = ""; current_repo = "" }
+def check_pace_data() -> dict | None:
+    """Read and validate pace data from usage file."""
+    if not USAGE_FILE.exists():
+        log_message(f"No usage data found at {USAGE_FILE} (extension not running?)")
+        return None
+    
+    try:
+        with open(USAGE_FILE) as f:
+            data = json.load(f)
+    except Exception as e:
+        log_message(f"Failed to read usage file: {e}")
+        return None
+    
+    # Check if data is fresh
+    fetched_at_str = data.get("fetchedAt")
+    if not fetched_at_str:
+        log_message("No fetchedAt field in usage data")
+        return None
+    
+    try:
+        fetched_at = datetime.fromisoformat(fetched_at_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        age_secs = (now - fetched_at).total_seconds()
+        
+        if age_secs > DATA_STALENESS_THRESHOLD_SECS:
+            log_message(f"Usage data stale ({age_secs}s old)")
+            return None
+    except Exception as e:
+        log_message(f"Failed to parse timestamp: {e}")
+        return None
+    
+    return data
 
-/^===+$/ {
-  in_section = 1
-  current_status = ""
-  current_repo = ""
-  next
-}
 
-in_section && /^STATUS:/ {
-  gsub(/^STATUS:[ ]*/, "")
-  gsub(/[ ]*$/, "")
-  current_status = $0
-  next
-}
+def parse_queue_file() -> tuple[str, str] | None:
+    """Parse queue file and return (repo, prompt) for first todo, or None."""
+    if not QUEUE_FILE.exists():
+        log_message(f"No prompt queue found at {QUEUE_FILE}")
+        return None
+    
+    try:
+        with open(QUEUE_FILE) as f:
+            content = f.read()
+    except Exception as e:
+        log_message(f"Failed to read queue file: {e}")
+        return None
+    
+    # Split by separator (3+ equals signs on a line)
+    sections = []
+    current_section = []
+    
+    for line in content.split("\n"):
+        if line.startswith("==="):
+            if current_section:
+                sections.append("\n".join(current_section))
+            current_section = []
+        else:
+            current_section.append(line)
+    
+    if current_section:
+        sections.append("\n".join(current_section))
+    
+    # Parse each section
+    for section in sections:
+        lines = section.strip().split("\n")
+        if not lines:
+            continue
+        
+        status = None
+        repo = None
+        prompt_lines = []
+        
+        for line in lines:
+            if line.startswith("STATUS:"):
+                status = line.split("STATUS:")[1].strip()
+            elif line.startswith("REPO:"):
+                repo = line.split("REPO:")[1].strip()
+                repo = repo.replace("~", str(Path.home()))
+            elif status is not None and line.strip():
+                # Accumulate prompt content
+                prompt_lines.append(line)
+        
+        # Check if this is a todo section
+        if status == "todo" and prompt_lines:
+            if repo is None:
+                repo = str(Path.home() / "code" / "auto-claude")
+            prompt = "\n".join(prompt_lines)
+            return repo, prompt
+    
+    log_message("No todo prompts in queue (all completed or error)")
+    return None
 
-in_section && /^REPO:/ {
-  gsub(/^REPO:[ ]*/, "")
-  gsub(/[ ]*$/, "")
-  gsub(/~/, ENVIRON["HOME"])
-  current_repo = $0
-  next
-}
 
-in_section && !found_todo && current_status == "todo" && !/^[A-Z]+:/ {
-  # Prompt content (not a header line)
-  if (current_repo == "") {
-    current_repo = ENVIRON["HOME"] "/code/auto-claude"
-  }
-  # Print repo and prompt only once
-  if (!system("test -s " repo_file)) {
-    print >> prompt_file
-  } else {
-    print current_repo > repo_file
-    print > prompt_file
-    found_todo = 1
-  }
-}
-' "$QUEUE_FILE"
+def update_queue_status(new_status: str) -> None:
+    """Update first todo status to completed or error."""
+    try:
+        with open(QUEUE_FILE) as f:
+            content = f.read()
+        
+        # Replace first "STATUS: todo" with new status
+        updated = content.replace("STATUS: todo", f"STATUS: {new_status}", 1)
+        
+        with open(QUEUE_FILE, "w") as f:
+            f.write(updated)
+        
+        log_message(f"Queue updated (first todo → {new_status})")
+    except Exception as e:
+        log_message(f"Failed to update queue: {e}")
 
-# Check if we found a todo prompt
-if [ ! -s "$TEMP_REPO" ] || [ ! -s "$TEMP_PROMPT" ]; then
-  echo "$(date): No todo prompts in queue (all completed or error)" >> "$LOG_FILE"
-  exit 0
-fi
 
-WORK_REPO=$(head -1 "$TEMP_REPO")
-WORK_PROMPT=$(cat "$TEMP_PROMPT")
+def main() -> int:
+    """Main entry point."""
+    # Ensure log file exists
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check pace data
+    pace_data = check_pace_data()
+    if not pace_data:
+        return 0
+    
+    pace_delta_ms = pace_data.get("weeklyPaceDeltaMs", 0)
+    
+    # Check if behind pace threshold
+    if pace_delta_ms > PACE_THRESHOLD_MS:
+        hours_behind = pace_delta_ms / -3600000
+        log_message(f"Not behind pace threshold ({hours_behind:.1f}h behind, need 2h+)")
+        return 0
+    
+    # Behind pace — find and run next todo prompt
+    hours_behind = pace_delta_ms / -3600000
+    log_message(f"Behind pace by {hours_behind:.1f}h, checking prompt queue")
+    
+    result = parse_queue_file()
+    if not result:
+        return 0
+    
+    work_repo, work_prompt = result
+    
+    try:
+        repo_path = Path(work_repo)
+        repo_path.mkdir(parents=True, exist_ok=True)
+        log_message(f"Found todo prompt (repo: {work_repo})")
+        
+        # Run claude from the specified repo
+        result = subprocess.run(
+            [
+                "claude",
+                "-p",
+                work_prompt,
+                "--permission-mode",
+                "auto",
+                "--safe-mode",
+                "--output-format",
+                "json",
+            ],
+            cwd=work_repo,
+            capture_output=True,
+            text=True,
+        )
+        
+        # Log output
+        if result.stdout:
+            log_message(f"Claude stdout: {result.stdout}")
+        if result.stderr:
+            log_message(f"Claude stderr: {result.stderr}")
+        
+        exit_code = result.returncode
+        log_message(f"Prompt execution completed with exit code {exit_code}")
+        
+        # Update queue status
+        new_status = "completed" if exit_code == 0 else "error"
+        update_queue_status(new_status)
+        
+        return exit_code
+    
+    except Exception as e:
+        log_message(f"Error running prompt: {e}")
+        update_queue_status("error")
+        return 1
 
-echo "$(date): Found todo prompt (repo: $WORK_REPO)" >> "$LOG_FILE"
-mkdir -p "$WORK_REPO"
 
-# Run claude from the specified repo
-cd "$WORK_REPO"
-claude -p "$WORK_PROMPT" \
-  --permission-mode auto \
-  --safe-mode \
-  --output-format json >> "$LOG_FILE" 2>&1
-
-EXIT_CODE=$?
-echo "$(date): Prompt execution completed with exit code $EXIT_CODE" >> "$LOG_FILE"
-
-# Update queue file: replace first "STATUS: todo" with "STATUS: completed" or "STATUS: error"
-if [ $EXIT_CODE -eq 0 ]; then
-  NEW_STATUS="completed"
-else
-  NEW_STATUS="error"
-fi
-
-TEMP_QUEUE=$(mktemp)
-awk -v new_status="$NEW_STATUS" '
-BEGIN { replaced = 0 }
-/^STATUS: todo$/ && !replaced {
-  print "STATUS: " new_status
-  replaced = 1
-  next
-}
-{ print }
-' "$QUEUE_FILE" > "$TEMP_QUEUE"
-mv "$TEMP_QUEUE" "$QUEUE_FILE"
-
-echo "$(date): Queue updated (first todo → $NEW_STATUS)" >> "$LOG_FILE"
-exit $EXIT_CODE
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
 **Design notes:**
+- Written in Python with `uv run` shebang for reproducible execution (works in scheduled contexts)
+- `uv` manages Python version (3.10+) and future dependencies via `pyproject.toml`
 - Reads from `.claude-scripts/prompts.queue.txt` instead of hardcoded prompt
 - Finds first `STATUS: todo` section (skips `completed` and `error`)
 - Extracts repo path (defaults to `~/code/auto-claude`) and multi-line prompt text
 - Runs `claude -p` from the specified repo directory, creating it if needed
 - Automatically updates the first todo's status to `completed` (exit 0) or `error` (non-zero)
 - Logs all activity to `.claude-scripts/autonomous-work.log` for debugging
-- Exits silently if queue is missing, empty, or no todo prompts remain
+- Exits silently (exit code 0) if pace OK, queue missing, or no todo prompts
 - `--safe-mode` disables hooks, plugins, MCP, custom commands (reproducible), but keeps subscription auth and permissions intact
 - `--permission-mode auto` auto-approves permission requests (necessary for unattended execution)
 - `--output-format json` for structured results
+- Handles edge cases: missing usage file, stale data, malformed JSON, file I/O errors
 
 ---
 
@@ -277,8 +379,10 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
   <string>com.claudeusageoptimizer.autonomouswork</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
-    <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts/run-autonomous-work.sh</string>
+    <string>/usr/bin/env</string>
+    <string>uv</string>
+    <string>run</string>
+    <string>/Users/michaelbylstra/code/current/claude-usage-optimizer/.claude-scripts/run-autonomous-work.py</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -295,6 +399,8 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
   <dict>
     <key>PATH</key>
     <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/michaelbylstra</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>/Users/michaelbylstra/code/current/claude-usage-optimizer</string>
@@ -302,9 +408,22 @@ Create `~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`:
 </plist>
 ```
 
+**Important: Ensure PATH includes uv and claude**
+
+Before installing, verify that both `uv` and `claude` are in the PATH that launchd will see:
+```bash
+# Check where uv is installed
+which uv  # e.g., /usr/local/bin/uv
+
+# Check where claude is installed
+which claude  # e.g., /usr/local/bin/claude
+```
+
+If either is in a non-standard location, update the `PATH` in the plist accordingly. The default PATH in the plist includes `/usr/local/bin`, which covers most Homebrew installations.
+
 **To install:**
 ```bash
-# Script is already in repo at .claude-scripts/run-autonomous-work.sh
+# Script is already in repo at .claude-scripts/run-autonomous-work.py
 # Create the plist file and install it:
 launchctl load ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist
 ```
@@ -368,13 +487,15 @@ Chrome Extension                    Home Directory & Project Root
 - Add `downloads` permission to `manifest.json` if not already present
 - **Exit criterion:** `~/Downloads/claude-usage.json` is written on every refresh, contains valid JSON with pace delta
 
-### Phase 1 — Shell script scaffolding
-- Create `.claude-scripts/run-autonomous-work.sh`
+### Phase 1 — Python script scaffolding
+- Create `.claude-scripts/pyproject.toml` with Python 3.10+ requirement
+- Create `.claude-scripts/run-autonomous-work.py` with `#!/usr/bin/env uv run` shebang
 - Implement pace checks (usage file freshness, threshold comparison)
 - Implement queue parsing logic (read first `STATUS: todo` section)
 - Extract REPO and prompt text correctly
-- Make it executable: `chmod +x .claude-scripts/run-autonomous-work.sh`
-- Test manually: `bash .claude-scripts/run-autonomous-work.sh` runs without error
+- Make it executable: `chmod +x .claude-scripts/run-autonomous-work.py`
+- Test manually: `uv run .claude-scripts/run-autonomous-work.py` runs without error
+- Test with launchd PATH: ensure `uv` and `claude` are available in launchd environment
 - Verify logs appear in `.claude-scripts/autonomous-work.log`
 - **Exit criterion:** Script parses queue correctly, exits cleanly (logs "no todo prompts" if queue missing/empty)
 
@@ -395,13 +516,15 @@ Chrome Extension                    Home Directory & Project Root
 - **Exit criterion:** Claude Code executes with real prompts, logs are readable, status tracking works end-to-end
 
 ### Phase 4 — Scheduling
-- Create the launchd plist file
-- Install via `launchctl load`
-- Verify via `launchctl list`
-- Wait for next 2 AM or manually trigger for testing
+- Verify `uv` and `claude` are in PATH (in a location visible to launchd, typically `/usr/local/bin`)
+- Create the launchd plist file with correct PATH
+- Install via `launchctl load ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.plist`
+- Verify via `launchctl list | grep claudeusageoptimizer`
+- Test manually by adjusting launchd time to next minute, waiting, then checking logs
 - Review logs in `.claude-scripts/system.log` and `.claude-scripts/autonomous-work.log`
 - Verify queue status updates automatically
-- **Exit criterion:** launchd fires at scheduled time, script runs, queue progresses
+- Check that Python environment is correctly resolved (no "uv: command not found" errors in system.log)
+- **Exit criterion:** launchd fires at scheduled time, script runs with correct PATH, queue progresses
 
 ### Phase 5 — Polish
 - Document the setup in `CLAUDE.md` (queue format, adding prompts, monitoring)
