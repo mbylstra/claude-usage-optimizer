@@ -16,12 +16,13 @@ Automatically run Claude Code in the middle of the night when weekly usage is be
 
 ---
 
-## 1. Data exposure: Extension writes pace data to repo
+## 1. Data exposure: Extension downloads pace data to ~/Downloads
 
-The extension's service worker already derives the pace delta for every window. To make it accessible to local scripts:
+The extension's service worker already derives the pace delta for every window. To make it accessible to the cron script:
 
 **What to add to `src/extension/usageStorage.ts`:**
-- After every successful usage fetch, write a normalized JSON file to `.claude-scripts/usage.json`
+- After every successful usage fetch, call `downloadUsageSnapshot()` 
+- Function creates a JSON blob and uses `chrome.downloads.download()` to write to `~/Downloads/claude-usage.json`
 - File format:
   ```json
   {
@@ -34,17 +35,36 @@ The extension's service worker already derives the pace delta for every window. 
   ```
   - `weeklyPaceDeltaMs`: negative = behind pace (e.g., -7200000 = 2 hours behind)
   - `weeklyPaceStatus`: one of `"behind"`, `"onTrack"`, `"ahead"`
-- Create `.claude-scripts/` directory if it does not exist
-- Overwrite on each refresh (not append — the script reads the latest)
+- Use `conflictAction: 'overwrite'` to replace the file on each refresh
 
-**Git configuration:**
-- Add `.claude-scripts/` to `.gitignore` (runtime artifacts)
+**Implementation sketch:**
+```typescript
+async function downloadUsageSnapshot(data: UsageSnapshot) {
+  const json = JSON.stringify(data);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  
+  await chrome.downloads.download({
+    url: url,
+    filename: 'claude-usage.json',
+    saveAs: false,
+    conflictAction: 'overwrite'
+  });
+  
+  URL.revokeObjectURL(url);
+}
+```
 
 **Why this way:**
-- Decouples the extension from the scheduler (no IPC/HTTP needed)
-- File is co-located with code that depends on it
-- Simple to debug (just look at `.claude-usage.json` in the project)
-- Pace delta already computed by the extension's pace engine, just needs exposure
+- Decouples extension from scheduler (no IPC/HTTP/native messaging needed)
+- Uses standard MV3 `chrome.downloads` API (no extra permissions)
+- Simple to debug (file is at a well-known path: `~/Downloads/claude-usage.json`)
+- Pace delta already computed by extension's pace engine, just needs exposure
+
+**Caveat:**
+- File lives in `~/Downloads`, not project-local
+- User should avoid deleting/moving Downloads folder (would break scheduler)
+- If needed later, could move to proper location with native messaging or HTTP server
 
 ---
 
@@ -97,14 +117,14 @@ Create `.claude-scripts/run-autonomous-work.sh` in repo:
 set -eu
 
 PROJECT_ROOT="$(pwd)"
-USAGE_FILE="$PROJECT_ROOT/.claude-scripts/usage.json"
+USAGE_FILE="$HOME/Downloads/claude-usage.json"
 QUEUE_FILE="$PROJECT_ROOT/.claude-scripts/prompts.queue.txt"
 LOG_FILE="$PROJECT_ROOT/.claude-scripts/autonomous-work.log"
 PACE_THRESHOLD_MS=-7200000  # -2 hours (negative = behind)
 
 # Exit early if usage file missing or too old (>30 min)
 if [ ! -f "$USAGE_FILE" ]; then
-  echo "$(date): No usage data found" >> "$LOG_FILE"
+  echo "$(date): No usage data found at $USAGE_FILE (extension not running?)" >> "$LOG_FILE"
   exit 0
 fi
 
@@ -305,17 +325,19 @@ launchctl unload ~/Library/LaunchAgents/com.claudeusageoptimizer.autonomouswork.
 ## 5. Architecture and constraints
 
 ```
-Chrome Extension                    Project Root
-├── src/lib/usagePace.ts            .claude-scripts/
-│   └── derives pace delta           ├── run-autonomous-work.sh (executable script)
-│                                    ├── usage.json (runtime, gitignored)
-├── src/extension/usageStorage.ts   ├── autonomous-work.log (runtime, gitignored)
-│   └── writes usage + pace          └── system.log (runtime, gitignored)
-│       to .claude-scripts/usage.json
-└── (5-min refresh via alarms)      prompts.queue.txt (checked in, user-editable)
-                                    ├── STATUS: todo|completed|error (auto-updated)
-                                    ├── REPO: ~/path/to/project
-                                    └── prompt text (multiline)
+Chrome Extension                    Home Directory & Project Root
+├── src/lib/usagePace.ts            ~/Downloads/
+│   └── derives pace delta           └── claude-usage.json (runtime, auto-updated by extension)
+│                                    
+├── src/extension/usageStorage.ts   Project Root/
+│   └── downloads usage + pace       .claude-scripts/
+│       to ~/Downloads/              ├── run-autonomous-work.sh (executable script)
+│       claude-usage.json            ├── prompts.queue.txt (checked in, user-editable)
+│       via chrome.downloads         │   ├── STATUS: todo|completed|error (auto-updated)
+│                                    │   ├── REPO: ~/path/to/project
+└── (5-min refresh via alarms)       │   └── prompt text (multiline)
+                                     ├── autonomous-work.log (runtime, gitignored)
+                                     └── system.log (runtime, gitignored)
 
                                     ~/Library/LaunchAgents/
                                     └── com.claudeusageoptimizer.autonomouswork.plist
@@ -338,13 +360,13 @@ Chrome Extension                    Project Root
 ## 6. Implementation phases
 
 ### Phase 0 — Data exposure
-- Add `writeCurrentUsageSnapshot()` to `usageStorage.ts`
+- Add `downloadUsageSnapshot()` to `usageStorage.ts`
   - Derives `weeklyPaceDeltaMs` and `weeklyPaceStatus` from existing pace engine
-  - Writes to `.claude-scripts/usage.json`
-  - Creates `.claude-scripts/` directory if missing
+  - Creates JSON blob and downloads to `~/Downloads/claude-usage.json` via `chrome.downloads.download()`
+  - Uses `conflictAction: 'overwrite'` to replace on each refresh
 - Call it after every successful usage fetch in `serviceWorker.ts`
-- Add `.claude-scripts/` to `.gitignore`
-- **Exit criterion:** `.claude-scripts/usage.json` is written on every refresh, contains valid JSON with pace delta
+- Add `downloads` permission to `manifest.json` if not already present
+- **Exit criterion:** `~/Downloads/claude-usage.json` is written on every refresh, contains valid JSON with pace delta
 
 ### Phase 1 — Shell script scaffolding
 - Create `.claude-scripts/run-autonomous-work.sh`
@@ -442,8 +464,9 @@ Chrome Extension                    Project Root
 ## 9. Success criteria
 
 - Extension computes weekly pace delta via existing pace engine ✅
-- Extension writes pace data to `.claude-scripts/usage.json` on every refresh ✅
-- Shell script reads pace delta and exits if on-pace (not behind threshold) ✅
+- Extension downloads pace data to `~/Downloads/claude-usage.json` on every refresh ✅
+- Shell script reads pace delta from `~/Downloads/claude-usage.json` ✅
+- Shell script exits if on-pace (not behind threshold) ✅
 - Shell script parses `.claude-scripts/prompts.queue.txt` correctly ✅
 - Shell script finds first `STATUS: todo` prompt and extracts REPO and prompt text ✅
 - Shell script creates REPO directory if needed and runs `claude -p` from there ✅
