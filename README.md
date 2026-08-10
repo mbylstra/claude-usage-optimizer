@@ -25,6 +25,29 @@ to. The scheduler is opt-in and takes two commands to set up.
 
 Not in the Chrome Web Store — you load it unpacked from this checkout.
 
+On macOS, the prerequisites are:
+
+```sh
+brew install just node uv       # just runs every command in this repo
+corepack enable pnpm            # or: brew install pnpm
+```
+
+- **`just`, `node`, `pnpm`** — needed to build the extension.
+- **`uv`** — the scheduler script runs under `uv run --script`.
+- **`claude`** — the Claude Code CLI, which is what the scheduler actually
+  runs. Install it from <https://claude.com/claude-code> if you have not
+  already, and sign in to a subscription (not an API key).
+- **`python3`** — the native-messaging host is stdlib Python. macOS supplies it
+  with the Xcode command line tools; run `xcode-select --install` if
+  `python3 --version` fails.
+
+`just install-autonomous-work` refuses to run if `uv` or `claude` is missing.
+Note that launchd starts the nightly job with a bare environment, so both must
+live in `~/.local/bin` or `/opt/homebrew/bin` — the only two user paths the
+launch agent puts on `PATH`.
+
+Then, from the repository root:
+
 ```sh
 just install                    # dependencies
 just build                      # produces dist/
