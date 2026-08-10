@@ -154,8 +154,10 @@ extension Chrome derives that ID from the absolute load path, which
 silently breaks the connection. Re-run `just install-usage-host` if that happens,
 or pass an explicit ID as an argument.
 
-**Editing the queue.** `.claude-scripts/prompts.queue.txt` is checked in and
-user-editable. Sections split on a line of `===`; each has a required
+**Editing the queue.** `prompts.txt` at the repository root is checked in and
+user-editable — deliberately at the top level rather than in `.claude-scripts/`,
+being the only file here meant for regular hand-editing. Sections split on a
+line of `===`; each has a required
 `STATUS: todo|completed|error`, an optional `REPO:` (default
 `~/code/auto-claude`), and a multi-line prompt. The scheduler takes the first
 `todo`, runs it, and rewrites that status to `completed` or `error`. Failed

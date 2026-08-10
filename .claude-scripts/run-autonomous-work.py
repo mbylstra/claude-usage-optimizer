@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIRECTORY.parent
 
 MILLISECONDS_PER_HOUR = 3_600_000
 
@@ -60,7 +61,9 @@ def environment_int(name: str, default: int) -> int:
 USAGE_SNAPSHOT_FILE = environment_path(
     "AUTONOMOUS_WORK_USAGE_FILE", SCRIPT_DIRECTORY / "claude-usage.json"
 )
-QUEUE_FILE = environment_path("AUTONOMOUS_WORK_QUEUE_FILE", SCRIPT_DIRECTORY / "prompts.queue.txt")
+# At the repository root rather than beside this script: the queue is the one
+# file in the whole setup a user is expected to edit regularly.
+QUEUE_FILE = environment_path("AUTONOMOUS_WORK_QUEUE_FILE", PROJECT_ROOT / "prompts.txt")
 LOG_FILE = environment_path("AUTONOMOUS_WORK_LOG_FILE", SCRIPT_DIRECTORY / "autonomous-work.log")
 # Every raw stream-json event, kept beside the readable log for when a summary
 # line is not enough to work out what happened.

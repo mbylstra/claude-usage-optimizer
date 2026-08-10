@@ -157,8 +157,10 @@ halves.
 
 ### Editing the queue
 
-`.claude-scripts/prompts.queue.txt` is checked in and meant to be edited by
-hand. Sections are separated by a line of three or more `=` characters:
+`prompts.txt` at the repository root is checked in and meant to be edited by
+hand — it is the one file in this whole setup you touch regularly, which is why
+it sits at the top level rather than in `.claude-scripts/`. Sections are
+separated by a line of three or more `=` characters:
 
 ```
 ===
