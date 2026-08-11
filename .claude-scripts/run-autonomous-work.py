@@ -120,6 +120,7 @@ CLAUDE_BASE_ARGUMENTS = [
     "--output-format",
     "stream-json",
     "--verbose",
+    "--chrome",
 ]
 
 
