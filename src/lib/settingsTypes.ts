@@ -15,6 +15,8 @@ export interface AutonomousWorkSettings {
    * that runs the work rather than here.
    */
   newProjectsDirectory: string;
+  /** The Claude model to use for autonomous runs (haiku, sonnet, opus). */
+  model: 'haiku' | 'sonnet' | 'opus';
 }
 
 export interface ExtensionSettings {
@@ -28,10 +30,12 @@ export interface ExtensionSettings {
 }
 
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
+export const DEFAULT_MODEL = 'opus';
 
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
   newProjectsDirectory: DEFAULT_NEW_PROJECTS_DIRECTORY,
+  model: DEFAULT_MODEL,
 };
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -56,13 +60,17 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
 
   const autonomousWorkValue = (
     typeof autonomousWork === 'object' && autonomousWork !== null ? autonomousWork : {}
-  ) as { scheduleTime?: unknown; newProjectsDirectory?: unknown };
+  ) as { scheduleTime?: unknown; newProjectsDirectory?: unknown; model?: unknown };
 
   const newProjectsDirectory =
     typeof autonomousWorkValue.newProjectsDirectory === 'string' &&
     autonomousWorkValue.newProjectsDirectory.trim() !== ''
       ? autonomousWorkValue.newProjectsDirectory
       : DEFAULT_NEW_PROJECTS_DIRECTORY;
+
+  const model = ['haiku', 'sonnet', 'opus'].includes(autonomousWorkValue.model as string)
+    ? (autonomousWorkValue.model as 'haiku' | 'sonnet' | 'opus')
+    : DEFAULT_MODEL;
 
   return {
     notificationsEnabled:
@@ -72,6 +80,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     autonomousWork: {
       scheduleTime: normaliseScheduleTime(autonomousWorkValue.scheduleTime),
       newProjectsDirectory,
+      model,
     },
   };
 }

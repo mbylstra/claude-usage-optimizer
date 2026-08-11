@@ -1,9 +1,11 @@
+import * as SelectPrimitive from '@radix-ui/react-select';
 import { ArrowLeft, FolderLock, Play, ScrollText } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
+import { SelectContent, SelectItem, SelectTrigger } from './ui/select';
 import {
   describeAutonomousWorkStatus,
   isAutonomousWorkStatusError,
@@ -153,6 +155,33 @@ export function SettingsPage({
             <p className="text-muted-foreground text-xs">
               A queued prompt with no <code>REPO:</code> line starts a new repository here, named
               after the prompt.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="model-select" className="text-sm">
+              Model for autonomous runs
+            </label>
+            <SelectPrimitive.Root
+              value={autonomousWorkSettings.model}
+              onValueChange={(value: string) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  model: value as 'haiku' | 'sonnet' | 'opus',
+                })
+              }
+            >
+              <SelectTrigger id="model-select">
+                <SelectPrimitive.Value />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="haiku">Haiku (fastest, cheapest)</SelectItem>
+                <SelectItem value="sonnet">Sonnet (balanced)</SelectItem>
+                <SelectItem value="opus">Opus (most capable)</SelectItem>
+              </SelectContent>
+            </SelectPrimitive.Root>
+            <p className="text-muted-foreground text-xs">
+              The Claude model to use when running queued prompts automatically.
             </p>
           </div>
 

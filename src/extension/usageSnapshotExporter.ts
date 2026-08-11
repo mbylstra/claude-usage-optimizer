@@ -143,6 +143,7 @@ export async function syncAutonomousWorkSettings(
         scheduleHour: settings.scheduleTime.hour,
         scheduleMinute: settings.scheduleTime.minute,
         newProjectsDirectory: settings.newProjectsDirectory,
+        model: settings.model,
       },
     });
 

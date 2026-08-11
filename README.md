@@ -534,7 +534,7 @@ At the OS level it is narrower, which is the opposite of how granting a folder
 to a binary feels. The intuition to check is that ticking `~/Documents` for the
 private `uv` hands it something it did not have before — but compare it against
 the alternative, which is running `uv` from a terminal. There it is attributed
-to Terminal or iTerm and inherits *their* grants, and those are typically
+to Terminal or iTerm and inherits _their_ grants, and those are typically
 already wide: whatever you have ever approved for your terminal, for anything
 that terminal has ever launched. Against that baseline the re-signed copy is a
 reduction. It is a separate TCC client holding only the folders you ticked for

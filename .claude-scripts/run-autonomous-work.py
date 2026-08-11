@@ -105,7 +105,16 @@ CLAUDE_TIMEOUT_SECONDS = environment_int("AUTONOMOUS_WORK_TIMEOUT_SECONDS", 3600
 # run to Haiku. The whole point is to spend the weekly window, so the model this
 # job runs on should not be a side effect of an unrelated interactive preference.
 # Only the main thread is pinned — a subagent that names its own model keeps it.
-CLAUDE_MODEL = os.environ.get("AUTONOMOUS_WORK_MODEL") or "claude-opus-5"
+# The environment variable wins first, then the settings (set by the extension),
+# then the default.
+_settings = autonomous_work_settings.read_settings()
+_model_name = os.environ.get("AUTONOMOUS_WORK_MODEL") or _settings.model
+_MODEL_ID_MAP = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+}
+CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
 
 # Deliberately *not* `--bare`, which would authenticate with ANTHROPIC_API_KEY
 # instead of the subscription session — spending the wrong budget defeats the

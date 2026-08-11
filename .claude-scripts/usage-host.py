@@ -460,8 +460,8 @@ def apply_autonomous_work_settings(message):
     result = autonomous_work_settings.apply_settings(settings)
 
     log_message(
-        "Settings updated: run at {}, new projects in {} ({})".format(
-            settings.describe_schedule(), settings.new_projects_directory, result.detail
+        "Settings updated: run at {}, new projects in {}, model {}, ({})".format(
+            settings.describe_schedule(), settings.new_projects_directory, settings.model, result.detail
         )
     )
 

@@ -467,7 +467,8 @@
       }
 
       .insight-card.half {
-        background: linear-gradient(180deg, oklch(0.66 0.13 40 / 10%), transparent 60%), var(--card);
+        background:
+          linear-gradient(180deg, oklch(0.66 0.13 40 / 10%), transparent 60%), var(--card);
         border-color: oklch(0.66 0.13 40 / 35%);
       }
 
@@ -880,7 +881,15 @@
       <div class="wrap nav-inner">
         <a class="brandmark" href="#top">
           <span class="dot" aria-hidden="true">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.15 0.02 40)" stroke-width="2.6" stroke-linecap="round">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="oklch(0.15 0.02 40)"
+              stroke-width="2.6"
+              stroke-linecap="round"
+            >
               <path d="M12 6v6l4 2" />
               <circle cx="12" cy="12" r="9" />
             </svg>
@@ -904,14 +913,25 @@
             <h1>Know your <span class="accent">pace</span>, not just your percentage.</h1>
             <p class="lede">
               Claude.ai tells you that you have used 61%. It does not tell you that
-              <strong>47% of the week is gone</strong> — which is the half you can act on.
-              This extension shows the gap as <strong>time</strong>, then spends the headroom
-              you would otherwise waste.
+              <strong>47% of the week is gone</strong> — which is the half you can act on. This
+              extension shows the gap as <strong>time</strong>, then spends the headroom you would
+              otherwise waste.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="#install">
                 Get started
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
               </a>
               <a class="btn btn-ghost" href="#autonomous">See the nightly job</a>
             </div>
@@ -921,15 +941,45 @@
           </div>
 
           <!-- The popup, rebuilt in markup so it stays sharp at any size. -->
-          <div class="popup" role="img" aria-label="The extension popup, showing a 5-hour session window 14 minutes behind pace and a weekly window 23 hours 34 minutes behind pace.">
+          <div
+            class="popup"
+            role="img"
+            aria-label="The extension popup, showing a 5-hour session window 14 minutes behind pace and a weekly window 23 hours 34 minutes behind pace."
+          >
             <div class="popup-head">
               <div>
                 <div class="popup-title">Claude usage</div>
                 <div class="popup-sub">Updated just now</div>
               </div>
               <div class="popup-icons">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.2 7.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+                <svg
+                  width="17"
+                  height="17"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                  <path d="M21 3v6h-6" />
+                </svg>
+                <svg
+                  width="17"
+                  height="17"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path
+                    d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.2 7.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"
+                  />
+                </svg>
               </div>
             </div>
 
@@ -944,14 +994,28 @@
               </div>
               <div class="wc-pace c-steady">behind optimal pace</div>
               <div class="bar">
-                <div class="bar-fill c-steady" style="width: 2%; background: var(--pace-steady)"></div>
-                <div class="bar-ticks"><span></span><span></span><span></span><span></span><span></span></div>
+                <div
+                  class="bar-fill c-steady"
+                  style="width: 2%; background: var(--pace-steady)"
+                ></div>
+                <div class="bar-ticks">
+                  <span></span><span></span><span></span><span></span><span></span>
+                </div>
                 <div class="bar-marker" style="left: 6%"></div>
               </div>
               <dl class="wc-facts">
-                <div><dt>Started</dt><dd>1:10pm</dd></div>
-                <div><dt>Resets</dt><dd>6:10pm</dd></div>
-                <div><dt>Left</dt><dd>4h 45m</dd></div>
+                <div>
+                  <dt>Started</dt>
+                  <dd>1:10pm</dd>
+                </div>
+                <div>
+                  <dt>Resets</dt>
+                  <dd>6:10pm</dd>
+                </div>
+                <div>
+                  <dt>Left</dt>
+                  <dd>4h 45m</dd>
+                </div>
               </dl>
             </div>
 
@@ -967,13 +1031,25 @@
               <div class="wc-pace c-steady">behind optimal pace</div>
               <div class="bar">
                 <div class="bar-fill" style="width: 13%; background: var(--pace-steady)"></div>
-                <div class="bar-ticks"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                <div class="bar-ticks">
+                  <span></span><span></span><span></span><span></span><span></span><span></span
+                  ><span></span>
+                </div>
                 <div class="bar-marker" style="left: 27%"></div>
               </div>
               <dl class="wc-facts">
-                <div><dt>Started</dt><dd>Thu, 4pm</dd></div>
-                <div><dt>Resets</dt><dd>Thu, 4pm</dd></div>
-                <div><dt>Left</dt><dd>5d 2h</dd></div>
+                <div>
+                  <dt>Started</dt>
+                  <dd>Thu, 4pm</dd>
+                </div>
+                <div>
+                  <dt>Resets</dt>
+                  <dd>Thu, 4pm</dd>
+                </div>
+                <div>
+                  <dt>Left</dt>
+                  <dd>5d 2h</dd>
+                </div>
               </dl>
             </div>
 
@@ -993,8 +1069,8 @@
             <h2>A percentage is half a sentence.</h2>
             <p>
               Overshooting the weekly cap costs you a working day. Undershooting it wastes the
-              subscription just as surely, and much more quietly. Both mistakes come from
-              reading usage without reading the clock beside it.
+              subscription just as surely, and much more quietly. Both mistakes come from reading
+              usage without reading the clock beside it.
             </p>
           </div>
 
@@ -1006,9 +1082,7 @@
             </div>
             <div class="insight-card half">
               <div class="label">What you can act on</div>
-              <div class="num">
-                61% used, <span class="dim">47% of the week gone</span>
-              </div>
+              <div class="num">61% used, <span class="dim">47% of the week gone</span></div>
               <p>
                 Ahead of an even burn — and the extension puts a number on it:
                 <span class="c-moderate">1 day 3h ahead of pace</span>.
@@ -1019,36 +1093,71 @@
           <div class="features" style="margin-top: 20px">
             <div class="feature">
               <div class="glyph c-steady">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
               </div>
               <h3>Pace, expressed as time</h3>
               <p>
-                “36m ahead of pace” means you have already spent what an even burn would not
-                reach for another 36 minutes. The same percentage gap is worth minutes on a
-                5-hour window and days on a weekly one — which is why raw percentage points
-                were never the number to show.
+                “36m ahead of pace” means you have already spent what an even burn would not reach
+                for another 36 minutes. The same percentage gap is worth minutes on a 5-hour window
+                and days on a weekly one — which is why raw percentage points were never the number
+                to show.
               </p>
             </div>
             <div class="feature">
               <div class="glyph c-headroom">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M21 3v6h-6"/></svg>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 17l6-6 4 4 8-8" />
+                  <path d="M21 3v6h-6" />
+                </svg>
               </div>
               <h3>A bar you can read at a glance</h3>
               <p>
                 Every bar carries a vertical line at the even-burn point, so the picture and the
-                number say the same thing. Behind it runs a scale — one tick per hour of a
-                session, one per day of a week — so the line reads as “three hours in”.
+                number say the same thing. Behind it runs a scale — one tick per hour of a session,
+                one per day of a week — so the line reads as “three hours in”.
               </p>
             </div>
             <div class="feature">
               <div class="glyph" style="color: var(--brand)">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 6.2L21 12l-6.6 2.8L12 21l-2.4-6.2L3 12l6.6-2.8z"/></svg>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 3l2.4 6.2L21 12l-6.6 2.8L12 21l-2.4-6.2L3 12l6.6-2.8z" />
+                </svg>
               </div>
               <h3>A suggested model</h3>
               <p>
-                <b style="color: var(--fg); font-weight: 550">Opus</b> when both gating windows
-                have room, <b style="color: var(--fg); font-weight: 550">Haiku</b> the moment
-                either is burning severely ahead, Sonnet in between. Optional notifications say
+                <b style="color: var(--fg); font-weight: 550">Opus</b> when both gating windows have
+                room, <b style="color: var(--fg); font-weight: 550">Haiku</b> the moment either is
+                burning severely ahead, Sonnet in between. Optional notifications say
                 <em>which window</em> drove the change.
               </p>
             </div>
@@ -1106,8 +1215,11 @@
             <h2>Unused capacity does not roll over.</h2>
             <p>
               Headroom you never spend is simply gone. So a launchd job runs a queued Claude Code
-              prompt at 2 AM — <strong style="color: var(--fg)">but only when the week is behind
-              an even burn.</strong> On pace, nothing runs and nothing is spent.
+              prompt at 2 AM —
+              <strong style="color: var(--fg)"
+                >but only when the week is behind an even burn.</strong
+              >
+              On pace, nothing runs and nothing is spent.
             </p>
           </div>
 
@@ -1116,7 +1228,18 @@
               <ul class="checklist">
                 <li>
                   <span class="tick">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    <svg
+                      width="17"
+                      height="17"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
                   </span>
                   <span
                     ><b>Gated on pace, not on a schedule.</b> The job reads the same snapshot the
@@ -1125,38 +1248,75 @@
                 </li>
                 <li>
                   <span class="tick">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    <svg
+                      width="17"
+                      height="17"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
                   </span>
                   <span
                     ><b>A queue you edit by hand.</b> <code>prompts.txt</code> at the repo root,
-                    sections split by <code>===</code>. The first <code>todo</code> runs; its
-                    status is rewritten to <code>completed</code> or <code>error</code>.</span
+                    sections split by <code>===</code>. The first <code>todo</code> runs; its status
+                    is rewritten to <code>completed</code> or <code>error</code>.</span
                   >
                 </li>
                 <li>
                   <span class="tick">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    <svg
+                      width="17"
+                      height="17"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
                   </span>
                   <span
-                    ><b>Bring a repo, or don’t.</b> A prompt with no <code>REPO:</code> gets a
-                    fresh <code>git init</code>-ed project of its own, named for the date and the
-                    first words of the prompt.</span
+                    ><b>Bring a repo, or don’t.</b> A prompt with no <code>REPO:</code> gets a fresh
+                    <code>git init</code>-ed project of its own, named for the date and the first
+                    words of the prompt.</span
                   >
                 </li>
                 <li>
                   <span class="tick">
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    <svg
+                      width="17"
+                      height="17"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
                   </span>
                   <span
-                    ><b>Watch it live, or read it later.</b> A detached window streams the run as
-                    it happens — and opening it after the fact replays the most recent run, so you
-                    can see what the night did.</span
+                    ><b>Watch it live, or read it later.</b> A detached window streams the run as it
+                    happens — and opening it after the fact replays the most recent run, so you can
+                    see what the night did.</span
                   >
                 </li>
               </ul>
             </div>
 
-            <div class="runlog" role="img" aria-label="The run-log window, streaming a run in progress.">
+            <div
+              class="runlog"
+              role="img"
+              aria-label="The run-log window, streaming a run in progress."
+            >
               <div class="runlog-head">
                 <div class="runlog-status">
                   <span class="pulse"></span>
@@ -1168,14 +1328,35 @@
                 </div>
               </div>
               <div class="runlog-body">
-                <div class="entry"><span class="t">02:00:04</span><span class="txt">Weekly window 9h 12m behind pace — running.</span></div>
-                <div class="entry"><span class="t">02:00:06</span><span class="txt">Prompt: “Build a small markdown outliner…”</span></div>
-                <div class="entry"><span class="t">02:00:11</span><span class="tool">Write</span></div>
-                <div class="entry"><span class="t">02:00:11</span><span class="txt">src/outline.ts</span></div>
-                <div class="entry"><span class="t">02:01:38</span><span class="tool">Bash</span></div>
-                <div class="entry"><span class="t">02:01:38</span><span class="txt">just check</span></div>
-                <div class="entry"><span class="t">02:02:02</span><span class="ok">✓ typecheck · lint · format</span></div>
-                <div class="entry"><span class="t">02:04:21</span><span class="txt">Wiring up the keyboard handling<span class="caret"></span></span></div>
+                <div class="entry">
+                  <span class="t">02:00:04</span
+                  ><span class="txt">Weekly window 9h 12m behind pace — running.</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:00:06</span
+                  ><span class="txt">Prompt: “Build a small markdown outliner…”</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:00:11</span><span class="tool">Write</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:00:11</span><span class="txt">src/outline.ts</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:01:38</span><span class="tool">Bash</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:01:38</span><span class="txt">just check</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:02:02</span><span class="ok">✓ typecheck · lint · format</span>
+                </div>
+                <div class="entry">
+                  <span class="t">02:04:21</span
+                  ><span class="txt"
+                    >Wiring up the keyboard handling<span class="caret"></span
+                  ></span>
+                </div>
               </div>
             </div>
           </div>
@@ -1207,16 +1388,15 @@
             <div class="step">
               <h3>Load the extension</h3>
               <p>
-                The one step it cannot do for you: <code>chrome://extensions</code> → Developer
-                mode → <b>Load unpacked</b> → pick <code>dist/</code>. Pin it and sign in to
-                claude.ai.
+                The one step it cannot do for you: <code>chrome://extensions</code> → Developer mode
+                → <b>Load unpacked</b> → pick <code>dist/</code>. Pin it and sign in to claude.ai.
               </p>
             </div>
             <div class="step">
               <h3>Queue some work</h3>
               <p>
-                Edit <code>prompts.txt</code>, then press <b>Run now</b> in Settings to test it
-                end to end. It ignores the pace gate and opens the live run window.
+                Edit <code>prompts.txt</code>, then press <b>Run now</b> in Settings to test it end
+                to end. It ignores the pace gate and opens the live run window.
               </p>
             </div>
           </div>
@@ -1242,16 +1422,27 @@
             <div class="kicker">Scope and permissions</div>
             <h2>It reads your usage. That is all it reads.</h2>
             <p>
-              No account to make, no key to paste, no server in the middle. The extension rides
-              the claude.ai session you are already signed in to, and everything it writes stays
-              inside the checkout.
+              No account to make, no key to paste, no server in the middle. The extension rides the
+              claude.ai session you are already signed in to, and everything it writes stays inside
+              the checkout.
             </p>
           </div>
 
           <div class="privacy">
             <div class="feature">
               <div class="glyph c-headroom">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.4 8.3-8 9-4.6-.7-8-4-8-9V6z"/></svg>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 3l8 3v6c0 5-3.4 8.3-8 9-4.6-.7-8-4-8-9V6z" />
+                </svg>
               </div>
               <h3>Three permissions, and no more</h3>
               <p>
@@ -1262,23 +1453,46 @@
             </div>
             <div class="feature">
               <div class="glyph c-steady">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 6h16M4 12h16M4 18h10" />
+                </svg>
               </div>
               <h3>Nothing leaves your machine</h3>
               <p>
-                Two GETs to claude.ai’s own API, and a snapshot written to a JSON file in the
-                repo by a stdlib-only native host. There is no third party.
+                Two GETs to claude.ai’s own API, and a snapshot written to a JSON file in the repo
+                by a stdlib-only native host. There is no third party.
               </p>
             </div>
             <div class="feature">
               <div class="glyph" style="color: var(--brand)">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="4" y="10" width="16" height="10" rx="2" />
+                  <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                </svg>
               </div>
               <h3>Never Full Disk Access</h3>
               <p>
-                The nightly job runs its own re-signed copy of <code>uv</code>, so folders you
-                allow are allowed for that job and nothing else. Your everyday
-                <code>uvx</code> stays unprivileged.
+                The nightly job runs its own re-signed copy of <code>uv</code>, so folders you allow
+                are allowed for that job and nothing else. Your everyday <code>uvx</code> stays
+                unprivileged.
               </p>
             </div>
           </div>
@@ -1290,13 +1504,24 @@
           <div class="final">
             <h2>Stop guessing whether you are burning too fast.</h2>
             <p>
-              Read the pace, take the suggestion, and let the nights you were never going to use
-              go to work instead.
+              Read the pace, take the suggestion, and let the nights you were never going to use go
+              to work instead.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="#install">
                 Get started
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
               </a>
               <a class="btn btn-ghost" href="https://github.com">View the source</a>
             </div>
@@ -1306,7 +1531,16 @@
     </main>
 
     <footer>
-      <div class="wrap" style="display: flex; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 16px">
+      <div
+        class="wrap"
+        style="
+          display: flex;
+          justify-content: space-between;
+          width: 100%;
+          flex-wrap: wrap;
+          gap: 16px;
+        "
+      >
         <span>Claude Usage Optimizer — MIT licensed. Not affiliated with Anthropic.</span>
         <span>Built on an unofficial, undocumented claude.ai API. It may change.</span>
       </div>

@@ -49,6 +49,7 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # projects rather than a project, which is why the default is not the old
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
+DEFAULT_MODEL = "opus"
 
 
 def _environment_path(name: str, default: Path) -> Path:
@@ -78,11 +79,12 @@ LAUNCHCTL_COMMAND = os.environ.get("AUTONOMOUS_WORK_LAUNCHCTL", "/bin/launchctl"
 
 @dataclass(frozen=True)
 class AutonomousWorkSettings:
-    """Local wall-clock hour/minute of the nightly run, and where new work lands."""
+    """Local wall-clock hour/minute of the nightly run, where new work lands, and which model to use."""
 
     schedule_hour: int = DEFAULT_SCHEDULE_HOUR
     schedule_minute: int = DEFAULT_SCHEDULE_MINUTE
     new_projects_directory: str = DEFAULT_NEW_PROJECTS_DIRECTORY
+    model: str = DEFAULT_MODEL
 
     @property
     def new_projects_path(self) -> Path:
@@ -123,6 +125,13 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         else DEFAULT_NEW_PROJECTS_DIRECTORY
     )
 
+    model_value = settings_data.get("model")
+    model = (
+        model_value
+        if isinstance(model_value, str) and model_value in ("haiku", "sonnet", "opus")
+        else DEFAULT_MODEL
+    )
+
     return AutonomousWorkSettings(
         schedule_hour=_coerce_hour_or_minute(
             settings_data.get("scheduleHour"), DEFAULT_SCHEDULE_HOUR, 23
@@ -131,6 +140,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
             settings_data.get("scheduleMinute"), DEFAULT_SCHEDULE_MINUTE, 59
         ),
         new_projects_directory=new_projects_directory,
+        model=model,
     )
 
 
@@ -152,6 +162,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "scheduleHour": settings.schedule_hour,
         "scheduleMinute": settings.schedule_minute,
         "newProjectsDirectory": settings.new_projects_directory,
+        "model": settings.model,
     }
 
     temporary_path = None
@@ -307,6 +318,7 @@ def main() -> int:
 
     print("Scheduled run:      {}".format(settings.describe_schedule()))
     print("New projects in:    {}".format(settings.new_projects_directory))
+    print("Model for runs:     {}".format(settings.model))
     print("Settings file:      {}".format(SETTINGS_FILE))
     print(
         "Launch agent:       {}".format(
