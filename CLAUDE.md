@@ -39,10 +39,23 @@ add a recipe instead. Never use `git add` or `git commit` — that is for the us
 to do.
 
 ```sh
+just setup           # everything a fresh clone needs, in one command
 just check           # typecheck + lint + format-check — the gate
 just build           # production build into dist/
 just --list          # everything else
 ```
+
+`just setup` runs the install recipes in order and ends by printing the one
+step it cannot do itself: loading the unpacked extension, which needs a human
+to click through `chrome://extensions`.
+
+**Every `install-*` recipe must stay safe to re-run at any point**, because
+`setup` chains them and is the first thing to reach for when something has come
+unstuck. They rewrite their output from a template, or compare and leave an
+up-to-date file alone; none appends or accumulates. Keep it that way when adding
+one. The single exception is `install-autonomous-work`, which reloads the launch
+agent and so stops a nightly run in flight — recorded as a cancellation, leaving
+the queue entry `todo`.
 
 **`just check` must pass before work is considered done.**
 
@@ -116,6 +129,8 @@ just install-usage-host          # register the native host (needs the extension
 just test-usage-host             # exercise the host directly, without Chrome
 just extension-id                # the ID Chrome derives from dist/
 just uninstall-usage-host
+
+just check-folder-access         # what the nightly run can actually read
 
 just autonomous-settings         # the scheduled time and new-projects folder
 just autonomous-dry-run          # what would run next, without running it
@@ -279,6 +294,61 @@ an inactive weekly window is genuinely no data rather than a stale reading.
 **launchd starts jobs with a bare environment.** `uv` and `claude` live in
 `~/.local/bin`, which is why the plist sets `PATH` explicitly. A missing entry
 surfaces only as "command not found" in `.claude-scripts/system.log`.
+
+**Protected folders — measured, and counter-intuitive.** `~/Desktop`,
+`~/Documents`, `~/Downloads` and iCloud Drive are gated by TCC. The failure
+depends on how the run started: a **launchd** run is refused silently with
+`Operation not permitted`, while a run started from **Run now** raises a dialog,
+because Chrome is in that chain. So the only way to grant a folder is Run now
+plus a click; there is no scriptable path.
+
+**Granting has to happen from the extension**, which is why Settings has a
+"Grant folder access" button going popup → service worker → native host →
+detached `check-folder-access.py`. A `just` recipe cannot do it: a request made
+from a terminal is attributed to Terminal or iTerm, whose grants satisfy it
+silently, so no dialog appears and nothing is recorded for the runner. Only the
+Chrome path prompts. The same script serves both purposes — under launchd it
+reports, under Chrome it asks.
+
+`just check-folder-access` reports what the nightly job can reach, and runs the
+check **as a launchd job** for a reason: from a terminal every folder reads as
+available, because access is attributed to Terminal or iTerm and their grants
+pass down. Any test of this run from a shell is worthless.
+
+**The grant is scoped by code signature, and that is the whole mechanism.** The
+job runs `.claude-scripts/bin/claude-usage-optimizer-uv`, a copy of uv re-signed
+with the identifier `com.claudeusageoptimizer.autonomouswork.uv`. Re-signing is what
+makes it a separate client from the uv on `PATH`, which has three consequences
+worth knowing before touching any of it:
+
+- A byte-identical `cp` is the _same_ client as the uv it came from and inherits
+  its grants. The re-sign in `install-private-uv` is not decoration; without it
+  the copy achieves nothing.
+- The filename is only what System Settings displays, which is why it is not
+  called `uv` — two rows both named `uv` cannot be told apart. Whether renaming
+  the file _keeps_ its grants was tested twice and settled neither time; treat a
+  rename as costing them, and choose the name before granting anything.
+- Replacing the copy changes the bytes and so the signature, and the grants go
+  with it. `install-private-uv` therefore never overwrites an existing copy;
+  `refresh-private-uv` is the deliberate escape hatch and says what it costs.
+
+**A toggle switched off in System Settings is a recorded denial, not a reset.**
+The Grant folder access button will then do nothing at all, silently — no
+dialog, no error. The row has to be deleted with **−** before macOS will ask
+again. Anyone debugging "the button does nothing" should check that first.
+
+**Measure, do not reason, about any of this.** Four mechanisms were proposed and
+confidently argued for during the work that produced this section — a launcher
+binary that stayed alive as the parent, an `.app` bundle, the interpreter
+identity, a Python version pin — and every one was wrong. The probes that seemed
+to refute the copy were run while a shared grant was still live and quietly
+satisfying everything. `just check-folder-access` exists because it measures the
+real chain through launchd; a check run from a terminal reports Terminal's
+permissions and is worthless.
+
+**Never ask for Full Disk Access.** Per-folder grants on a private binary are
+strictly better, and FDA on anything shared would hand arbitrary `uvx` packages
+the user's Mail, Messages and Safari data.
 
 The `claude -p` invocation is deliberately plain apart from `--permission-mode
 auto`. Notably it does **not** pass `--bare`, which would authenticate with

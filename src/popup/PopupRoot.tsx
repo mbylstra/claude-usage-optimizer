@@ -11,14 +11,17 @@ import type { UsageCacheEntry } from '@/lib/usageTypes';
 import {
   OPEN_RUN_LOG_MESSAGE,
   REFRESH_USAGE_MESSAGE,
+  PRIME_FOLDER_ACCESS_MESSAGE,
   RUN_AUTONOMOUS_WORK_MESSAGE,
   SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE,
   TEST_NOTIFICATION_MESSAGE,
   type RefreshUsageResponse,
+  type PrimeFolderAccessResponse,
   type RunAutonomousWorkResponse,
   type SyncAutonomousWorkSettingsResponse,
 } from '@/extension/messages';
 import { IDLE_AUTONOMOUS_WORK_STATUS, type AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
+import { IDLE_FOLDER_ACCESS_STATUS, type FolderAccessStatus } from '@/lib/folderAccessStatus';
 import {
   IDLE_AUTONOMOUS_WORK_SETTINGS_STATUS,
   type AutonomousWorkSettingsStatus,
@@ -76,6 +79,8 @@ export function PopupRoot() {
   const [autonomousWorkStatus, setAutonomousWorkStatus] = useState<AutonomousWorkStatus>(
     IDLE_AUTONOMOUS_WORK_STATUS,
   );
+  const [folderAccessStatus, setFolderAccessStatus] =
+    useState<FolderAccessStatus>(IDLE_FOLDER_ACCESS_STATUS);
   const [autonomousWorkSettingsStatus, setAutonomousWorkSettingsStatus] =
     useState<AutonomousWorkSettingsStatus>(IDLE_AUTONOMOUS_WORK_SETTINGS_STATUS);
   const now = useTickingClock();
@@ -156,6 +161,28 @@ export function PopupRoot() {
       },
     );
   }, [openRunLog]);
+
+  const primeFolderAccess = useCallback(() => {
+    setFolderAccessStatus({ kind: 'starting' });
+    chrome.runtime.sendMessage(
+      { type: PRIME_FOLDER_ACCESS_MESSAGE },
+      (response?: PrimeFolderAccessResponse) => {
+        if (chrome.runtime.lastError !== undefined) {
+          setFolderAccessStatus({ kind: 'failed', error: chrome.runtime.lastError.message ?? '' });
+          return;
+        }
+        if (response === undefined) {
+          setFolderAccessStatus({ kind: 'failed', error: 'No response from the extension' });
+          return;
+        }
+        if (!response.started) {
+          setFolderAccessStatus({ kind: 'failed', error: response.error ?? '' });
+          return;
+        }
+        setFolderAccessStatus({ kind: 'started' });
+      },
+    );
+  }, []);
 
   const requestTestNotification = useCallback(() => {
     chrome.runtime.sendMessage({ type: TEST_NOTIFICATION_MESSAGE }, (response) => {
@@ -312,6 +339,8 @@ export function PopupRoot() {
           autonomousWorkSettingsStatus={autonomousWorkSettingsStatus}
           autonomousWorkStatus={autonomousWorkStatus}
           onRunAutonomousWork={runAutonomousWork}
+          folderAccessStatus={folderAccessStatus}
+          onPrimeFolderAccess={primeFolderAccess}
           onOpenRunLog={openRunLog}
           onBack={closeSettings}
         />

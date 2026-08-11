@@ -299,6 +299,39 @@ def main() -> int:
             subprocess.run(["sleep", "0.1"])
         results.append(check("scheduler was actually spawned", marker_file.exists()))
 
+    print("primeFolderAccess message:")
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        marker_file = Path(temporary_directory) / "asked"
+        stand_in = Path(temporary_directory) / "stand-in.py"
+        # A real uv script, because the host runs this one through `uv run
+        # --script` rather than executing it — the point of the check is that
+        # the whole chain reaches a Python process, since that is what macOS
+        # attributes the folder request to.
+        stand_in.write_text(
+            "# /// script\n"
+            "# requires-python = \">=3.10\"\n"
+            "# dependencies = []\n"
+            "# ///\n"
+            "import pathlib\n"
+            f'pathlib.Path(r"{marker_file}").write_text("asked")\n',
+            encoding="utf-8",
+        )
+
+        reply = ask_host(
+            {"type": "primeFolderAccess"},
+            {"USAGE_HOST_FOLDER_ACCESS_SCRIPT": str(stand_in)},
+        )
+        results.append(
+            check("host reports the prompting started", bool(reply and reply.get("started")))
+        )
+
+        # Detached, and uv has an interpreter to resolve, so allow longer.
+        for _ in range(150):
+            if marker_file.exists():
+                break
+            subprocess.run(["sleep", "0.1"])
+        results.append(check("folder check was actually spawned", marker_file.exists()))
+
     print("setAutonomousWorkSettings message (no launch agent installed):")
     with tempfile.TemporaryDirectory() as temporary_directory:
         settings_file = Path(temporary_directory) / "settings.json"

@@ -8,6 +8,39 @@ default:
 install:
     pnpm install
 
+# Everything a fresh clone needs, in one go. Safe to re-run.
+setup: install build install-private-uv install-usage-host install-autonomous-work
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f prompts.txt ]; then
+      echo "prompts.txt already exists — left alone"
+    else
+      cp prompts.example.txt prompts.txt
+      echo "Created prompts.txt from prompts.example.txt"
+    fi
+    extension_id="$(python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist")"
+    echo
+    echo "Done. The nightly run is scheduled — 'just autonomous-settings' for the"
+    echo "time, 'just uninstall-autonomous-work' to unschedule it."
+    echo
+    echo "One step is left, because only you can click through chrome://extensions:"
+    echo
+    echo "   Load the extension. chrome://extensions, enable Developer mode,"
+    echo "   'Load unpacked', and choose:"
+    echo "       {{ justfile_directory() }}/dist"
+    echo "   Then reload it, so it picks up the native host."
+    echo "   If the popup cannot reach the host, re-run 'just install-usage-host'"
+    echo "   (safe any time). Still stuck? Chrome is showing an ID other than"
+    echo "   $extension_id — pass the one it shows:"
+    echo "       just install-usage-host THE_ID_CHROME_SHOWS"
+    echo
+    echo "Then put some work in prompts.txt and try: just autonomous-dry-run"
+    echo
+    echo "If your prompts will read ~/Documents, ~/Desktop or ~/Downloads: click"
+    echo "the extension's toolbar icon in Chrome, open Settings, press 'Grant"
+    echo "folder access', and allow the macOS dialogs that appear."
+    echo "To check afterwards: just check-folder-access"
+
 # Vite dev server for the popup UI (no chrome.* APIs available)
 dev:
     pnpm exec vite
@@ -50,6 +83,82 @@ check: typecheck lint format-check
 autonomous_script := ".claude-scripts/claude-usage-autonomous-work"
 launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
 launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
+
+# The uv this job runs, so the folder grants attach to a binary nothing else
+# uses. Named for the project rather than "uv" because System Settings lists an
+# unbundled binary by its filename, and two rows both called "uv" are
+# indistinguishable. Measured to make no difference to what is readable — kept because the
+# grant lands somewhere regardless, and here is no worse. See CLAUDE.md.
+private_uv := justfile_directory() / ".claude-scripts/bin/claude-usage-optimizer-uv"
+
+# Copy uv into .claude-scripts/bin/, once, with its own code-signing identity
+install-private-uv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -x "{{ private_uv }}" ]; then
+      echo "Private uv already installed — frozen at $("{{ private_uv }}" --version)"
+      exit 0
+    fi
+    source_uv="$(command -v uv)" || { echo "uv not found on PATH"; exit 1; }
+    mkdir -p "$(dirname "{{ private_uv }}")"
+    cp "$source_uv" "{{ private_uv }}"
+    # Its own identifier, so macOS sees a separate client rather than a
+    # byte-identical twin sharing the original's signature.
+    codesign --force --sign - \
+      --identifier com.claudeusageoptimizer.autonomouswork.uv \
+      "{{ private_uv }}" 2>/dev/null
+    echo "Copied $source_uv -> {{ private_uv }}"
+
+# Replace the frozen uv with whatever is on PATH now. Rarely what you want.
+refresh-private-uv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Replacing the private uv changes its code signature, and any folder"
+    echo "permissions you granted are attached to that signature — macOS may ask"
+    echo "about ~/Documents and ~/Desktop again after this."
+    rm -f "{{ private_uv }}"
+    just install-private-uv
+
+# What the *nightly* run can actually read. Must go through launchd: run from a
+# terminal and the answer is Terminal's permissions, not the job's.
+[no-exit-message]
+check-folder-access:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    label="com.claudeusageoptimizer.folderaccesscheck"
+    uv_path="{{ private_uv }}"
+    [ -x "$uv_path" ] || uv_path="$(command -v uv)" || { echo "uv not found"; exit 1; }
+    work="$(mktemp -d)"
+    trap 'launchctl unload "$work/job.plist" 2>/dev/null || true; rm -rf "$work"' EXIT
+    cat > "$work/job.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>Label</key><string>$label</string>
+      <key>ProgramArguments</key><array>
+        <string>$uv_path</string><string>run</string><string>--script</string>
+        <string>{{ justfile_directory() }}/.claude-scripts/check-folder-access.py</string>
+      </array>
+      <key>StandardOutPath</key><string>$work/report.txt</string>
+      <key>StandardErrorPath</key><string>$work/report.txt</string>
+      <key>EnvironmentVariables</key><dict>
+        <key>PATH</key><string>{{ home_directory() }}/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key><string>{{ home_directory() }}</string>
+      </dict>
+      <key>RunAtLoad</key><false/>
+    </dict></plist>
+    PLIST
+    launchctl unload "$work/job.plist" 2>/dev/null || true
+    launchctl load "$work/job.plist"
+    launchctl start "$label"
+    for _ in $(seq 1 40); do
+      grep -q "Mobile Documents" "$work/report.txt" 2>/dev/null && break
+      sleep 1
+    done
+    echo "What the nightly run can read (measured through launchd):"
+    echo
+    cat "$work/report.txt"
+
 
 # Run the next queued prompt now, if weekly usage is behind pace
 [no-exit-message]
@@ -96,8 +205,7 @@ autonomous-run-and-watch:
     sleep 0.5
 
 # Schedule the nightly run, at whatever time the extension's settings say (2 AM by default)
-install-autonomous-work:
-    @command -v uv >/dev/null || { echo "uv not found on PATH"; exit 1; }
+install-autonomous-work: install-private-uv
     @command -v claude >/dev/null || { echo "claude not found on PATH"; exit 1; }
     @python3 .claude-scripts/autonomous_work_settings.py --install
 
@@ -124,7 +232,9 @@ native_host_dir := home_directory() / "Library/Application Support/Google/Chrome
 extension-id:
     @python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist"
 
-# Register the native host that writes .claude-scripts/claude-usage.json
+# Register the native host that writes .claude-scripts/claude-usage.json.
+# Rewrites the manifest from the template every time, so re-running is safe at
+# any point and always produces the same file for the same dist/ path.
 install-usage-host extension_id="":
     #!/usr/bin/env bash
     set -euo pipefail

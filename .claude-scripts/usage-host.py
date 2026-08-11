@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -52,6 +53,12 @@ SCHEDULER_COMMAND = os.environ.get(
 RUN_EVENT_FILE = Path(
     os.environ.get("USAGE_HOST_RUN_EVENT_FILE", str(HOST_DIRECTORY / "autonomous-run-events.jsonl"))
 )
+# Reads each protected folder in turn so macOS raises its permission dialog for
+# each one. Spawned from here rather than run by `just`, because a prompt only
+# appears when Chrome is in the chain — see README, "Protected folders".
+FOLDER_ACCESS_SCRIPT = os.environ.get(
+    "USAGE_HOST_FOLDER_ACCESS_SCRIPT", str(HOST_DIRECTORY / "check-folder-access.py")
+)
 # Run with this interpreter rather than executed, so the same path works whether
 # or not the file happens to be marked executable. The override is a Python
 # script too, for the same reason.
@@ -64,6 +71,7 @@ MESSAGE_TYPE_RUN_WORK = "runAutonomousWork"
 MESSAGE_TYPE_SET_SETTINGS = "setAutonomousWorkSettings"
 MESSAGE_TYPE_TAIL_RUN = "tailAutonomousRun"
 MESSAGE_TYPE_CANCEL_WORK = "cancelAutonomousWork"
+MESSAGE_TYPE_PRIME_FOLDERS = "primeFolderAccess"
 
 # A stat loop rather than a filesystem-watch API: stdlib-only and 3.9-compatible
 # is non-negotiable here, and kqueue plumbing would be an order of magnitude more
@@ -190,6 +198,41 @@ def start_autonomous_work():
         )
     finally:
         log_handle.close()
+
+
+def start_folder_access_prompts():
+    # type: () -> dict
+    """Touch each protected folder so macOS asks the user about it, once.
+
+    Detached and unwaited like a work run: every folder that is not already
+    granted puts up a dialog, and the user may take as long as they like over
+    them. The reply says only that the prompting started.
+    """
+    # The frozen copy first: the dialogs this raises attach a permission to
+    # whichever binary macOS decides to name, and that copy is the one the
+    # nightly job will still be running after uv is next upgraded.
+    private_uv = HOST_DIRECTORY / "bin" / "claude-usage-optimizer-uv"
+    if private_uv.is_file() and os.access(str(private_uv), os.X_OK):
+        uv_command = str(private_uv)
+    else:
+        uv_command = shutil.which("uv", path=spawn_environment()["PATH"])
+    if uv_command is None:
+        return {"ok": False, "error": "uv not found on PATH"}
+
+    log_handle = LOG_FILE.open("a", encoding="utf-8")
+    try:
+        subprocess.Popen(
+            [uv_command, "run", "--script", FOLDER_ACCESS_SCRIPT],
+            cwd=str(HOST_DIRECTORY.parent),
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=log_handle,
+            start_new_session=True,
+            env=spawn_environment(),
+        )
+    finally:
+        log_handle.close()
+    return {"ok": True, "started": True}
 
 
 def cancel_autonomous_work():
@@ -421,6 +464,11 @@ def handle_message(message):
         start_autonomous_work()
         log_message("Started autonomous work on request from the popup")
         return {"ok": True, "started": True}
+
+    if message_type == MESSAGE_TYPE_PRIME_FOLDERS:
+        result = start_folder_access_prompts()
+        log_message("Started folder-access prompts on request from the popup")
+        return result
 
     if message_type == MESSAGE_TYPE_SNAPSHOT:
         write_snapshot(message.get("snapshot"))

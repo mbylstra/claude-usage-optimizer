@@ -1,4 +1,4 @@
-import { ArrowLeft, Play, ScrollText } from 'lucide-react';
+import { ArrowLeft, FolderLock, Play, ScrollText } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -14,6 +14,11 @@ import {
   isAutonomousWorkSettingsStatusError,
   type AutonomousWorkSettingsStatus,
 } from '@/lib/autonomousWorkSettingsStatus';
+import {
+  describeFolderAccessStatus,
+  isFolderAccessStatusError,
+  type FolderAccessStatus,
+} from '@/lib/folderAccessStatus';
 import {
   describeScheduleTime,
   formatScheduleTimeInputValue,
@@ -40,6 +45,9 @@ export interface SettingsPageProps {
   onRunAutonomousWork: () => void;
   /** Opens the window that streams the current run, or replays the last one. */
   onOpenRunLog: () => void;
+  folderAccessStatus: FolderAccessStatus;
+  /** Raises the macOS folder dialogs now, rather than at 2 AM where they cannot be answered. */
+  onPrimeFolderAccess: () => void;
   onBack: () => void;
 }
 
@@ -53,10 +61,13 @@ export function SettingsPage({
   autonomousWorkStatus,
   onRunAutonomousWork,
   onOpenRunLog,
+  folderAccessStatus,
+  onPrimeFolderAccess,
   onBack,
 }: SettingsPageProps) {
   const autonomousWorkMessage = describeAutonomousWorkStatus(autonomousWorkStatus);
   const settingsMessage = describeAutonomousWorkSettingsStatus(autonomousWorkSettingsStatus);
+  const folderAccessMessage = describeFolderAccessStatus(folderAccessStatus);
 
   const handleScheduleTimeChange = (value: string) => {
     // A half-typed field reports "" or an impossible hour; there is nothing to
@@ -191,6 +202,36 @@ export function SettingsPage({
               }
             >
               {autonomousWorkMessage}
+            </p>
+          )}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onPrimeFolderAccess}
+            disabled={folderAccessStatus.kind === 'starting'}
+          >
+            <FolderLock className="size-3.5" aria-hidden="true" />
+            Grant folder access
+          </Button>
+
+          <p className="text-muted-foreground text-xs">
+            Lets a queued prompt read <code>~/Documents</code>, <code>~/Desktop</code> and{' '}
+            <code>~/Downloads</code>. macOS only offers the choice while you are here — the nightly
+            run is refused silently instead — so answering now is what makes those folders readable
+            at 2 AM.
+          </p>
+
+          {folderAccessMessage !== null && (
+            <p
+              role="status"
+              className={
+                isFolderAccessStatusError(folderAccessStatus)
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+            >
+              {folderAccessMessage}
             </p>
           )}
         </CardContent>

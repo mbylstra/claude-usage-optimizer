@@ -38,6 +38,19 @@ export interface OpenRunLogMessage {
   type: typeof OPEN_RUN_LOG_MESSAGE;
 }
 
+export const PRIME_FOLDER_ACCESS_MESSAGE = 'PRIME_FOLDER_ACCESS' as const;
+
+/**
+ * Ask macOS about the protected folders now, while somebody is watching.
+ *
+ * The permission dialog only appears when Chrome is in the chain; a run started
+ * by launchd at 2 AM is refused silently instead. So this exists to move the
+ * asking to a moment when the answer can be given.
+ */
+export interface PrimeFolderAccessMessage {
+  type: typeof PRIME_FOLDER_ACCESS_MESSAGE;
+}
+
 export const SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE = 'SYNC_AUTONOMOUS_WORK_SETTINGS' as const;
 
 /**
@@ -57,12 +70,19 @@ export type ExtensionMessage =
   | TestNotificationMessage
   | RunAutonomousWorkMessage
   | OpenRunLogMessage
+  | PrimeFolderAccessMessage
   | SyncAutonomousWorkSettingsMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
 
 /** Whether the native host accepted the request, not whether the work succeeded. */
 export interface RunAutonomousWorkResponse {
+  started: boolean;
+  error?: string;
+}
+
+/** Whether the prompting started, not whether the user allowed anything. */
+export interface PrimeFolderAccessResponse {
   started: boolean;
   error?: string;
 }
@@ -113,6 +133,14 @@ export function isOpenRunLogMessage(message: unknown): message is OpenRunLogMess
     typeof message === 'object' &&
     message !== null &&
     (message as { type?: unknown }).type === OPEN_RUN_LOG_MESSAGE
+  );
+}
+
+export function isPrimeFolderAccessMessage(message: unknown): message is PrimeFolderAccessMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === PRIME_FOLDER_ACCESS_MESSAGE
   );
 }
 

@@ -19,7 +19,7 @@ just as surely, and quietly.
 
 No configuration of any kind for the indicator — the extension discovers your
 organization itself and rides on the claude.ai session you are already signed in
-to. The scheduler is opt-in and takes two commands to set up.
+to. The scheduler is opt-in, and `just setup` wires up both halves at once.
 
 ## Quick start
 
@@ -45,27 +45,36 @@ corepack enable pnpm            # or: brew install pnpm
   with the Xcode command line tools; run `xcode-select --install` if
   `python3 --version` fails.
 
-`just install-autonomous-work` refuses to run if `uv` or `claude` is missing.
-Note that launchd starts the nightly job with a bare environment, so both must
-live in `~/.local/bin` or `/opt/homebrew/bin` — the only two user paths the
-launch agent puts on `PATH`.
+`just setup` refuses to run if `uv` or `claude` is missing. Note that launchd
+starts the nightly job with a bare environment, so both must live in
+`~/.local/bin` or `/opt/homebrew/bin` — the only two user paths the launch agent
+puts on `PATH`.
 
 Then, from the repository root:
 
 ```sh
-just install                    # dependencies
-just build                      # produces dist/
+just setup
 ```
+
+One command for the whole thing: dependencies, a build into `dist/`, the
+native-messaging host, `prompts.txt` started from the template, and the nightly job scheduled. It is
+safe to re-run, and it leaves anything already set up alone.
+
+If you only want the popup, `just install && just build` is enough — stop after
+step 1 below. If you ran `just setup` and change your mind,
+`just uninstall-autonomous-work` unschedules the nightly job.
+
+`setup` finishes by printing the one step it cannot do for you:
 
 **1. Load the extension.** In Chrome, go to `chrome://extensions`, turn on
 **Developer mode** (top right), click **Load unpacked** and pick the `dist/`
 directory. Pin it, and make sure you are signed in to <https://claude.ai>. That
-is the whole popup — no configuration. ([More detail](#install-it-locally).)
+is the whole popup — no configuration. Then reload it once so it picks up the
+native host. ([More detail](#install-it-locally).)
 
-**2. Queue some work.** Copy `prompts.example.txt` to `prompts.txt` at the
-repository root and edit it — the queue is gitignored, so it starts as a
-template. Sections are separated by a line of `===`; the first `todo` one is
-what runs next:
+**2. Queue some work.** Edit `prompts.txt` at the repository root, which `setup`
+created from `prompts.example.txt`. Sections are separated by a line of `===`;
+the first `todo` one is what runs next:
 
 ```
 ===
@@ -78,17 +87,7 @@ Leave the changes uncommitted for review.
 Leave the `REPO:` line off and the prompt gets a fresh repository of its own
 instead. ([Full format](#editing-the-queue).)
 
-**3. Wire up the scheduler.**
-
-```sh
-just install-usage-host         # let the extension write usage to disk
-just install-autonomous-work    # schedule the nightly run (2 AM by default)
-```
-
-Then reload the extension in `chrome://extensions` so it picks up the host.
-([More detail](#setting-it-up).)
-
-**4. Test it end to end.** Open the popup, go to **Settings**, and press
+**3. Test it end to end.** Open the popup, go to **Settings**, and press
 **Run now** — it runs the first `todo` prompt immediately, ignoring the pace
 gate, and opens a window that follows the run as it happens. (Or watch it in a
 terminal with `just autonomous-log`.) If the button errors, the native host is
@@ -173,14 +172,15 @@ the popup.
 > Chrome removed the `--load-extension` command-line switch, so loading it
 > through the UI is the only route.
 
-The [autonomous work scheduler](#autonomous-work) below is optional and needs
-two more steps; skip it if you only want the popup.
+The [autonomous work scheduler](#autonomous-work) below is optional; skip it if
+you only want the popup. `just setup` sets up both halves in one command.
 
 ## Commands
 
 `just` is the entry point for everything:
 
 ```sh
+just setup           # everything a fresh clone needs, in one command
 just check           # typecheck + lint + format-check — the gate
 just build           # production build into dist/
 just dev             # Vite dev server for the popup UI (no chrome.* available)
@@ -216,6 +216,9 @@ is in `plans/autonomous-credit-utilization.md`.
 
 ### Setting it up
 
+`just setup` does all of this. The individual recipes, for when you are undoing
+or repairing one piece rather than starting from scratch:
+
 ```sh
 just build                      # the host manifest names the ID Chrome derives from dist/
 just install-usage-host         # register the native host
@@ -225,14 +228,98 @@ just install-autonomous-work    # schedule the nightly run (2 AM by default)
 Then reload the extension in `chrome://extensions` so it picks up the host, and
 check `just autonomous-status` says the job is loaded.
 
+**All of these are safe to re-run at any point**, which is what makes
+`just setup` the answer to most "did something come unstuck?" moments rather than
+a first-run-only command. Each rewrites its output from a template or leaves an
+up-to-date file alone; none accumulates state. The one exception worth knowing:
+re-running `install-autonomous-work` reloads the launch agent, which stops a
+nightly run that happens to be in flight. The scheduler treats that as a
+cancellation and leaves the queue entry `todo`, so nothing is lost, but it does
+mean not re-running it at 2:30 AM.
+
 `install-usage-host` pins one extension ID, and for an unpacked extension Chrome
 derives that ID from the absolute load path — so **moving or renaming `dist/`
-silently breaks the connection.** Re-run `just install-usage-host` if that
-happens, or pass an explicit ID from `chrome://extensions` as an argument.
-`just extension-id` prints what the current path should produce.
+silently breaks the connection.** Re-running fixes that, since it re-derives the
+ID from wherever `dist/` now is.
+
+What re-running cannot fix is Chrome showing an ID that the path does not
+predict — which means the extension was loaded from some _other_ directory, an
+old checkout or a symlink. Re-deriving gives the same answer forever there, so
+pass the ID from `chrome://extensions` explicitly:
+
+```sh
+just install-usage-host abcdefghijklmnopabcdefghijklmnop
+```
+
+`just extension-id` prints what the current path should produce, for comparing
+against what Chrome shows.
 
 `just uninstall-autonomous-work` and `just uninstall-usage-host` undo both
 halves.
+
+### Protected folders
+
+macOS gates `~/Desktop`, `~/Documents`, `~/Downloads` and iCloud Drive behind
+per-application grants, and a queued prompt that reads one may be refused. What
+happens then depends entirely on how the run was started, which took a while to
+pin down:
+
+- **The nightly launchd run fails closed.** The read returns
+  `Operation not permitted` immediately — no dialog, no hang. Claude sees an
+  ordinary tool error, and the queue entry is marked `error`.
+- **A run started with Run now prompts**, because Chrome is in that chain and
+  macOS will raise a dialog on its behalf. Answering it grants that one folder,
+  permanently, and the nightly job gets it from then on.
+
+So the settings screen has a **Grant folder access** button. It asks macOS about
+Desktop, Documents and Downloads in one go, and you answer the dialogs while you
+are sitting there. Press it once, at setup.
+
+It has to live in the extension rather than in a `just` recipe, and that is not
+a stylistic choice: a recipe cannot raise those dialogs at all. Run the same
+check from a terminal and macOS attributes the read to Terminal or iTerm, which
+hold their own grants and lend them down the chain, so every folder comes back
+readable and nothing is ever asked. Only a request coming through Chrome
+prompts.
+
+To see what the nightly job can currently reach:
+
+```sh
+just check-folder-access
+```
+
+That runs the check **as a launchd job**, which matters more than it sounds.
+Run the same check from a terminal and every folder comes back readable,
+because the read is then attributed to Terminal or iTerm — which hold their own
+grants and lend them to everything they start. Only launchd reproduces the
+nightly chain's permissions.
+
+**This project never asks for Full Disk Access**, and does not need to. It runs
+its own copy of `uv`, `.claude-scripts/bin/claude-usage-optimizer-uv`, re-signed
+with its own code-signing identifier — so the folders you allow are allowed for
+the nightly job and for nothing else. Your everyday `uv run` and `uvx` stay
+unprivileged, which matters because `uvx` runs arbitrary packages from PyPI on
+demand.
+
+Three things about that copy, each learned the hard way:
+
+- **macOS identifies it by code signature, not by path.** A plain `cp` of `uv`
+  is byte-identical and therefore the _same_ client, sharing whatever the
+  original was granted — which defeats the point. `just install-private-uv`
+  re-signs it, and that is what makes it separate.
+- **Renaming it is free; replacing it is not.** The signature does not include
+  the filename, so the copy can be called anything. Replacing it with a newer uv
+  changes the bytes, and so the signature, and so the grants — which is why
+  `install-private-uv` never overwrites an existing copy and `just
+refresh-private-uv` warns before it does.
+- **The name in System Settings is the filename.** Hence the long one: two rows
+  both called `uv` are impossible to tell apart.
+
+**The dialogs only appear for a client macOS has no opinion about.** If you deny
+one by accident, or switch a permission off later in Settings, that is recorded
+as a decision and the button will silently do nothing from then on. Switching a
+toggle off is _not_ a reset — to be asked again you must select the row and
+delete it with the **−** button, then press Grant folder access.
 
 ### Editing the queue
 

@@ -7,11 +7,13 @@ import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
   isOpenRunLogMessage,
   isRefreshUsageMessage,
+  isPrimeFolderAccessMessage,
   isRunAutonomousWorkMessage,
   isSyncAutonomousWorkSettingsMessage,
   isTestNotificationMessage,
   type OpenRunLogResponse,
   type RefreshUsageResponse,
+  type PrimeFolderAccessResponse,
   type RunAutonomousWorkResponse,
   type SyncAutonomousWorkSettingsResponse,
 } from './messages';
@@ -19,6 +21,7 @@ import { openRunLogWindow, trackRunLogWindowClosure } from './runLogWindow';
 import {
   exportUsageSnapshot,
   requestAutonomousWorkRun,
+  requestFolderAccessPrompts,
   syncAutonomousWorkSettings,
 } from './usageSnapshotExporter';
 import {
@@ -211,6 +214,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (isRunAutonomousWorkMessage(message)) {
     void requestAutonomousWorkRun().then((result) =>
       sendResponse(result satisfies RunAutonomousWorkResponse),
+    );
+    return true;
+  }
+
+  if (isPrimeFolderAccessMessage(message)) {
+    void requestFolderAccessPrompts().then((result) =>
+      sendResponse(result satisfies PrimeFolderAccessResponse),
     );
     return true;
   }

@@ -12,6 +12,9 @@ prompts.txt
 # The native host imports a sibling module, so Chrome leaves bytecode here
 .claude-scripts/__pycache__/
 
+# The private uv the scheduler runs, reproduced by `just install-private-uv`
+.claude-scripts/bin/
+
 # Runtime snapshot and settings mirror written by the native-messaging host
 .claude-scripts/claude-usage.json
 .claude-scripts/autonomous-work-settings.json

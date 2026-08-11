@@ -4,6 +4,7 @@ import { UsagePopup } from '@/components/UsagePopup';
 import { SettingsPage } from '@/components/SettingsPage';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
 import type { AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
+import { IDLE_FOLDER_ACCESS_STATUS } from '@/lib/folderAccessStatus';
 import type { AutonomousWorkSettingsStatus } from '@/lib/autonomousWorkSettingsStatus';
 import { DEFAULT_AUTONOMOUS_WORK_SETTINGS } from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
@@ -88,6 +89,8 @@ function Column({ dark }: { dark: boolean }) {
             autonomousWorkStatus={status}
             onRunAutonomousWork={() => {}}
             onOpenRunLog={() => {}}
+            folderAccessStatus={IDLE_FOLDER_ACCESS_STATUS}
+            onPrimeFolderAccess={() => {}}
             onBack={() => {}}
           />
         </div>

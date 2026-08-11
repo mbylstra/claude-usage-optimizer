@@ -35,6 +35,7 @@ function logExportFailureOnce(error: unknown): void {
 /** Message envelopes the host understands; mirrored in `usage-host.py`. */
 const SNAPSHOT_MESSAGE_TYPE = 'snapshot';
 const RUN_WORK_MESSAGE_TYPE = 'runAutonomousWork';
+const PRIME_FOLDER_ACCESS_MESSAGE_TYPE = 'primeFolderAccess';
 const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
 
 export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Date): Promise<void> {
@@ -70,6 +71,37 @@ export async function requestAutonomousWorkRun(): Promise<{ started: boolean; er
   try {
     const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
       type: RUN_WORK_MESSAGE_TYPE,
+    });
+
+    if (typeof response === 'object' && response !== null && 'ok' in response) {
+      const { ok, error } = response as { ok: unknown; error?: unknown };
+      if (ok === true) return { started: true };
+      return {
+        started: false,
+        error: error === undefined ? 'Host refused the request' : String(error),
+      };
+    }
+
+    return { started: false, error: 'Host sent no reply' };
+  } catch (error) {
+    return { started: false, error: String(error) };
+  }
+}
+
+/**
+ * Ask the host to read each protected folder, so macOS puts its dialog up now.
+ *
+ * Resolves once the prompting has started, not once it is answered — the user
+ * may sit on those dialogs for as long as they like, and the popup closing must
+ * not cancel them.
+ */
+export async function requestFolderAccessPrompts(): Promise<{
+  started: boolean;
+  error?: string;
+}> {
+  try {
+    const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
+      type: PRIME_FOLDER_ACCESS_MESSAGE_TYPE,
     });
 
     if (typeof response === 'object' && response !== null && 'ok' in response) {

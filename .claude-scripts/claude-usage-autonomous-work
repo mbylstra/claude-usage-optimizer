@@ -7,9 +7,17 @@
 # that does the same thing. Naming this file after the work it does means the
 # entry identifies itself.
 #
-# uv is resolved via PATH, which the plist sets explicitly because launchd
-# starts jobs with a bare environment.
+# Prefers `bin/uv`, this project's own frozen copy, so any folder permission
+# macOS attaches to the binary running the job stays put when the uv on PATH is
+# upgraded. `just install-private-uv` puts it there and never replaces it; see
+# CLAUDE.md, "Protected folders". Falling back to PATH keeps a fresh clone
+# working, and the plist sets PATH explicitly because launchd starts jobs with a
+# bare environment.
 set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec uv run --script "$script_directory/run-autonomous-work.py" "$@"
+
+uv_executable="$script_directory/bin/claude-usage-optimizer-uv"
+[ -x "$uv_executable" ] || uv_executable="uv"
+
+exec "$uv_executable" run --script "$script_directory/run-autonomous-work.py" "$@"
