@@ -100,11 +100,20 @@ duration when both ends are known.
 
 ## Autonomous work scheduler
 
-`.claude-scripts/` holds a launchd job that runs a queued Claude Code prompt at
-2 AM (configurable — see below), but **only when the weekly window is behind an
-even burn** — the point is to keep subscription burn-rate level, so being on
-pace means nothing runs and nothing is spent. Design rationale in
-`plans/autonomous-credit-utilization.md`.
+`.claude-scripts/` holds a launchd job that works through queued Claude Code
+prompts starting at 2 AM (configurable — see below), but **only when the weekly
+window is behind an even burn** — the point is to keep subscription burn-rate
+level, so being on pace means nothing runs and nothing is spent. Design
+rationale in `plans/autonomous-credit-utilization.md`.
+
+It does not stop after one prompt: `run-autonomous-work.py` re-checks pace
+before every queued item and keeps going as long as it is still behind. A
+session ends when it runs out of `todo` entries, catches back up to pace, or
+the 5-hour session window itself reports exhausted — and that last case ends
+the run rather than sitting idle for up to five hours waiting for the window to
+reset, since it does not refill early. `--force` (used by "Run now" and by the
+test recipes) is the one path that stays single-shot: it bypasses the pace
+check it exists to keep re-evaluating, so it runs exactly one prompt.
 
 The extension is the data source. After each successful refresh
 `exportUsageSnapshot` hands the figures to a **native-messaging host**,
@@ -282,8 +291,9 @@ or pass an explicit ID as an argument.
 deliberately at the top level rather than in `.claude-scripts/`, being the only
 file here meant for regular hand-editing. Sections split on a line of `===`;
 each has a required `STATUS: todo|completed|error`, an optional `REPO:`, and a
-multi-line prompt. The scheduler takes the first `todo`, runs it, and rewrites
-that status to `completed` or `error`. Failed items are skipped until you edit
+multi-line prompt. The scheduler takes the first `todo`, runs it, rewrites that
+status to `completed` or `error`, and — while a pace-gated run — loops back for
+the next `todo` rather than stopping. Failed items are skipped until you edit
 them back to `todo`.
 
 **`prompts.txt` is gitignored**; `prompts.example.txt` is the checked-in
@@ -315,6 +325,8 @@ explicit `just install-autonomous-work`.
 
 Every knob is also an environment variable rather than a code edit —
 `AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default −2h),
+`AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT` (default 100 — the utilisation
+that ends a session rather than moving on to the next `todo`),
 `AUTONOMOUS_WORK_TIMEOUT_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which
 wins over the mirrored setting), and the file-path overrides used by the tests —
 including `AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST` and `AUTONOMOUS_WORK_LAUNCHCTL`,

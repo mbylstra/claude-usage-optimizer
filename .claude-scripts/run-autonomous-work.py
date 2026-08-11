@@ -98,6 +98,11 @@ NEW_PROJECTS_DIRECTORY = environment_path(
 )
 # Negative milliseconds: how far behind an even weekly burn we must be to act.
 PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", -2 * MILLISECONDS_PER_HOUR)
+# The scheduler works through the queue while behind weekly pace, but a
+# five-hour session window does not refill early — once it reports at or above
+# this percentage, waiting it out would mean sitting idle for up to five hours,
+# so the run ends instead.
+FIVE_HOUR_EXHAUSTED_PERCENT = environment_int("AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT", 100)
 # A wedged unattended session must not run until morning.
 CLAUDE_TIMEOUT_SECONDS = environment_int("AUTONOMOUS_WORK_TIMEOUT_SECONDS", 3600)
 # Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
@@ -283,6 +288,8 @@ class RunEventStream:
 class PaceSnapshot:
     weekly_pace_delta_ms: float
     weekly_pace_status: str | None
+    """None when the API did not report a current session — treated as "not exhausted"."""
+    five_hour_percent: float | None
     """How old the figures are. Reported, never enforced — see `read_pace_snapshot`."""
     age_seconds: float | None
 
@@ -344,9 +351,13 @@ def read_pace_snapshot() -> PaceSnapshot | None:
         return None
 
     weekly_pace_status = snapshot_data.get("weeklyPaceStatus")
+    five_hour_percent = snapshot_data.get("fiveHourPercent")
     return PaceSnapshot(
         weekly_pace_delta_ms=float(pace_delta),
         weekly_pace_status=weekly_pace_status if isinstance(weekly_pace_status, str) else None,
+        five_hour_percent=(
+            float(five_hour_percent) if isinstance(five_hour_percent, (int, float)) else None
+        ),
         age_seconds=age_seconds,
     )
 
@@ -355,6 +366,60 @@ def describe_pace(pace_delta_ms: float) -> str:
     hours = abs(pace_delta_ms) / MILLISECONDS_PER_HOUR
     direction = "behind" if pace_delta_ms < 0 else "ahead of"
     return f"{hours:.1f}h {direction} an even weekly burn"
+
+
+@dataclass(frozen=True)
+class GateResult:
+    ok: bool
+    """A stable code for the run-event stream, e.g. "onPace" or "fiveHourExhausted"."""
+    reason: str | None = None
+    detail: str | None = None
+
+
+def check_pace_gate(force: bool) -> GateResult:
+    """Whether another queued prompt should run right now.
+
+    Called once per prompt, not once per invocation: usage moves while the
+    queue is being worked through, so a session that starts behind pace with
+    room in the five-hour window can still need to stop partway — either
+    because the extra runs closed the weekly gap, or because the session
+    window itself filled up. The latter does not refill early, so filling it
+    ends the run rather than leaving it to wait out the reset.
+    """
+    if force:
+        log_message("Pace gate bypassed (--force)")
+        return GateResult(ok=True)
+
+    pace_snapshot = read_pace_snapshot()
+    if pace_snapshot is None:
+        return GateResult(False, "noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
+
+    snapshot_description = (
+        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms)} "
+        f"(snapshot {describe_age(pace_snapshot.age_seconds)})"
+    )
+
+    if pace_snapshot.weekly_pace_delta_ms > PACE_THRESHOLD_MS:
+        log_message(
+            f"On pace — {snapshot_description}, threshold is {describe_pace(PACE_THRESHOLD_MS)}"
+        )
+        return GateResult(
+            False, "onPace", f"{snapshot_description}, threshold is {describe_pace(PACE_THRESHOLD_MS)}"
+        )
+
+    if (
+        pace_snapshot.five_hour_percent is not None
+        and pace_snapshot.five_hour_percent >= FIVE_HOUR_EXHAUSTED_PERCENT
+    ):
+        detail = (
+            f"5-hour session window at {pace_snapshot.five_hour_percent:.0f}% "
+            "— ending the run rather than waiting for it to reset"
+        )
+        log_message(detail)
+        return GateResult(False, "fiveHourExhausted", detail)
+
+    log_message(f"Behind pace — {snapshot_description}")
+    return GateResult(True)
 
 
 # --------------------------------------------------------------------------- #
@@ -730,63 +795,80 @@ def main() -> int:
     )
     arguments = argument_parser.parse_args()
 
-    # A dry run is an inspection, so it neither records events nor trims the file
-    # — asking what would happen must not disturb the record of what did.
-    events = RunEventStream(run_id=utc_now_iso(), enabled=not arguments.dry_run)
-
-    if arguments.force:
-        log_message("Pace gate bypassed (--force)")
-    else:
-        pace_snapshot = read_pace_snapshot()
-        if pace_snapshot is None:
-            events.skipped("noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
-            return 0
-
-        snapshot_description = (
-            f"{describe_pace(pace_snapshot.weekly_pace_delta_ms)} "
-            f"(snapshot {describe_age(pace_snapshot.age_seconds)})"
-        )
-
-        if pace_snapshot.weekly_pace_delta_ms > PACE_THRESHOLD_MS:
-            log_message(
-                f"On pace — {snapshot_description}, "
-                f"threshold is {describe_pace(PACE_THRESHOLD_MS)}"
-            )
-            events.skipped(
-                "onPace",
-                f"{snapshot_description}, threshold is {describe_pace(PACE_THRESHOLD_MS)}",
-            )
-            return 0
-
-        log_message(f"Behind pace — {snapshot_description}")
-
-    queue_lines = read_queue_lines()
-    if queue_lines is None:
-        events.skipped("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
-        return 0
-
-    next_entry = find_next_todo(parse_queue(queue_lines))
-    if next_entry is None:
-        log_message("No todo prompts in queue (all completed, errored or empty)")
-        events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored or empty)")
-        return 0
-
-    working_directory, is_new_project = resolve_working_directory(next_entry)
-
     if arguments.dry_run:
+        # An inspection, so it neither records events nor trims the file — asking
+        # what would happen must not disturb the record of what did. Reports only
+        # the immediate next entry: what the queue looks like after it is exactly
+        # what a second dry run would show.
+        if not check_pace_gate(arguments.force).ok:
+            return 0
+
+        queue_lines = read_queue_lines()
+        if queue_lines is None:
+            log_message(f"No prompt queue at {QUEUE_FILE}")
+            return 0
+
+        next_entry = find_next_todo(parse_queue(queue_lines))
+        if next_entry is None:
+            log_message("No todo prompts in queue (all completed, errored or empty)")
+            return 0
+
+        working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
         log_message(f"Dry run — would execute in {destination}:\n{next_entry.prompt}")
         return 0
 
-    exit_code, outcome = run_claude(
-        next_entry, working_directory, is_new_project, events, arguments.force
-    )
-    queue_status = STATUS_COMPLETED if exit_code == 0 else STATUS_ERROR
-    write_queue_status(next_entry.status_line_index, queue_status)
-    # Last, so the terminal event is only written once the queue reflects the
-    # outcome the viewer is about to show.
-    events.finished(outcome, exit_code, queue_status)
-    return exit_code
+    # Behind pace keeps working through the queue rather than stopping after one
+    # prompt, because a single entry rarely spends a night's worth of headroom.
+    # `--force` is a single explicit run — the pace gate it bypasses is exactly
+    # what this loop exists to keep re-checking, so it executes one prompt and
+    # stops rather than draining the queue unattended.
+    prompts_run = 0
+    final_exit_code = 0
+
+    while True:
+        gate = check_pace_gate(arguments.force)
+        # A fresh stream per prompt: `RunEventStream.__init__` trims the file and
+        # replaces it atomically, which is what tells a connected viewer to reset
+        # rather than append — each queued prompt is its own run to watch, the
+        # same way a lone nightly prompt always has been.
+        events = RunEventStream(run_id=utc_now_iso())
+
+        if not gate.ok:
+            events.skipped(gate.reason, gate.detail)
+            break
+
+        queue_lines = read_queue_lines()
+        if queue_lines is None:
+            events.skipped("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
+            break
+
+        next_entry = find_next_todo(parse_queue(queue_lines))
+        if next_entry is None:
+            log_message("No todo prompts in queue (all completed, errored or empty)")
+            events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored or empty)")
+            break
+
+        working_directory, is_new_project = resolve_working_directory(next_entry)
+        exit_code, outcome = run_claude(
+            next_entry, working_directory, is_new_project, events, arguments.force
+        )
+        queue_status = STATUS_COMPLETED if exit_code == 0 else STATUS_ERROR
+        write_queue_status(next_entry.status_line_index, queue_status)
+        # Last, so the terminal event is only written once the queue reflects the
+        # outcome the viewer is about to show.
+        events.finished(outcome, exit_code, queue_status)
+
+        prompts_run += 1
+        final_exit_code = exit_code
+
+        if arguments.force:
+            break
+
+    if prompts_run > 1:
+        log_message(f"Autonomous work session finished after {prompts_run} prompts")
+
+    return final_exit_code
 
 
 if __name__ == "__main__":
