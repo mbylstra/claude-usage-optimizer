@@ -1,0 +1,1323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Usage Optimizer — know your pace, not just your percentage</title>
+    <meta
+      name="description"
+      content="A Chrome extension showing Claude.ai usage limits with a pace indicator — and a nightly job that spends the headroom you would otherwise waste."
+    />
+    <style>
+      /*
+       * The page borrows the extension's own tokens verbatim: the pace ramp is
+       * semantic there and stays semantic here — blue resting, green headroom,
+       * yellow/orange/red escalating as burn runs ahead of an even pace.
+       */
+      :root {
+        --bg: oklch(0.145 0 0);
+        --bg-raised: oklch(0.185 0 0);
+        --card: oklch(0.205 0 0);
+        --fg: oklch(0.985 0 0);
+        --muted-fg: oklch(0.708 0 0);
+        --border: oklch(1 0 0 / 12%);
+
+        --pace-steady: oklch(0.74 0.13 250);
+        --pace-headroom: oklch(0.77 0.16 155);
+        --pace-ahead-slight: oklch(0.83 0.13 92);
+        --pace-ahead-moderate: oklch(0.78 0.14 62);
+        --pace-ahead-severe: oklch(0.72 0.19 25);
+
+        --brand: oklch(0.74 0.12 40);
+        --brand-strong: oklch(0.66 0.13 40);
+
+        --radius: 0.625rem;
+        --max: 1080px;
+
+        --font-sans:
+          ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial,
+          sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-sans);
+        font-size: 16px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* A single soft brand glow behind the hero, so the fold has depth
+         without the page turning into a gradient showreel. */
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: 720px;
+        background:
+          radial-gradient(60% 70% at 72% 0%, oklch(0.66 0.13 40 / 18%), transparent 70%),
+          radial-gradient(50% 60% at 12% 8%, oklch(0.52 0.16 255 / 14%), transparent 72%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        margin: 0;
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      code,
+      .mono {
+        font-family: var(--font-mono);
+      }
+
+      /* ---------- nav ---------- */
+
+      nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        backdrop-filter: blur(12px);
+        background: oklch(0.145 0 0 / 72%);
+        border-bottom: 1px solid transparent;
+      }
+
+      nav.scrolled {
+        border-bottom-color: var(--border);
+      }
+
+      .nav-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 60px;
+      }
+
+      .brandmark {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        text-decoration: none;
+      }
+
+      .brandmark .dot {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: linear-gradient(150deg, var(--brand), var(--brand-strong));
+        display: grid;
+        place-items: center;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 26px;
+        font-size: 14px;
+        color: var(--muted-fg);
+      }
+
+      .nav-links a {
+        text-decoration: none;
+      }
+
+      .nav-links a:hover {
+        color: var(--fg);
+      }
+
+      /* ---------- buttons ---------- */
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 20px;
+        border-radius: 10px;
+        font-size: 15px;
+        font-weight: 550;
+        text-decoration: none;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+
+      .btn-primary {
+        background: var(--brand);
+        color: oklch(0.15 0.02 40);
+      }
+
+      .btn-primary:hover {
+        background: oklch(0.79 0.12 40);
+      }
+
+      .btn-ghost {
+        border-color: var(--border);
+        color: var(--fg);
+        background: oklch(1 0 0 / 4%);
+      }
+
+      .btn-ghost:hover {
+        background: oklch(1 0 0 / 8%);
+      }
+
+      /* ---------- hero ---------- */
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 56px;
+        align-items: center;
+        padding: 84px 0 96px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted-fg);
+        border: 1px solid var(--border);
+        background: oklch(1 0 0 / 4%);
+        padding: 5px 12px;
+        border-radius: 999px;
+        margin-bottom: 22px;
+      }
+
+      .eyebrow b {
+        color: var(--brand);
+        font-weight: 600;
+      }
+
+      h1 {
+        font-size: clamp(38px, 5vw, 60px);
+        letter-spacing: -0.035em;
+      }
+
+      h1 .accent {
+        background: linear-gradient(100deg, var(--brand), oklch(0.8 0.11 55));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .lede {
+        margin-top: 22px;
+        font-size: 18px;
+        color: var(--muted-fg);
+        max-width: 30em;
+      }
+
+      .lede strong {
+        color: var(--fg);
+        font-weight: 550;
+      }
+
+      .cta-row {
+        display: flex;
+        gap: 12px;
+        margin-top: 32px;
+        flex-wrap: wrap;
+      }
+
+      .cta-note {
+        margin-top: 16px;
+        font-size: 13.5px;
+        color: var(--muted-fg);
+      }
+
+      /* ---------- the popup mock ---------- */
+
+      .popup {
+        width: 100%;
+        max-width: 380px;
+        margin-left: auto;
+        background: var(--bg-raised);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow:
+          0 40px 80px -20px oklch(0 0 0 / 65%),
+          0 0 0 1px oklch(1 0 0 / 3%);
+      }
+
+      .popup-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 16px;
+      }
+
+      .popup-title {
+        font-size: 17px;
+        font-weight: 600;
+      }
+
+      .popup-sub {
+        font-size: 12.5px;
+        color: var(--muted-fg);
+      }
+
+      .popup-icons {
+        display: flex;
+        gap: 12px;
+        color: var(--muted-fg);
+      }
+
+      .window-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+
+      .window-card + .window-card {
+        margin-top: 12px;
+      }
+
+      .wc-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 14px;
+      }
+
+      .wc-top .name {
+        font-weight: 600;
+      }
+
+      .wc-top .span {
+        color: var(--muted-fg);
+        font-size: 12.5px;
+      }
+
+      .wc-figure {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-top: 8px;
+      }
+
+      .wc-big {
+        font-size: 30px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .wc-pct {
+        font-size: 13px;
+        color: var(--muted-fg);
+      }
+
+      .wc-pace {
+        font-size: 13.5px;
+        margin-top: 1px;
+      }
+
+      /* The bar: fill, an even-burn marker, and an hour/day scale behind it. */
+      .bar {
+        position: relative;
+        height: 10px;
+        border-radius: 999px;
+        background: oklch(1 0 0 / 8%);
+        margin: 12px 0 13px;
+        overflow: hidden;
+      }
+
+      .bar-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: 999px;
+      }
+
+      .bar-ticks {
+        position: absolute;
+        inset: 0;
+        display: flex;
+      }
+
+      .bar-ticks span {
+        flex: 1;
+        border-right: 1px solid oklch(1 0 0 / 10%);
+      }
+
+      .bar-ticks span:last-child {
+        border-right: 0;
+      }
+
+      .bar-marker {
+        position: absolute;
+        top: -2px;
+        bottom: -2px;
+        width: 2.5px;
+        border-radius: 2px;
+        background: var(--fg);
+      }
+
+      .wc-facts {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .wc-facts dt {
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted-fg);
+      }
+
+      .wc-facts dd {
+        margin: 2px 0 0;
+        font-size: 13px;
+      }
+
+      .popup-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 14px;
+        font-size: 13px;
+        color: var(--muted-fg);
+      }
+
+      .popup-foot b {
+        color: var(--fg);
+      }
+
+      .popup-foot .link {
+        color: var(--brand);
+      }
+
+      /* ---------- generic section ---------- */
+
+      section {
+        padding: 88px 0;
+        border-top: 1px solid var(--border);
+      }
+
+      .section-head {
+        max-width: 40em;
+        margin-bottom: 44px;
+      }
+
+      .kicker {
+        font-size: 12.5px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--brand);
+        margin-bottom: 14px;
+      }
+
+      h2 {
+        font-size: clamp(28px, 3.4vw, 38px);
+      }
+
+      .section-head p {
+        margin-top: 16px;
+        font-size: 17px;
+        color: var(--muted-fg);
+      }
+
+      /* ---------- the insight strip ---------- */
+
+      .insight {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      .insight-card {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 26px;
+        background: var(--card);
+      }
+
+      .insight-card.half {
+        background: linear-gradient(180deg, oklch(0.66 0.13 40 / 10%), transparent 60%), var(--card);
+        border-color: oklch(0.66 0.13 40 / 35%);
+      }
+
+      .insight-card .num {
+        font-size: 40px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+      }
+
+      .insight-card .num .dim {
+        color: var(--muted-fg);
+      }
+
+      .insight-card p {
+        margin-top: 10px;
+        color: var(--muted-fg);
+        font-size: 15px;
+      }
+
+      .insight-card .label {
+        font-size: 12.5px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted-fg);
+        margin-bottom: 12px;
+      }
+
+      /* ---------- feature grid ---------- */
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .feature {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 24px;
+        background: var(--card);
+      }
+
+      .feature h3 {
+        font-size: 17px;
+        margin-bottom: 10px;
+      }
+
+      .feature p {
+        font-size: 14.5px;
+        color: var(--muted-fg);
+      }
+
+      .feature .glyph {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        margin-bottom: 16px;
+        background: oklch(1 0 0 / 6%);
+      }
+
+      /* ---------- escalation table ---------- */
+
+      .escalation {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--card);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14.5px;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      thead th {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted-fg);
+        font-weight: 500;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      td.window-name {
+        font-weight: 550;
+      }
+
+      .swatch {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .swatch::before {
+        content: '';
+        width: 9px;
+        height: 9px;
+        border-radius: 3px;
+        background: currentColor;
+      }
+
+      .c-slight {
+        color: var(--pace-ahead-slight);
+      }
+      .c-moderate {
+        color: var(--pace-ahead-moderate);
+      }
+      .c-severe {
+        color: var(--pace-ahead-severe);
+      }
+      .c-steady {
+        color: var(--pace-steady);
+      }
+      .c-headroom {
+        color: var(--pace-headroom);
+      }
+
+      /* ---------- autonomous split ---------- */
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: center;
+      }
+
+      .checklist {
+        list-style: none;
+        padding: 0;
+        margin: 28px 0 0;
+        display: grid;
+        gap: 16px;
+      }
+
+      .checklist li {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        gap: 12px;
+        font-size: 15px;
+        color: var(--muted-fg);
+      }
+
+      .checklist b {
+        color: var(--fg);
+        font-weight: 550;
+      }
+
+      .tick {
+        margin-top: 3px;
+        color: var(--pace-headroom);
+      }
+
+      /* ---------- run log mock ---------- */
+
+      .runlog {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        background: oklch(0.17 0 0);
+        box-shadow: 0 30px 60px -24px oklch(0 0 0 / 60%);
+        font-size: 13px;
+      }
+
+      .runlog-head {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--card);
+      }
+
+      .runlog-status {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .pulse {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--pace-steady);
+        animation: pulse 1.8s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
+      }
+
+      .runlog-status .dim {
+        color: var(--muted-fg);
+      }
+
+      .runlog-project {
+        margin-top: 5px;
+        font-size: 12px;
+        color: var(--muted-fg);
+      }
+
+      .runlog-project .mono {
+        color: var(--fg);
+      }
+
+      .runlog-body {
+        padding: 14px 16px;
+        display: grid;
+        gap: 11px;
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        line-height: 1.5;
+      }
+
+      .entry {
+        display: grid;
+        grid-template-columns: 58px 1fr;
+        gap: 12px;
+        color: var(--muted-fg);
+      }
+
+      .entry .t {
+        color: oklch(0.55 0 0);
+      }
+
+      .entry .txt {
+        color: oklch(0.88 0 0);
+      }
+
+      .entry .tool {
+        color: var(--pace-steady);
+      }
+
+      .entry .ok {
+        color: var(--pace-headroom);
+      }
+
+      .caret {
+        display: inline-block;
+        width: 7px;
+        height: 13px;
+        background: var(--brand);
+        vertical-align: -2px;
+        animation: blink 1.1s steps(2, start) infinite;
+      }
+
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* ---------- steps ---------- */
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        counter-reset: step;
+      }
+
+      .step {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 24px;
+        background: var(--card);
+        counter-increment: step;
+      }
+
+      .step::before {
+        content: counter(step);
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        background: oklch(0.66 0.13 40 / 18%);
+        color: var(--brand);
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 16px;
+      }
+
+      .step h3 {
+        font-size: 16px;
+        margin-bottom: 8px;
+      }
+
+      .step p {
+        font-size: 14.5px;
+        color: var(--muted-fg);
+      }
+
+      pre {
+        margin: 0;
+        background: oklch(0.17 0 0);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 18px 20px;
+        overflow-x: auto;
+        font-family: var(--font-mono);
+        font-size: 13.5px;
+        line-height: 1.7;
+        color: oklch(0.88 0 0);
+      }
+
+      pre .c {
+        color: oklch(0.55 0 0);
+      }
+
+      pre .cmd {
+        color: var(--brand);
+      }
+
+      /* ---------- privacy ---------- */
+
+      .privacy {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .privacy .feature p {
+        font-size: 14px;
+      }
+
+      /* ---------- final cta ---------- */
+
+      .final {
+        text-align: center;
+        border: 1px solid oklch(0.66 0.13 40 / 30%);
+        border-radius: 20px;
+        padding: 64px 32px;
+        background:
+          radial-gradient(70% 130% at 50% 0%, oklch(0.66 0.13 40 / 14%), transparent 70%),
+          var(--card);
+      }
+
+      .final p {
+        margin: 16px auto 0;
+        color: var(--muted-fg);
+        font-size: 17px;
+        max-width: 34em;
+      }
+
+      .final .cta-row {
+        justify-content: center;
+      }
+
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 32px 0 48px;
+        font-size: 13.5px;
+        color: var(--muted-fg);
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      footer a {
+        text-decoration: none;
+      }
+
+      footer a:hover {
+        color: var(--fg);
+      }
+
+      @media (max-width: 900px) {
+        .hero,
+        .split,
+        .insight {
+          grid-template-columns: 1fr;
+          gap: 40px;
+        }
+        .popup {
+          margin: 0 auto;
+        }
+        .features,
+        .steps,
+        .privacy {
+          grid-template-columns: 1fr;
+        }
+        .nav-links a:not(.btn) {
+          display: none;
+        }
+        section {
+          padding: 64px 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav id="nav">
+      <div class="wrap nav-inner">
+        <a class="brandmark" href="#top">
+          <span class="dot" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.15 0.02 40)" stroke-width="2.6" stroke-linecap="round">
+              <path d="M12 6v6l4 2" />
+              <circle cx="12" cy="12" r="9" />
+            </svg>
+          </span>
+          Claude Usage Optimizer
+        </a>
+        <div class="nav-links">
+          <a href="#pace">Pace</a>
+          <a href="#autonomous">Autonomous work</a>
+          <a href="#privacy">Privacy</a>
+          <a class="btn btn-ghost" href="#install">Install</a>
+        </div>
+      </div>
+    </nav>
+
+    <main id="top">
+      <div class="wrap">
+        <div class="hero">
+          <div>
+            <div class="eyebrow"><b>Chrome extension</b> · open source · no configuration</div>
+            <h1>Know your <span class="accent">pace</span>, not just your percentage.</h1>
+            <p class="lede">
+              Claude.ai tells you that you have used 61%. It does not tell you that
+              <strong>47% of the week is gone</strong> — which is the half you can act on.
+              This extension shows the gap as <strong>time</strong>, then spends the headroom
+              you would otherwise waste.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="#install">
+                Get started
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              </a>
+              <a class="btn btn-ghost" href="#autonomous">See the nightly job</a>
+            </div>
+            <p class="cta-note">
+              Load unpacked from a checkout · <code>just setup</code> does the rest
+            </p>
+          </div>
+
+          <!-- The popup, rebuilt in markup so it stays sharp at any size. -->
+          <div class="popup" role="img" aria-label="The extension popup, showing a 5-hour session window 14 minutes behind pace and a weekly window 23 hours 34 minutes behind pace.">
+            <div class="popup-head">
+              <div>
+                <div class="popup-title">Claude usage</div>
+                <div class="popup-sub">Updated just now</div>
+              </div>
+              <div class="popup-icons">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.2 7.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 2.7-1.1V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+              </div>
+            </div>
+
+            <div class="window-card">
+              <div class="wc-top">
+                <span class="name">Current session</span>
+                <span class="span">5 hours</span>
+              </div>
+              <div class="wc-figure">
+                <span class="wc-big c-steady">14m</span>
+                <span class="wc-pct">0% used</span>
+              </div>
+              <div class="wc-pace c-steady">behind optimal pace</div>
+              <div class="bar">
+                <div class="bar-fill c-steady" style="width: 2%; background: var(--pace-steady)"></div>
+                <div class="bar-ticks"><span></span><span></span><span></span><span></span><span></span></div>
+                <div class="bar-marker" style="left: 6%"></div>
+              </div>
+              <dl class="wc-facts">
+                <div><dt>Started</dt><dd>1:10pm</dd></div>
+                <div><dt>Resets</dt><dd>6:10pm</dd></div>
+                <div><dt>Left</dt><dd>4h 45m</dd></div>
+              </dl>
+            </div>
+
+            <div class="window-card">
+              <div class="wc-top">
+                <span class="name">This week</span>
+                <span class="span">7 days</span>
+              </div>
+              <div class="wc-figure">
+                <span class="wc-big c-steady">23h 34m</span>
+                <span class="wc-pct">13% used</span>
+              </div>
+              <div class="wc-pace c-steady">behind optimal pace</div>
+              <div class="bar">
+                <div class="bar-fill" style="width: 13%; background: var(--pace-steady)"></div>
+                <div class="bar-ticks"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                <div class="bar-marker" style="left: 27%"></div>
+              </div>
+              <dl class="wc-facts">
+                <div><dt>Started</dt><dd>Thu, 4pm</dd></div>
+                <div><dt>Resets</dt><dd>Thu, 4pm</dd></div>
+                <div><dt>Left</dt><dd>5d 2h</dd></div>
+              </dl>
+            </div>
+
+            <div class="popup-foot">
+              <span>Suggested model: <b>Opus</b></span>
+              <span class="link">Claude.ai ↗</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---------------- the insight ---------------- -->
+      <section id="pace">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">The number that matters</div>
+            <h2>A percentage is half a sentence.</h2>
+            <p>
+              Overshooting the weekly cap costs you a working day. Undershooting it wastes the
+              subscription just as surely, and much more quietly. Both mistakes come from
+              reading usage without reading the clock beside it.
+            </p>
+          </div>
+
+          <div class="insight">
+            <div class="insight-card">
+              <div class="label">What you are told</div>
+              <div class="num">61% <span class="dim">used</span></div>
+              <p>True, and not actionable. Fast or slow? No way to tell.</p>
+            </div>
+            <div class="insight-card half">
+              <div class="label">What you can act on</div>
+              <div class="num">
+                61% used, <span class="dim">47% of the week gone</span>
+              </div>
+              <p>
+                Ahead of an even burn — and the extension puts a number on it:
+                <span class="c-moderate">1 day 3h ahead of pace</span>.
+              </p>
+            </div>
+          </div>
+
+          <div class="features" style="margin-top: 20px">
+            <div class="feature">
+              <div class="glyph c-steady">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              </div>
+              <h3>Pace, expressed as time</h3>
+              <p>
+                “36m ahead of pace” means you have already spent what an even burn would not
+                reach for another 36 minutes. The same percentage gap is worth minutes on a
+                5-hour window and days on a weekly one — which is why raw percentage points
+                were never the number to show.
+              </p>
+            </div>
+            <div class="feature">
+              <div class="glyph c-headroom">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M21 3v6h-6"/></svg>
+              </div>
+              <h3>A bar you can read at a glance</h3>
+              <p>
+                Every bar carries a vertical line at the even-burn point, so the picture and the
+                number say the same thing. Behind it runs a scale — one tick per hour of a
+                session, one per day of a week — so the line reads as “three hours in”.
+              </p>
+            </div>
+            <div class="feature">
+              <div class="glyph" style="color: var(--brand)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.4 6.2L21 12l-6.6 2.8L12 21l-2.4-6.2L3 12l6.6-2.8z"/></svg>
+              </div>
+              <h3>A suggested model</h3>
+              <p>
+                <b style="color: var(--fg); font-weight: 550">Opus</b> when both gating windows
+                have room, <b style="color: var(--fg); font-weight: 550">Haiku</b> the moment
+                either is burning severely ahead, Sonnet in between. Optional notifications say
+                <em>which window</em> drove the change.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- escalation ---------------- -->
+      <section>
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">Calibrated warnings</div>
+            <h2>Loud only when it is worth acting on.</h2>
+            <p>
+              Thresholds are set per window, at the point where the gap actually costs you
+              something. Being <span class="c-steady">behind</span> has one colour at any size:
+              headroom is good news, and grading it would imply a scale you cannot act on.
+            </p>
+          </div>
+
+          <div class="escalation">
+            <table>
+              <thead>
+                <tr>
+                  <th>Window</th>
+                  <th><span class="swatch c-slight">Slightly ahead</span></th>
+                  <th><span class="swatch c-moderate">Half bad</span></th>
+                  <th><span class="swatch c-severe">Bad</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="window-name">5-hour session</td>
+                  <td>15m ahead</td>
+                  <td>30m ahead</td>
+                  <td>1h ahead</td>
+                </tr>
+                <tr>
+                  <td class="window-name">Weekly</td>
+                  <td>12h ahead</td>
+                  <td>1 day ahead</td>
+                  <td>2 days ahead</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- autonomous ---------------- -->
+      <section id="autonomous">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">The optimizer half</div>
+            <h2>Unused capacity does not roll over.</h2>
+            <p>
+              Headroom you never spend is simply gone. So a launchd job runs a queued Claude Code
+              prompt at 2 AM — <strong style="color: var(--fg)">but only when the week is behind
+              an even burn.</strong> On pace, nothing runs and nothing is spent.
+            </p>
+          </div>
+
+          <div class="split">
+            <div>
+              <ul class="checklist">
+                <li>
+                  <span class="tick">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  </span>
+                  <span
+                    ><b>Gated on pace, not on a schedule.</b> The job reads the same snapshot the
+                    popup shows, and runs only if the week is at least 2 hours behind.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  </span>
+                  <span
+                    ><b>A queue you edit by hand.</b> <code>prompts.txt</code> at the repo root,
+                    sections split by <code>===</code>. The first <code>todo</code> runs; its
+                    status is rewritten to <code>completed</code> or <code>error</code>.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  </span>
+                  <span
+                    ><b>Bring a repo, or don’t.</b> A prompt with no <code>REPO:</code> gets a
+                    fresh <code>git init</code>-ed project of its own, named for the date and the
+                    first words of the prompt.</span
+                  >
+                </li>
+                <li>
+                  <span class="tick">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                  </span>
+                  <span
+                    ><b>Watch it live, or read it later.</b> A detached window streams the run as
+                    it happens — and opening it after the fact replays the most recent run, so you
+                    can see what the night did.</span
+                  >
+                </li>
+              </ul>
+            </div>
+
+            <div class="runlog" role="img" aria-label="The run-log window, streaming a run in progress.">
+              <div class="runlog-head">
+                <div class="runlog-status">
+                  <span class="pulse"></span>
+                  <span>Running</span>
+                  <span class="dim">04:21 · $0.42 · 14 turns · opus</span>
+                </div>
+                <div class="runlog-project">
+                  new project: <span class="mono">2026-08-11-markdown-outliner</span>
+                </div>
+              </div>
+              <div class="runlog-body">
+                <div class="entry"><span class="t">02:00:04</span><span class="txt">Weekly window 9h 12m behind pace — running.</span></div>
+                <div class="entry"><span class="t">02:00:06</span><span class="txt">Prompt: “Build a small markdown outliner…”</span></div>
+                <div class="entry"><span class="t">02:00:11</span><span class="tool">Write</span></div>
+                <div class="entry"><span class="t">02:00:11</span><span class="txt">src/outline.ts</span></div>
+                <div class="entry"><span class="t">02:01:38</span><span class="tool">Bash</span></div>
+                <div class="entry"><span class="t">02:01:38</span><span class="txt">just check</span></div>
+                <div class="entry"><span class="t">02:02:02</span><span class="ok">✓ typecheck · lint · format</span></div>
+                <div class="entry"><span class="t">02:04:21</span><span class="txt">Wiring up the keyboard handling<span class="caret"></span></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- install ---------------- -->
+      <section id="install">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">Setup</div>
+            <h2>One command, then one click.</h2>
+            <p>
+              Not in the Chrome Web Store — you load it unpacked from a checkout.
+              <code>just setup</code> does dependencies, the build, the native host, the queue
+              template and the nightly job, and is safe to re-run at any point.
+            </p>
+          </div>
+
+          <div class="steps" style="margin-bottom: 28px">
+            <div class="step">
+              <h3>Install and build</h3>
+              <p>
+                <code>brew install just node uv</code>, then <code>just setup</code> from the
+                repository root. It refuses to run if <code>uv</code> or <code>claude</code> is
+                missing.
+              </p>
+            </div>
+            <div class="step">
+              <h3>Load the extension</h3>
+              <p>
+                The one step it cannot do for you: <code>chrome://extensions</code> → Developer
+                mode → <b>Load unpacked</b> → pick <code>dist/</code>. Pin it and sign in to
+                claude.ai.
+              </p>
+            </div>
+            <div class="step">
+              <h3>Queue some work</h3>
+              <p>
+                Edit <code>prompts.txt</code>, then press <b>Run now</b> in Settings to test it
+                end to end. It ignores the pace gate and opens the live run window.
+              </p>
+            </div>
+          </div>
+
+          <pre><span class="c"># prerequisites (macOS)</span>
+<span class="cmd">brew</span> install just node uv
+<span class="cmd">corepack</span> enable pnpm
+
+<span class="c"># everything a fresh clone needs, in one command</span>
+<span class="cmd">just</span> setup
+
+<span class="c"># then, any time</span>
+<span class="cmd">just</span> autonomous-dry-run        <span class="c"># what would run next, without running it</span>
+<span class="cmd">just</span> trigger-autonomous-work   <span class="c"># run now if behind pace</span>
+<span class="cmd">just</span> autonomous-log            <span class="c"># follow the run live</span></pre>
+        </div>
+      </section>
+
+      <!-- ---------------- privacy ---------------- -->
+      <section id="privacy">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">Scope and permissions</div>
+            <h2>It reads your usage. That is all it reads.</h2>
+            <p>
+              No account to make, no key to paste, no server in the middle. The extension rides
+              the claude.ai session you are already signed in to, and everything it writes stays
+              inside the checkout.
+            </p>
+          </div>
+
+          <div class="privacy">
+            <div class="feature">
+              <div class="glyph c-headroom">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.4 8.3-8 9-4.6-.7-8-4-8-9V6z"/></svg>
+              </div>
+              <h3>Three permissions, and no more</h3>
+              <p>
+                <code>storage</code>, <code>alarms</code>, and host access to
+                <code>https://claude.ai/*</code>. No content script, no <code>cookies</code>, no
+                <code>tabs</code>.
+              </p>
+            </div>
+            <div class="feature">
+              <div class="glyph c-steady">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+              </div>
+              <h3>Nothing leaves your machine</h3>
+              <p>
+                Two GETs to claude.ai’s own API, and a snapshot written to a JSON file in the
+                repo by a stdlib-only native host. There is no third party.
+              </p>
+            </div>
+            <div class="feature">
+              <div class="glyph" style="color: var(--brand)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+              </div>
+              <h3>Never Full Disk Access</h3>
+              <p>
+                The nightly job runs its own re-signed copy of <code>uv</code>, so folders you
+                allow are allowed for that job and nothing else. Your everyday
+                <code>uvx</code> stays unprivileged.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section style="border-top: 0">
+        <div class="wrap">
+          <div class="final">
+            <h2>Stop guessing whether you are burning too fast.</h2>
+            <p>
+              Read the pace, take the suggestion, and let the nights you were never going to use
+              go to work instead.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="#install">
+                Get started
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              </a>
+              <a class="btn btn-ghost" href="https://github.com">View the source</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap" style="display: flex; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 16px">
+        <span>Claude Usage Optimizer — MIT licensed. Not affiliated with Anthropic.</span>
+        <span>Built on an unofficial, undocumented claude.ai API. It may change.</span>
+      </div>
+    </footer>
+
+    <script>
+      // Hairline under the nav only once the page has moved.
+      const nav = document.getElementById('nav');
+      const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+      onScroll();
+      window.addEventListener('scroll', onScroll, { passive: true });
+    </script>
+  </body>
+</html>
