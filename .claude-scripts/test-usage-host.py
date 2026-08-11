@@ -281,23 +281,46 @@ def main() -> int:
 
     print("runAutonomousWork message:")
     with tempfile.TemporaryDirectory() as temporary_directory:
-        marker_file = Path(temporary_directory) / "spawned"
-        stand_in = Path(temporary_directory) / "stand-in"
-        stand_in.write_text(f'#!/bin/bash\ntouch "{marker_file}"\n', encoding="utf-8")
+        # A stand-in launchctl, because the host no longer spawns the scheduler
+        # itself: it asks launchd to, so that the run is a child of launchd
+        # rather than of Chrome and escapes Chrome's quarantine stamp.
+        kickstart_log = Path(temporary_directory) / "launchctl-calls"
+        stand_in = Path(temporary_directory) / "launchctl"
+        stand_in.write_text(
+            f'#!/bin/bash\necho "$@" >> "{kickstart_log}"\n', encoding="utf-8"
+        )
         stand_in.chmod(0o755)
 
         reply = ask_host(
             {"type": "runAutonomousWork"},
-            {"USAGE_HOST_SCHEDULER_COMMAND": str(stand_in)},
+            {"USAGE_HOST_LAUNCHCTL": str(stand_in)},
         )
         results.append(check("host reports the run started", bool(reply and reply.get("started"))))
 
-        # The child is detached, so give it a moment to actually exec.
-        for _ in range(50):
-            if marker_file.exists():
-                break
-            subprocess.run(["sleep", "0.1"])
-        results.append(check("scheduler was actually spawned", marker_file.exists()))
+        kickstart_calls = kickstart_log.read_text(encoding="utf-8") if kickstart_log.exists() else ""
+        results.append(
+            check(
+                "launchd was asked to start the on-demand job",
+                "kickstart" in kickstart_calls
+                and "com.claudeusageoptimizer.autonomouswork.ondemand" in kickstart_calls,
+            )
+        )
+
+        # A label launchd has never heard of must be told apart from a real
+        # failure, since it means `just install-autonomous-work` was never run.
+        missing_agent_launchctl = Path(temporary_directory) / "launchctl-missing"
+        missing_agent_launchctl.write_text("#!/bin/bash\nexit 113\n", encoding="utf-8")
+        missing_agent_launchctl.chmod(0o755)
+        reply = ask_host(
+            {"type": "runAutonomousWork"},
+            {"USAGE_HOST_LAUNCHCTL": str(missing_agent_launchctl)},
+        )
+        results.append(
+            check(
+                "an uninstalled agent is reported as such",
+                bool(reply and not reply.get("ok") and "not installed" in reply.get("error", "")),
+            )
+        )
 
     print("primeFolderAccess message:")
     with tempfile.TemporaryDirectory() as temporary_directory:

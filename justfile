@@ -83,6 +83,10 @@ check: typecheck lint format-check
 autonomous_script := ".claude-scripts/claude-usage-autonomous-work"
 launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
 launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
+# The unscheduled twin the popup's "Run now" kickstarts, so that run belongs to
+# launchd rather than to Chrome — see CLAUDE.md, "Triggering a run from the popup"
+on_demand_label := launch_agent_label + ".ondemand"
+on_demand_plist := home_directory() / "Library/LaunchAgents" / on_demand_label + ".plist"
 
 # The uv this job runs, so the folder grants attach to a binary nothing else
 # uses. Named for the project rather than "uv" because System Settings lists an
@@ -353,9 +357,12 @@ autonomous-settings:
 uninstall-autonomous-work:
     launchctl unload {{ launch_agent_plist }} 2>/dev/null || true
     rm -f {{ launch_agent_plist }}
-    @echo "Removed {{ launch_agent_label }}"
+    launchctl unload {{ on_demand_plist }} 2>/dev/null || true
+    rm -f {{ on_demand_plist }}
+    @echo "Removed {{ launch_agent_label }} and {{ on_demand_label }}"
 
-# Is the nightly run scheduled?
+# Is the nightly run scheduled? Both jobs are listed — the nightly one and the
+# unscheduled twin "Run now" starts.
 autonomous-status:
     @launchctl list | grep {{ launch_agent_label }} || echo "not loaded"
 

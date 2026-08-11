@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template, installed alongside the nightly job by
+  `autonomous_work_settings.py`. Same work, started a different way: this one has
+  no schedule at all and exists only to be kickstarted by the native host when
+  the popup's "Run now" is pressed.
+
+  It exists because launchd cannot be asked to start a job with extra arguments,
+  and a run started by hand must skip the pace gate — hence --force baked in
+  here, where the nightly job takes none.
+
+  Why route "Run now" through launchd rather than spawning the scheduler from
+  the host, which is fewer moving parts: everything the host spawns is a
+  descendant of Chrome, and macOS stamps com.apple.quarantine on files written
+  by any descendant of a quarantine-aware app. That includes the ad-hoc-signed
+  .node module `claude` unpacks the first time a prompt touches an image, which
+  then cannot load without an "Apple could not verify..." dialog. Started by
+  launchd, the run has no such ancestor. It also gives the button and the
+  nightly job identical filesystem permissions, so what you see when you press
+  it is what happens at 2 AM.
+
+  Every placeholder here is substituted textually, so do not name one in prose.
+
+  PATH matters more than anything else here: launchd starts jobs with a bare
+  environment, and both `uv` and `claude` install under the home directory
+  rather than on the default path. A missing PATH entry shows up as
+  "command not found" in system.log and nothing else.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.claudeusageoptimizer.autonomouswork.ondemand</string>
+
+  <!-- A named wrapper rather than /usr/bin/env, so listings show
+       "claude-usage-autonomous-work" instead of "env". -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROJECT_ROOT__/.claude-scripts/claude-usage-autonomous-work</string>
+    <string>--force</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+
+  <key>StandardOutPath</key>
+  <string>__PROJECT_ROOT__/.claude-scripts/system.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROJECT_ROOT__/.claude-scripts/system.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

@@ -43,11 +43,15 @@ import autonomous_work_settings  # noqa: E402  (must follow the sys.path line ab
 HOST_DIRECTORY = Path(__file__).resolve().parent
 SNAPSHOT_FILE = HOST_DIRECTORY / "claude-usage.json"
 LOG_FILE = HOST_DIRECTORY / "usage-host.log"
-# Overridable so the spawn path can be exercised without starting a real (and
-# billable) Claude session — see test-usage-host.py.
-SCHEDULER_COMMAND = os.environ.get(
-    "USAGE_HOST_SCHEDULER_COMMAND", str(HOST_DIRECTORY / "claude-usage-autonomous-work")
-)
+# "Run now" asks launchd to start the job rather than spawning it here, so that
+# the run is not a descendant of Chrome — see start_autonomous_work. Overridable
+# so that path can be exercised without starting a real (and billable) Claude
+# session — see test-usage-host.py.
+LAUNCHCTL_COMMAND = os.environ.get("USAGE_HOST_LAUNCHCTL", "/bin/launchctl")
+ON_DEMAND_LAUNCH_AGENT_LABEL = autonomous_work_settings.ON_DEMAND_LAUNCH_AGENT_LABEL
+# `launchctl kickstart` for a label launchd has never been given. Worth telling
+# apart from a real failure: it means the agent was never installed.
+LAUNCHCTL_NO_SUCH_SERVICE = 113
 # The structured record `run-autonomous-work.py` writes, and the only channel
 # between a run on disk and a window in the browser: MV3 has no filesystem API.
 RUN_EVENT_FILE = Path(
@@ -178,26 +182,48 @@ def spawn_environment():
 
 
 def start_autonomous_work():
-    # type: () -> None
-    """Launch the scheduler detached, and return without waiting for it.
+    # type: () -> dict
+    """Ask launchd to start the run, rather than spawning it here.
 
-    Chrome tears this host down as soon as it has its reply, and the work can run
-    for the better part of an hour, so the child gets its own session and its own
-    log rather than inheriting a pipe that is about to close.
+    Spawning it here is fewer moving parts and was how this worked first, but
+    everything this host starts is a descendant of Chrome, and macOS stamps
+    com.apple.quarantine on files written by any descendant of a quarantine-aware
+    app. That catches the ad-hoc-signed .node module `claude` unpacks the first
+    time a prompt touches an image: loading it then needs an "Apple could not
+    verify..." dialog dismissed, and the run stalls until somebody does.
+
+    Handing the job to launchd costs a second launch agent — one cannot pass
+    --force to `launchctl kickstart`, so the on-demand definition carries it —
+    and in exchange the run has launchd as its parent, exactly like the nightly
+    one. Same ancestry, same quarantine (none), same folder permissions, so what
+    the button does is what 2 AM does.
+
+    It reports only whether the run *started*; the work outlives this reply by up
+    to an hour and reports into autonomous-work.log and the run event stream,
+    which the run-log window tails regardless of who started the run.
     """
-    log_handle = LOG_FILE.open("a", encoding="utf-8")
+    target = "gui/{}/{}".format(os.getuid(), ON_DEMAND_LAUNCH_AGENT_LABEL)
     try:
-        subprocess.Popen(
-            [SCHEDULER_COMMAND, "--force"],
-            cwd=str(HOST_DIRECTORY.parent),
-            stdin=subprocess.DEVNULL,
-            stdout=log_handle,
-            stderr=log_handle,
-            start_new_session=True,
+        completed = subprocess.run(
+            [LAUNCHCTL_COMMAND, "kickstart", target],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             env=spawn_environment(),
         )
-    finally:
-        log_handle.close()
+    except OSError as error:
+        return {"ok": False, "error": "could not run launchctl: {}".format(error)}
+
+    if completed.returncode == 0:
+        return {"ok": True, "started": True}
+
+    detail = completed.stdout.decode("utf-8", "replace").strip()
+    if completed.returncode == LAUNCHCTL_NO_SUCH_SERVICE:
+        return {
+            "ok": False,
+            "error": "the on-demand launch agent is not installed — "
+            "run 'just install-autonomous-work'",
+        }
+    return {"ok": False, "error": detail or "launchctl kickstart failed"}
 
 
 def start_folder_access_prompts():
@@ -461,9 +487,12 @@ def handle_message(message):
         return cancel_autonomous_work()
 
     if message_type == MESSAGE_TYPE_RUN_WORK:
-        start_autonomous_work()
-        log_message("Started autonomous work on request from the popup")
-        return {"ok": True, "started": True}
+        result = start_autonomous_work()
+        if result.get("ok"):
+            log_message("Asked launchd to start autonomous work, on request from the popup")
+        else:
+            log_message("Could not start autonomous work: {}".format(result.get("error")))
+        return result
 
     if message_type == MESSAGE_TYPE_PRIME_FOLDERS:
         result = start_folder_access_prompts()

@@ -264,12 +264,17 @@ per-application grants, and a queued prompt that reads one may be refused. What
 happens then depends entirely on how the run was started, which took a while to
 pin down:
 
-- **The nightly launchd run fails closed.** The read returns
-  `Operation not permitted` immediately — no dialog, no hang. Claude sees an
-  ordinary tool error, and the queue entry is marked `error`.
-- **A run started with Run now prompts**, because Chrome is in that chain and
-  macOS will raise a dialog on its behalf. Answering it grants that one folder,
-  permanently, and the nightly job gets it from then on.
+- **Every run fails closed**, whether it is the nightly one or **Run now**. The
+  read returns `Operation not permitted` immediately — no dialog, no hang.
+  Claude sees an ordinary tool error, and the queue entry is marked `error`.
+- **Run now used to prompt**, because it was spawned from Chrome and macOS would
+  raise a dialog on its behalf. It now asks launchd to start the same job the
+  nightly run uses, so the two have identical permissions — at the price of that
+  prompting. The reason is Gatekeeper rather than folders: anything Chrome
+  spawns has its files stamped with Chrome's quarantine, including the native
+  module Claude unpacks to read an image, which then cannot load without a
+  malware-check dialog blocking the run. See CLAUDE.md, "Triggering a run from
+  the popup".
 
 So the settings screen has a **Grant folder access** button. It asks macOS about
 Desktop, Documents and Downloads in one go, and you answer the dialogs while you
@@ -400,8 +405,9 @@ just autonomous-running          # is a run in flight?
 just cancel-autonomous-work      # stop an in-flight run
 ```
 
-Settings in the popup has a **Run now** button that does the same thing as
-`just trigger-autonomous-work --force`, and a **View run** button beside it.
+Settings in the popup has a **Run now** button that does the same work as
+`just trigger-autonomous-work --force` — by asking launchd to start it, so the
+run is identical to the nightly one — and a **View run** button beside it.
 Both open a detached window that streams the run — a status header with elapsed
 time and cost, a timeline of what Claude is doing, a Cancel button, and a raw
 JSON toggle. The window follows the newest line until you scroll away from it,

@@ -190,11 +190,47 @@ straight away: a cancelled entry must be left as `todo`, not marked as an error
 on the way out.
 
 **Triggering a run from the popup.** Settings has a "Run now" button, which goes
-popup → service worker → native host → detached scheduler process, and reports
-only whether the run _started_: the work itself outlives the message by up to an
-hour and reports into `autonomous-work.log`. It passes `--force`, since a button
-press is an explicit instruction and applying the nightly pace gate to it would
-just make the button look broken. It then opens the run-log window below.
+popup → service worker → native host → `launchctl kickstart`, and reports only
+whether the run _started_: the work itself outlives the message by up to an hour
+and reports into `autonomous-work.log`. It then opens the run-log window below.
+
+**The host asks launchd to start the run rather than spawning it**, which is the
+opposite of what the rest of the host does and costs a whole second launch
+agent, `com.claudeusageoptimizer.autonomouswork.ondemand` — unscheduled, and
+carrying the `--force` the nightly job does not, since a button press is an
+explicit instruction and `launchctl kickstart` cannot pass arguments. It bought
+two things.
+
+The first is **Gatekeeper**. Everything the host spawns is a descendant of
+Chrome, and macOS stamps `com.apple.quarantine` on files written by any
+descendant of a quarantine-aware app. `claude` ships as a Bun-compiled binary
+that unpacks an ad-hoc-signed `.node` module into `$TMPDIR` the first time a
+prompt touches an image — reads a PNG, takes a screenshot — and a stamped,
+unnotarized library cannot load without an "Apple could not verify…" dialog. The
+run then sits there until somebody clicks. The module is unpacked per process
+and deleted on exit, so nothing persists between runs and the nightly job was
+never affected; but the stamp made "Run now" unusable for any prompt doing image
+work. Started by launchd, the run has no quarantine agent above it.
+
+The second is **parity**: the button and the nightly job are now the same job
+started two ways, so they have the same ancestry, the same TCC identity and the
+same folder permissions. What you see when you press it is what happens at 2 AM.
+The cost is that "Run now" no longer raises folder-permission dialogs of its
+own — that was only ever a side effect of Chrome being in the chain, and
+granting is the "Grant folder access" button's job, which still takes the Chrome
+path deliberately.
+
+`just test-launchd-run` measures the Gatekeeper half of this: it runs the queue
+through launchd and reports whether a quarantine stamp landed on the unpacked
+module. It has to go through launchd to mean anything — a run started from a
+terminal has no quarantine agent either, so it would look clean whatever the
+truth was.
+
+Two failure modes worth recognising. `launchctl kickstart` exits **113** when the
+label was never installed, which the host turns into a "run
+`just install-autonomous-work`" message rather than a generic failure; and
+because launchd will not run two instances of one label, pressing the button
+during a run can no longer start a second overlapping one.
 
 ## Watching a run live
 

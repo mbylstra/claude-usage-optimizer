@@ -38,6 +38,10 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIRECTORY.parent
 
 LAUNCH_AGENT_LABEL = "com.claudeusageoptimizer.autonomouswork"
+# The same work with no schedule and --force baked in, for the popup's "Run now"
+# to kickstart. launchd takes no arguments when starting a job, so an on-demand
+# run that skips the pace gate needs a job definition of its own.
+ON_DEMAND_LAUNCH_AGENT_LABEL = LAUNCH_AGENT_LABEL + ".ondemand"
 
 DEFAULT_SCHEDULE_HOUR = 2
 DEFAULT_SCHEDULE_MINUTE = 0
@@ -61,6 +65,13 @@ LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (LAUNCH_AGENT_LABEL + ".plist")
 INSTALLED_LAUNCH_AGENT_FILE = _environment_path(
     "AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST",
     Path.home() / "Library" / "LaunchAgents" / (LAUNCH_AGENT_LABEL + ".plist"),
+)
+ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (ON_DEMAND_LAUNCH_AGENT_LABEL + ".plist")
+# Defaults beside the nightly agent rather than to a path of its own, so the
+# tests' override of that one carries both out of the real LaunchAgents folder.
+INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE = _environment_path(
+    "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST",
+    INSTALLED_LAUNCH_AGENT_FILE.parent / (ON_DEMAND_LAUNCH_AGENT_LABEL + ".plist"),
 )
 LAUNCHCTL_COMMAND = os.environ.get("AUTONOMOUS_WORK_LAUNCHCTL", "/bin/launchctl")
 
@@ -163,7 +174,16 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
 
 def render_launch_agent_plist(settings: AutonomousWorkSettings) -> str:
     """Expand the checked-in template for this machine and this schedule."""
-    template_text = LAUNCH_AGENT_TEMPLATE_FILE.read_text(encoding="utf-8")
+    return _render_template(LAUNCH_AGENT_TEMPLATE_FILE, settings)
+
+
+def render_on_demand_launch_agent_plist() -> str:
+    """Expand the on-demand template — the same work, with no time in it."""
+    return _render_template(ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
+
+
+def _render_template(template_file: Path, settings: AutonomousWorkSettings) -> str:
+    template_text = template_file.read_text(encoding="utf-8")
     replacements = {
         "__PROJECT_ROOT__": str(PROJECT_ROOT),
         "__HOME__": str(Path.home()),
@@ -198,15 +218,51 @@ def install_launch_agent(
 
     INSTALLED_LAUNCH_AGENT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # Unload before rewriting: launchd holds the job definition it was given, so
-    # an in-place edit alone changes the file and nothing else.
-    _run_launchctl("unload", str(INSTALLED_LAUNCH_AGENT_FILE), ignore_failure=True)
-    INSTALLED_LAUNCH_AGENT_FILE.write_text(render_launch_agent_plist(settings), encoding="utf-8")
-    load_result = _run_launchctl("load", str(INSTALLED_LAUNCH_AGENT_FILE))
-
+    load_result = _write_and_load_agent(
+        INSTALLED_LAUNCH_AGENT_FILE, render_launch_agent_plist(settings), always_reload=True
+    )
     if load_result is not None:
         return LaunchAgentUpdate(False, load_result)
+
+    # The on-demand twin carries no schedule, so saving a new time never needs it
+    # reloaded — and reloading it would kill a "Run now" that happened to be in
+    # flight. Left alone unless its definition has actually changed.
+    on_demand_result = _write_and_load_agent(
+        INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE,
+        render_on_demand_launch_agent_plist(),
+        always_reload=False,
+    )
+    if on_demand_result is not None:
+        return LaunchAgentUpdate(False, on_demand_result)
+
     return LaunchAgentUpdate(True, "scheduled for {}".format(settings.describe_schedule()))
+
+
+def _write_and_load_agent(
+    installed_file: Path, plist_text: str, always_reload: bool
+) -> str | None:
+    """Put one agent in place and make sure launchd is holding it.
+
+    Returns an error description, or None on success.
+    """
+    installed_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if not always_reload and installed_file.exists():
+        try:
+            unchanged = installed_file.read_text(encoding="utf-8") == plist_text
+        except OSError:
+            unchanged = False
+        if unchanged:
+            # Loading an already-loaded job fails harmlessly; unloading it to be
+            # tidy would stop whatever it is doing.
+            _run_launchctl("load", str(installed_file), ignore_failure=True)
+            return None
+
+    # Unload before rewriting: launchd holds the job definition it was given, so
+    # an in-place edit alone changes the file and nothing else.
+    _run_launchctl("unload", str(installed_file), ignore_failure=True)
+    installed_file.write_text(plist_text, encoding="utf-8")
+    return _run_launchctl("load", str(installed_file))
 
 
 def _run_launchctl(subcommand: str, plist_path: str, ignore_failure: bool = False) -> str | None:
