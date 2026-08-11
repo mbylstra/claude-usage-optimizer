@@ -156,13 +156,18 @@ extension Chrome derives that ID from the absolute load path, which
 silently breaks the connection. Re-run `just install-usage-host` if that happens,
 or pass an explicit ID as an argument.
 
-**Editing the queue.** `prompts.txt` at the repository root is checked in and
-user-editable — deliberately at the top level rather than in `.claude-scripts/`,
-being the only file here meant for regular hand-editing. Sections split on a
-line of `===`; each has a required `STATUS: todo|completed|error`, an optional
-`REPO:`, and a multi-line prompt. The scheduler takes the first `todo`, runs it,
-and rewrites that status to `completed` or `error`. Failed items are skipped
-until you edit them back to `todo`.
+**Editing the queue.** `prompts.txt` at the repository root is user-editable —
+deliberately at the top level rather than in `.claude-scripts/`, being the only
+file here meant for regular hand-editing. Sections split on a line of `===`;
+each has a required `STATUS: todo|completed|error`, an optional `REPO:`, and a
+multi-line prompt. The scheduler takes the first `todo`, runs it, and rewrites
+that status to `completed` or `error`. Failed items are skipped until you edit
+them back to `todo`.
+
+**`prompts.txt` is gitignored**; `prompts.example.txt` is the checked-in
+template to copy from. It is somebody's personal task list, and every run
+rewrites a STATUS line in place — tracking it turned each night's work into a
+`chore(queue)` commit. Earlier commits still contain it; only tracking stopped.
 
 **A prompt with no `REPO:` gets a new repository**, `git init`-ed under the
 configured new-projects folder and named after the date and the first words of

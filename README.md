@@ -62,8 +62,10 @@ just build                      # produces dist/
 directory. Pin it, and make sure you are signed in to <https://claude.ai>. That
 is the whole popup — no configuration. ([More detail](#install-it-locally).)
 
-**2. Queue some work.** Edit `prompts.txt` at the repository root. Sections are
-separated by a line of `===`; the first `todo` one is what runs next:
+**2. Queue some work.** Copy `prompts.example.txt` to `prompts.txt` at the
+repository root and edit it — the queue is gitignored, so it starts as a
+template. Sections are separated by a line of `===`; the first `todo` one is
+what runs next:
 
 ```
 ===
@@ -232,10 +234,13 @@ halves.
 
 ### Editing the queue
 
-`prompts.txt` at the repository root is checked in and meant to be edited by
-hand — it is the one file in this whole setup you touch regularly, which is why
-it sits at the top level rather than in `.claude-scripts/`. Sections are
-separated by a line of three or more `=` characters:
+`prompts.txt` at the repository root is meant to be edited by hand — it is the
+one file in this whole setup you touch regularly, which is why it sits at the
+top level rather than in `.claude-scripts/`. It is **gitignored**, since it is
+your own task list and every run rewrites a status line in it; copy
+`prompts.example.txt` to start one.
+
+Sections are separated by a line of three or more `=` characters:
 
 ```
 ===
