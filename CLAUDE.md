@@ -140,6 +140,8 @@ just install-autonomous-work     # schedule the nightly run at the configured ti
 just uninstall-autonomous-work   # unschedule it
 just autonomous-status           # is it scheduled?
 
+just test-launchd-run            # run the queue through launchd, as the nightly job does
+
 just autonomous-log              # follow the run live
 just autonomous-log-raw          # follow the raw stream-json events
 just autonomous-running          # is a run in flight?

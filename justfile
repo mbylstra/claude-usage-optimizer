@@ -204,6 +204,141 @@ autonomous-run-and-watch:
     {{ autonomous_script }} --force || true
     sleep 0.5
 
+# "Run now" in the popup puts Chrome in the process chain, so every file the run
+# writes inherits com.apple.quarantine — including the ad-hoc-signed .node module
+# `claude` unpacks the first time a prompt touches an image. macOS then blocks
+# loading it behind an "Apple could not verify..." dialog, and the run stalls
+# until somebody clicks. launchd has no quarantine agent above it, so the nightly
+# job should not see this at all. This recipe is the only way to check that:
+# started from a terminal the run has no quarantine agent either, and would look
+# clean whatever the truth is.
+#
+# Waits for the run to finish, or for the timeout argument. Ctrl-C stops the run.
+#
+# Run the queued prompt through launchd as the nightly job does, and check for the quarantine stamp
+[no-exit-message]
+test-launchd-run timeout="900":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    label="{{ launch_agent_label }}.launchdtest"
+    # The module is unpacked into TMPDIR and deleted again when claude exits, so
+    # it can only be caught while the run is in flight. Pinning the job's TMPDIR
+    # to ours just fixes where to watch — the quarantine stamp comes from process
+    # ancestry, not from the path.
+    module_directory="${TMPDIR:-/tmp}"
+    work="$(mktemp -d)"
+    sightings="$work/native-modules.txt"
+    : > "$sightings"
+
+    if {{ autonomous_script }} --force --dry-run 2>&1 | grep -q "No todo prompts"; then
+      echo "Nothing marked 'todo' in prompts.txt — there would be no run to measure."
+      exit 1
+    fi
+
+    cat > "$work/job.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0"><dict>
+      <key>Label</key><string>$label</string>
+      <key>ProgramArguments</key><array>
+        <string>{{ justfile_directory() }}/{{ autonomous_script }}</string>
+        <string>--force</string>
+      </array>
+      <key>WorkingDirectory</key><string>{{ justfile_directory() }}</string>
+      <key>StandardOutPath</key><string>$work/system.log</string>
+      <key>StandardErrorPath</key><string>$work/system.log</string>
+      <key>EnvironmentVariables</key><dict>
+        <key>PATH</key><string>{{ home_directory() }}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key><string>{{ home_directory() }}</string>
+        <key>TMPDIR</key><string>$module_directory</string>
+      </dict>
+      <key>RunAtLoad</key><false/>
+    </dict></plist>
+    PLIST
+
+    watcher_pid=""
+    tail_pid=""
+    # Unloading the job SIGTERMs the scheduler but leaves the claude session it
+    # spawned running — see CLAUDE.md, "Cancelling". So stop it the way the rest
+    # of the project does, and only then take the job definition away.
+    stop_run_if_still_going() {
+      launchctl list "$label" 2>/dev/null | grep -q '"PID"' || return 0
+      python3 .claude-scripts/cancel-autonomous-work.py >/dev/null 2>&1 || true
+    }
+    cleanup() {
+      [ -n "$watcher_pid" ] && kill "$watcher_pid" 2>/dev/null || true
+      [ -n "$tail_pid" ] && kill "$tail_pid" 2>/dev/null || true
+      stop_run_if_still_going
+      launchctl unload "$work/job.plist" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    while :; do
+      find "$module_directory" -maxdepth 1 -name '*.node' 2>/dev/null | while read -r module; do
+        printf '%s\t%s\t[%s]\n' "$(date +%T)" "$module" \
+          "$(xattr "$module" 2>/dev/null | tr '\n' ' ')" >> "$sightings"
+      done
+      sleep 0.25
+    done &
+    watcher_pid=$!
+
+    touch .claude-scripts/autonomous-work.log
+    tail -n 0 -f .claude-scripts/autonomous-work.log &
+    tail_pid=$!
+
+    launchctl unload "$work/job.plist" 2>/dev/null || true
+    launchctl load "$work/job.plist"
+    launchctl start "$label"
+
+    # `launchctl list` prints a "PID" key only while the process is alive: wait
+    # for it to appear, then for it to go.
+    for _ in $(seq 1 30); do
+      launchctl list "$label" 2>/dev/null | grep -q '"PID"' && break
+      sleep 1
+    done
+    deadline=$(( SECONDS + {{ timeout }} ))
+    while launchctl list "$label" 2>/dev/null | grep -q '"PID"'; do
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "Timed out after {{ timeout }}s — stopping the run."
+        stop_run_if_still_going
+        break
+      fi
+      sleep 2
+    done
+
+    kill "$watcher_pid" 2>/dev/null || true
+    kill "$tail_pid" 2>/dev/null || true
+    watcher_pid=""
+    tail_pid=""
+
+    echo
+    echo "Native modules unpacked during the run, in $module_directory:"
+    if [ -s "$sightings" ]; then
+      sort -u -t"$(printf '\t')" -k2,3 "$sightings" | while IFS= read -r sighting; do
+        echo "    $sighting"
+      done
+    else
+      echo "    none seen"
+    fi
+    echo
+
+    if [ -s "$work/system.log" ]; then
+      echo "Job output:"
+      sed 's/^/    /' "$work/system.log"
+      echo
+    fi
+
+    if [ ! -s "$sightings" ]; then
+      echo "Inconclusive. claude only unpacks the module when a prompt does image"
+      echo "work — reads a PNG, takes a screenshot — so queue a prompt that does."
+    elif grep -q "com.apple.quarantine" "$sightings"; then
+      echo "QUARANTINED under launchd. Unexpected: the nightly run would hit the"
+      echo "same Gatekeeper block that 'Run now' does."
+      exit 1
+    else
+      echo "No quarantine stamp — the nightly run raises no Gatekeeper dialog."
+    fi
+
 # Schedule the nightly run, at whatever time the extension's settings say (2 AM by default)
 install-autonomous-work: install-private-uv
     @command -v claude >/dev/null || { echo "claude not found on PATH"; exit 1; }
