@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Autonomous run</title>
+    <style>
+      /* A detached window, not a popup: the page fills whatever size it is
+         given, and the timeline scrolls inside it rather than the window. */
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/runLog/main.tsx"></script>
+  </body>
+</html>

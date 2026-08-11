@@ -4,8 +4,10 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 /**
- * Builds the popup (HTML + React bundle) and copies `public/` — which holds
- * `manifest.json` and the toolbar icons — to the root of `dist/`.
+ * Builds the extension's two pages — the popup and the detached run-log window —
+ * and copies `public/`, which holds `manifest.json` and the toolbar icons, to
+ * the root of `dist/`. The pages may share chunks; only the service worker
+ * cannot.
  *
  * The MV3 service worker is built separately by `vite.config.serviceWorker.ts`
  * so that it lands in `dist/` as one self-contained file with no shared chunks.
@@ -25,6 +27,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: fileURLToPath(new URL('./popup.html', import.meta.url)),
+        runLog: fileURLToPath(new URL('./run-log.html', import.meta.url)),
       },
     },
   },

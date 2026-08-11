@@ -16,3 +16,4 @@ prompts.txt
 .claude-scripts/claude-usage.json
 .claude-scripts/autonomous-work-settings.json
 .claude-scripts/autonomous-work.jsonl
+.claude-scripts/autonomous-run-events.jsonl

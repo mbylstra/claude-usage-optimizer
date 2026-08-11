@@ -27,6 +27,24 @@ export function formatClockTime(moment: Date): string {
   return `${hour}:${minute}${meridiem}`;
 }
 
+/**
+ * "12:44:02" — the log-line timestamp for the run viewer.
+ *
+ * Seconds and a 24-hour clock, against this module's usual 12-hour rule: these
+ * are lines in a log, read as an ordered column, and `1:04:02pm` is both wider
+ * and slower to scan than `13:04:02`.
+ */
+export function formatTimestampWithSeconds(moment: Date): string {
+  if (Number.isNaN(moment.getTime())) return '--:--:--';
+
+  return moment.toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 function startOfCalendarDay(moment: Date): Date {
   return new Date(moment.getFullYear(), moment.getMonth(), moment.getDate());
 }

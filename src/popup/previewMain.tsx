@@ -87,6 +87,7 @@ function Column({ dark }: { dark: boolean }) {
             autonomousWorkSettingsStatus={settingsStatus}
             autonomousWorkStatus={status}
             onRunAutonomousWork={() => {}}
+            onOpenRunLog={() => {}}
             onBack={() => {}}
           />
         </div>

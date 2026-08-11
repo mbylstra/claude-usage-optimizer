@@ -12,6 +12,10 @@ install:
 dev:
     pnpm exec vite
 
+# The run-log window UI, driven by fixture events — no extension, no host, no run
+run-log-preview:
+    pnpm exec vite --open /run-log-preview.html
+
 # Production build of the unpacked extension into dist/
 build:
     pnpm exec vite build

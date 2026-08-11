@@ -11,11 +11,11 @@ status header, a readable timeline of what Claude is doing, and a Cancel button.
 
 ## Decisions already taken
 
-| Question           | Decision                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| Where the UI lives | A detached popup window (`chrome.windows.create`, `type: 'popup'`) on a new extension page   |
-| How much it shows  | Structured stream-json events: status header, timeline, cancel, raw-JSON toggle              |
-| Auto-open          | Manual only. The window opens on **Run now**, and can be reopened to read the last run       |
+| Question           | Decision                                                                                   |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| Where the UI lives | A detached popup window (`chrome.windows.create`, `type: 'popup'`) on a new extension page |
+| How much it shows  | Structured stream-json events: status header, timeline, cancel, raw-JSON toggle            |
+| Auto-open          | Manual only. The window opens on **Run now**, and can be reopened to read the last run     |
 
 The nightly 2 AM run deliberately does **not** raise a window. It writes to the
 same event stream, so opening the view later shows what it did.
@@ -129,10 +129,10 @@ Mixing envelopes in would change that contract for no gain.
 `usage-host.py` gains two message types alongside `snapshot`,
 `runAutonomousWork` and `setAutonomousWorkSettings`:
 
-| Incoming                | Behaviour                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------- |
-| `tailAutonomousRun`     | Reply `{ok:true}`, then stream events until the port closes                   |
-| `cancelAutonomousWork`  | Spawn `cancel-autonomous-work.py`, reply with what it killed                  |
+| Incoming               | Behaviour                                                    |
+| ---------------------- | ------------------------------------------------------------ |
+| `tailAutonomousRun`    | Reply `{ok:true}`, then stream events until the port closes  |
+| `cancelAutonomousWork` | Spawn `cancel-autonomous-work.py`, reply with what it killed |
 
 Pushed messages (host → extension, unsolicited):
 
@@ -168,33 +168,33 @@ host learns the port closed (EOF → exit, which ends the tail thread with it).
 
 ### New
 
-| File                                     | Contents                                                                      |
-| ---------------------------------------- | ----------------------------------------------------------------------------- |
-| `run-log.html`                           | Second Vite entry point, sibling of `popup.html`                              |
-| `src/runLog/main.tsx`                    | Mounts `RunLogRoot`                                                           |
-| `src/runLog/RunLogRoot.tsx`              | The only run-log component that talks to `extension/`                         |
-| `src/runLog/previewMain.tsx`             | `just dev` harness driving the UI from fixture events, no Chrome needed       |
-| `src/extension/autonomousRunStream.ts`   | `connectNative`, port lifecycle, reconnect; cancel request                     |
-| `src/extension/runLogWindow.ts`          | `chrome.windows.create` / focus-if-already-open                               |
-| `src/lib/autonomousRunEvents.ts`         | Envelope types + defensive parsing of one event                               |
-| `src/lib/autonomousRunViewModel.ts`      | Events → `{ status, elapsed, cost, turns, project, timeline[] }`              |
-| `src/components/RunLogView.tsx`          | Pure presentation: header, timeline, footer buttons                           |
-| `src/components/RunTimelineEntry.tsx`    | One line: time, icon, label, detail                                           |
+| File                                   | Contents                                                                |
+| -------------------------------------- | ----------------------------------------------------------------------- |
+| `run-log.html`                         | Second Vite entry point, sibling of `popup.html`                        |
+| `src/runLog/main.tsx`                  | Mounts `RunLogRoot`                                                     |
+| `src/runLog/RunLogRoot.tsx`            | The only run-log component that talks to `extension/`                   |
+| `src/runLog/previewMain.tsx`           | `just dev` harness driving the UI from fixture events, no Chrome needed |
+| `src/extension/autonomousRunStream.ts` | `connectNative`, port lifecycle, reconnect; cancel request              |
+| `src/extension/runLogWindow.ts`        | `chrome.windows.create` / focus-if-already-open                         |
+| `src/lib/autonomousRunEvents.ts`       | Envelope types + defensive parsing of one event                         |
+| `src/lib/autonomousRunViewModel.ts`    | Events → `{ status, elapsed, cost, turns, project, timeline[] }`        |
+| `src/components/RunLogView.tsx`        | Pure presentation: header, timeline, footer buttons                     |
+| `src/components/RunTimelineEntry.tsx`  | One line: time, icon, label, detail                                     |
 
 ### Changed
 
-| File                                        | Change                                                                   |
-| ------------------------------------------- | ------------------------------------------------------------------------ |
-| `.claude-scripts/run-autonomous-work.py`    | Write `autonomous-run-events.jsonl`; truncate on start; envelope events  |
-| `.claude-scripts/usage-host.py`             | `tailAutonomousRun`, `cancelAutonomousWork`, stdout lock, tail thread     |
-| `.claude-scripts/test-usage-host.py`        | Exercise the tail and cancel paths against a synthetic events file        |
-| `src/extension/messages.ts`                 | `OPEN_RUN_LOG` message; response type                                     |
-| `src/extension/serviceWorker.ts`            | Handle `OPEN_RUN_LOG` (opening the window is a `chrome.windows` call)     |
-| `src/popup/PopupRoot.tsx`                   | Run now → also open the window; add a "View last run" affordance          |
-| `src/components/SettingsPage.tsx`           | The "View last run" button next to "Run now"                              |
-| `vite.config.ts`                            | Add the `runLog` input                                                    |
-| `Justfile`                                  | `just run-log-preview` if the preview needs its own recipe                |
-| `CLAUDE.md`                                 | Document the third log file, the port, and the window                     |
+| File                                     | Change                                                                  |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| `.claude-scripts/run-autonomous-work.py` | Write `autonomous-run-events.jsonl`; truncate on start; envelope events |
+| `.claude-scripts/usage-host.py`          | `tailAutonomousRun`, `cancelAutonomousWork`, stdout lock, tail thread   |
+| `.claude-scripts/test-usage-host.py`     | Exercise the tail and cancel paths against a synthetic events file      |
+| `src/extension/messages.ts`              | `OPEN_RUN_LOG` message; response type                                   |
+| `src/extension/serviceWorker.ts`         | Handle `OPEN_RUN_LOG` (opening the window is a `chrome.windows` call)   |
+| `src/popup/PopupRoot.tsx`                | Run now → also open the window; add a "View last run" affordance        |
+| `src/components/SettingsPage.tsx`        | The "View last run" button next to "Run now"                            |
+| `vite.config.ts`                         | Add the `runLog` input                                                  |
+| `Justfile`                               | `just run-log-preview` if the preview needs its own recipe              |
+| `CLAUDE.md`                              | Document the third log file, the port, and the window                   |
 
 No new manifest permissions. `nativeMessaging` is already granted, and
 `chrome.windows.create` needs none (only reading tab URLs would).

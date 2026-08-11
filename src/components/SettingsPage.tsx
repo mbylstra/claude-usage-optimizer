@@ -1,4 +1,4 @@
-import { ArrowLeft, Play } from 'lucide-react';
+import { ArrowLeft, Play, ScrollText } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -38,6 +38,8 @@ export interface SettingsPageProps {
   autonomousWorkSettingsStatus: AutonomousWorkSettingsStatus;
   autonomousWorkStatus: AutonomousWorkStatus;
   onRunAutonomousWork: () => void;
+  /** Opens the window that streams the current run, or replays the last one. */
+  onOpenRunLog: () => void;
   onBack: () => void;
 }
 
@@ -50,6 +52,7 @@ export function SettingsPage({
   autonomousWorkSettingsStatus,
   autonomousWorkStatus,
   onRunAutonomousWork,
+  onOpenRunLog,
   onBack,
 }: SettingsPageProps) {
   const autonomousWorkMessage = describeAutonomousWorkStatus(autonomousWorkStatus);
@@ -155,18 +158,27 @@ export function SettingsPage({
             </p>
           )}
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRunAutonomousWork}
-            disabled={autonomousWorkStatus.kind === 'starting'}
-          >
-            <Play className="size-3.5" aria-hidden="true" />
-            Run now
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={onRunAutonomousWork}
+              disabled={autonomousWorkStatus.kind === 'starting'}
+            >
+              <Play className="size-3.5" aria-hidden="true" />
+              Run now
+            </Button>
+            <Button variant="outline" size="sm" className="flex-1" onClick={onOpenRunLog}>
+              <ScrollText className="size-3.5" aria-hidden="true" />
+              View run
+            </Button>
+          </div>
 
           <p className="text-muted-foreground text-xs">
-            Running now skips the pace check and starts the next queued prompt straight away.
+            Running now skips the pace check and starts the next queued prompt straight away, and
+            opens a window that follows it. View run reopens that window, showing the most recent
+            run whenever it happened.
           </p>
 
           {autonomousWorkMessage !== null && (

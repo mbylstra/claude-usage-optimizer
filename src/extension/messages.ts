@@ -25,6 +25,19 @@ export interface RunAutonomousWorkMessage {
   type: typeof RUN_AUTONOMOUS_WORK_MESSAGE;
 }
 
+export const OPEN_RUN_LOG_MESSAGE = 'OPEN_RUN_LOG' as const;
+
+/**
+ * Show the window that streams the current run.
+ *
+ * Opening a window is a `chrome.windows` call, which the popup could make
+ * itself — but the service worker is what knows whether one is already open, and
+ * it outlives the popup that asked.
+ */
+export interface OpenRunLogMessage {
+  type: typeof OPEN_RUN_LOG_MESSAGE;
+}
+
 export const SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE = 'SYNC_AUTONOMOUS_WORK_SETTINGS' as const;
 
 /**
@@ -43,6 +56,7 @@ export type ExtensionMessage =
   | RefreshUsageMessage
   | TestNotificationMessage
   | RunAutonomousWorkMessage
+  | OpenRunLogMessage
   | SyncAutonomousWorkSettingsMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
@@ -50,6 +64,12 @@ export type RefreshUsageResponse = UsageCacheEntry;
 /** Whether the native host accepted the request, not whether the work succeeded. */
 export interface RunAutonomousWorkResponse {
   started: boolean;
+  error?: string;
+}
+
+/** Whether the window is now showing, not whether a run is in flight. */
+export interface OpenRunLogResponse {
+  opened: boolean;
   error?: string;
 }
 
@@ -85,6 +105,14 @@ export function isRunAutonomousWorkMessage(message: unknown): message is RunAuto
     typeof message === 'object' &&
     message !== null &&
     (message as { type?: unknown }).type === RUN_AUTONOMOUS_WORK_MESSAGE
+  );
+}
+
+export function isOpenRunLogMessage(message: unknown): message is OpenRunLogMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === OPEN_RUN_LOG_MESSAGE
   );
 }
 

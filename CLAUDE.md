@@ -16,6 +16,7 @@ src/
                 claudeUsageClient.ts, usageStorage.ts, serviceWorker.ts, messages.ts
   components/   pure React, props in only — plus ui/ for shadcn primitives
   popup/        PopupRoot.tsx — the one component that talks to extension/
+  runLog/       RunLogRoot.tsx — the same, for the detached run-log window
 ```
 
 This is the constraint most likely to be violated by accident. Because the
@@ -23,9 +24,13 @@ library code has no browser dependencies, `claudeUsageClient.ts` takes `fetch`
 and its organization-ID cache as injected dependencies, making the real call
 shapes inspectable without mocking.
 
-When adding a feature, ask which of the four directories it belongs in before
+When adding a feature, ask which of the five directories it belongs in before
 writing it. Maths and formatting go in `lib/` even if only one component uses
 them.
+
+There are **two extension pages**, `popup.html` and `run-log.html`, each with a
+root component that is the only one in its tree allowed to touch `extension/`.
+They may share build chunks; only the service worker may not.
 
 ## Commands
 
@@ -124,6 +129,8 @@ just autonomous-log              # follow the run live
 just autonomous-log-raw          # follow the raw stream-json events
 just autonomous-running          # is a run in flight?
 just cancel-autonomous-work      # stop an in-flight run
+
+just run-log-preview             # the run-log window UI, on fixtures, no extension
 ```
 
 **Following a run live** is why `claude` is invoked with `--output-format
@@ -133,6 +140,25 @@ run ends — nothing to follow. Each event is summarised into
 `autonomous-work.log` as it arrives, with the raw events kept alongside in
 `autonomous-work.jsonl`.
 
+**Three log files, and why.** A run writes all three, and they are not
+interchangeable:
+
+| File                          | For                                                   |
+| ----------------------------- | ----------------------------------------------------- |
+| `autonomous-work.log`         | prose, for `just autonomous-log`                      |
+| `autonomous-work.jsonl`       | every raw stream-json event, appended forever         |
+| `autonomous-run-events.jsonl` | the structured, run-scoped stream the viewer consumes |
+
+The third exists because neither of the first two can drive a UI. The `.log` is
+our own formatting, so parsing it back into structure would break on every
+wording change; the `.jsonl` has no run boundaries and no record of which
+prompt, repo or working directory a run used — which is exactly what the
+viewer's header needs. It carries our own envelope events (`runStarted`,
+`claudeEvent` wrapping the stream-json verbatim, `claudeOutput`, `runFinished`,
+`runSkipped`) and is **trimmed to the last five runs on each start**, so it stays
+bounded without a rotation job. A dry run writes nothing to it: asking what
+would happen must not disturb the record of what did.
+
 Two details that cost time to rediscover: `stdin` must be `DEVNULL` or `claude`
 spends three seconds waiting on an inherited stdin and warns about it; and
 `stderr` is merged into `stdout` because a second unread pipe can deadlock.
@@ -141,14 +167,57 @@ spends three seconds waiting on an inherited stdin and warns about it; and
 The host starts the scheduler in its own session so the run survives Chrome
 tearing the native host down, and `claude` has been observed to outlive a group
 signal aimed at the scheduler — so the cancel script matches both by command
-line, SIGTERMs, waits, then SIGKILLs the survivors.
+line, SIGTERMs, waits, then SIGKILLs the survivors. The scheduler catches that
+SIGTERM only to record a `runFinished` with outcome `cancelled` and `os._exit`
+straight away: a cancelled entry must be left as `todo`, not marked as an error
+on the way out.
 
 **Triggering a run from the popup.** Settings has a "Run now" button, which goes
 popup → service worker → native host → detached scheduler process, and reports
 only whether the run _started_: the work itself outlives the message by up to an
 hour and reports into `autonomous-work.log`. It passes `--force`, since a button
 press is an explicit instruction and applying the nightly pace gate to it would
-just make the button look broken.
+just make the button look broken. It then opens the run-log window below.
+
+## Watching a run live
+
+"Run now" also opens a **detached window** (`run-log.html`, via
+`chrome.windows.create`) that streams the run: status header, timeline, Cancel.
+"View run" reopens it, showing the most recent run whenever it happened — the
+nightly job deliberately raises no window, it just writes to the same stream.
+Pressing either twice focuses the open window rather than opening a second, so
+the window id lives in `chrome.storage.session`; a module variable would be
+forgotten every time the service worker went idle.
+
+**The page opens the native port itself**, in `autonomousRunStream.ts`, which is
+a deliberate exception to "the popup asks the service worker rather than doing it
+itself". That rule exists so network, storage and badge updates happen in one
+place, and a live stream is none of those; meanwhile an MV3 worker is killed when
+idle, so holding a port open there for an hour of sporadic events is exactly the
+fight `chrome.alarms` exists to avoid. A real document's lifetime matches the
+stream's exactly. The architecture rule still holds: only `RunLogRoot.tsx`
+touches `extension/`.
+
+Streaming needs `chrome.runtime.connectNative`, not the `sendNativeMessage` every
+other host call uses — that one spawns a process, takes a single reply and lets
+Chrome tear it down. Chrome spawns a **separate host process per connection**, so
+an open window cannot interfere with the five-minutely snapshot writes.
+
+On connect the host **replays the most recent run** rather than only new lines.
+The window is created at almost the same moment as the run, and losing the first
+seconds to that race would be a miserable bug to chase; it is also what makes
+"open the view to see what the nightly job did" work at all. Replays and
+rewrites arrive with `replace: true`, so the viewer resets rather than showing a
+run twice.
+
+Two things in the host that are load-bearing: `write_message` takes a
+`threading.Lock`, because a tail thread and the main loop interleaving two
+length-prefixed frames would look, from the extension's side, exactly like the
+host crashing; and the tail is a **250 ms stat loop**, because stdlib-only and
+3.9-compatible rules out a filesystem-watch API and `kqueue` plumbing would be far
+more code than this. It detects the file shrinking or changing inode — which is
+what every run start does when it trims the file — and re-reads from the top.
+`just test-usage-host` drives that race explicitly.
 
 The host manifest names one `allowed_origins` extension ID. For an unpacked
 extension Chrome derives that ID from the absolute load path, which

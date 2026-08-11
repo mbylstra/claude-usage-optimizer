@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -77,6 +78,18 @@ LOG_FILE = environment_path("AUTONOMOUS_WORK_LOG_FILE", SCRIPT_DIRECTORY / "auto
 RAW_EVENT_FILE = environment_path(
     "AUTONOMOUS_WORK_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-work.jsonl"
 )
+# The structured, run-scoped stream the extension's live view consumes. Neither
+# of the two files above will do: the `.log` is prose meant for humans, and
+# scraping our own formatting back into structure would break on every wording
+# change; the `.jsonl` has no run boundaries and no record of which prompt, repo
+# or working directory a run used.
+RUN_EVENT_FILE = environment_path(
+    "AUTONOMOUS_WORK_RUN_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-run-events.jsonl"
+)
+# How many runs the file keeps. Trimmed on each start rather than by a separate
+# rotation job, since a run start is the only moment the boundaries are known to
+# be complete.
+RUN_EVENT_HISTORY_LIMIT = environment_int("AUTONOMOUS_WORK_RUN_EVENT_HISTORY", 5)
 # Where a prompt with no REPO: line starts a *new* repository. Set in the
 # extension's settings screen, which mirrors it to disk through the native host;
 # the environment variable still wins, for a one-off run.
@@ -120,6 +133,135 @@ def log_message(message: str) -> None:
             log_handle.write(line + "\n")
     except OSError as error:
         print(f"{timestamp}: (could not write to {LOG_FILE}: {error})", flush=True)
+
+
+# --------------------------------------------------------------------------- #
+# Run event stream
+# --------------------------------------------------------------------------- #
+
+# A run boundary. Both start a run's worth of events: one for work that ran, one
+# for a night where the gate declined to.
+RUN_BOUNDARY_EVENT_TYPES = ("runStarted", "runSkipped")
+
+
+def utc_now_iso() -> str:
+    """An unambiguous instant. The viewer renders it in the reader's timezone."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def run_event_boundary_indices(lines: list[str]) -> list[int]:
+    """Where each run begins in the event file. Unreadable lines are not boundaries."""
+    indices = []
+    for line_index, line in enumerate(lines):
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        try:
+            event = json.loads(stripped_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("type") in RUN_BOUNDARY_EVENT_TYPES:
+            indices.append(line_index)
+    return indices
+
+
+class RunEventStream:
+    """The run's own structured record, for the extension's live view.
+
+    Every write is best-effort: this file exists so a window can watch the run,
+    and losing that is never worth losing the run itself.
+    """
+
+    def __init__(self, run_id: str, enabled: bool = True) -> None:
+        self.run_id = run_id
+        self.enabled = enabled
+        self._has_reported_failure = False
+        if enabled:
+            self._trim_to_recent_runs(RUN_EVENT_HISTORY_LIMIT - 1)
+
+    def _trim_to_recent_runs(self, keep_runs: int) -> None:
+        """Drop all but the most recent `keep_runs` runs, before this one is added.
+
+        Replaced rather than rewritten in place: a viewer may be tailing the file
+        at this moment, and the swap gives it a clean shrink to detect instead of
+        a half-written file to parse.
+        """
+        if keep_runs < 0 or not RUN_EVENT_FILE.exists():
+            return
+
+        try:
+            lines = RUN_EVENT_FILE.read_text(encoding="utf-8").splitlines()
+        except OSError as error:
+            self._report_failure(error)
+            return
+
+        boundary_indices = run_event_boundary_indices(lines)
+        if len(boundary_indices) <= keep_runs:
+            return
+
+        first_kept_line = boundary_indices[len(boundary_indices) - keep_runs] if keep_runs else None
+        remaining_lines = [] if first_kept_line is None else lines[first_kept_line:]
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=RUN_EVENT_FILE.parent, delete=False
+            ) as temp_handle:
+                for line in remaining_lines:
+                    temp_handle.write(line + "\n")
+                temporary_path = Path(temp_handle.name)
+            os.replace(temporary_path, RUN_EVENT_FILE)
+        except OSError as error:
+            self._report_failure(error)
+
+    def _report_failure(self, error: OSError) -> None:
+        if self._has_reported_failure:
+            return
+        self._has_reported_failure = True
+        log_message(f"Could not write run events to {RUN_EVENT_FILE}: {error}")
+
+    def emit(self, event_type: str, **fields: object) -> None:
+        if not self.enabled:
+            return
+        envelope = {"type": event_type, "runId": self.run_id, "at": utc_now_iso()}
+        envelope.update(fields)
+
+        try:
+            RUN_EVENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with RUN_EVENT_FILE.open("a", encoding="utf-8") as event_handle:
+                event_handle.write(json.dumps(envelope) + "\n")
+        except OSError as error:
+            self._report_failure(error)
+
+    def started(
+        self,
+        working_directory: Path,
+        is_new_project: bool,
+        prompt: str,
+        forced: bool,
+    ) -> None:
+        self.emit(
+            "runStarted",
+            forced=forced,
+            workingDirectory=str(working_directory),
+            projectName=working_directory.name,
+            isNewProject=is_new_project,
+            prompt=prompt,
+            model=CLAUDE_MODEL,
+        )
+
+    def claude_event(self, event: dict) -> None:
+        """One stream-json event, verbatim, so the viewer sees exactly what claude said."""
+        self.emit("claudeEvent", event=event)
+
+    def claude_output(self, text: str) -> None:
+        """A line claude emitted that was not JSON — merged stderr, usually."""
+        self.emit("claudeOutput", text=text)
+
+    def finished(self, outcome: str, exit_code: int, queue_status: str | None = None) -> None:
+        self.emit("runFinished", outcome=outcome, exitCode=exit_code, queueStatus=queue_status)
+
+    def skipped(self, reason: str, detail: str) -> None:
+        self.emit("runSkipped", reason=reason, detail=detail)
 
 
 # --------------------------------------------------------------------------- #
@@ -460,79 +602,108 @@ def prepare_working_directory(working_directory: Path, is_new_project: bool) -> 
     return True
 
 
-def run_claude(entry: QueueEntry, working_directory: Path, is_new_project: bool) -> int:
+def run_claude(
+    entry: QueueEntry,
+    working_directory: Path,
+    is_new_project: bool,
+    events: RunEventStream,
+    forced: bool,
+) -> tuple[int, str]:
+    """Execute one queued prompt. Returns its exit code and the outcome to record."""
+    events.started(working_directory, is_new_project, entry.prompt, forced)
+
     if not prepare_working_directory(working_directory, is_new_project):
-        return 1
+        return 1, "error"
 
     log_message(
         f"Running queued prompt in {working_directory}"
         + (" (new project)" if is_new_project else "")
     )
 
-    try:
-        # Streamed rather than captured, so `just autonomous-log` shows progress
-        # as it happens. `--output-format json` emits a single blob only once the
-        # run is over, which is useless to follow; `stream-json` emits an event
-        # per step. stderr is merged in so nothing is lost or deadlocks on a
-        # second unread pipe.
-        process = subprocess.Popen(
-            ["claude", "-p", entry.prompt, *CLAUDE_BASE_ARGUMENTS],
-            cwd=working_directory,
-            # Without this `claude` spends three seconds waiting on an inherited
-            # stdin that is never going to produce anything, and warns about it.
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-    except FileNotFoundError:
-        log_message("`claude` not found on PATH — check the launchd PATH setting")
-        return 1
+    # Cancellation arrives here as a SIGTERM from `cancel-autonomous-work.py`,
+    # which signals this process first and `claude` second. This is the only
+    # chance to record that the run ended, and `os._exit` guarantees we do not
+    # fall through to marking the queue entry as an error — a deliberate cancel
+    # must leave the entry as todo, ready to be picked up again.
+    def record_cancellation(signal_number: int, _frame: object) -> None:
+        events.finished("cancelled", -signal_number)
+        log_message("Cancelled (SIGTERM) — the queue entry is left as todo")
+        os._exit(143)
 
-    # A wedged session must not run until morning, and `Popen` has no timeout of
-    # its own once we are reading its output line by line.
-    timed_out = False
-
-    def stop_for_timeout() -> None:
-        nonlocal timed_out
-        timed_out = True
-        process.kill()
-
-    watchdog = threading.Timer(CLAUDE_TIMEOUT_SECONDS, stop_for_timeout)
-    watchdog.daemon = True
-    watchdog.start()
+    previous_termination_handler = signal.signal(signal.SIGTERM, record_cancellation)
 
     try:
-        with RAW_EVENT_FILE.open("a", encoding="utf-8") as raw_handle:
-            for line in process.stdout or []:
-                raw_handle.write(line)
-                raw_handle.flush()
+        try:
+            # Streamed rather than captured, so `just autonomous-log` shows
+            # progress as it happens. `--output-format json` emits a single blob
+            # only once the run is over, which is useless to follow;
+            # `stream-json` emits an event per step. stderr is merged in so
+            # nothing is lost or deadlocks on a second unread pipe.
+            process = subprocess.Popen(
+                ["claude", "-p", entry.prompt, *CLAUDE_BASE_ARGUMENTS],
+                cwd=working_directory,
+                # Without this `claude` spends three seconds waiting on an
+                # inherited stdin that is never going to produce anything, and
+                # warns about it.
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError:
+            message = "`claude` not found on PATH — check the launchd PATH setting"
+            log_message(message)
+            events.claude_output(message)
+            return 1, "error"
 
-                stripped_line = line.strip()
-                if not stripped_line:
-                    continue
+        # A wedged session must not run until morning, and `Popen` has no timeout
+        # of its own once we are reading its output line by line.
+        timed_out = False
 
-                try:
-                    event = json.loads(stripped_line)
-                except json.JSONDecodeError:
-                    log_message(f"  {shorten(stripped_line)}")  # plain stderr text
-                    continue
+        def stop_for_timeout() -> None:
+            nonlocal timed_out
+            timed_out = True
+            process.kill()
 
-                if isinstance(event, dict):
-                    for summary in summarise_stream_event(event):
-                        log_message(summary)
+        watchdog = threading.Timer(CLAUDE_TIMEOUT_SECONDS, stop_for_timeout)
+        watchdog.daemon = True
+        watchdog.start()
 
-        exit_code = process.wait()
+        try:
+            with RAW_EVENT_FILE.open("a", encoding="utf-8") as raw_handle:
+                for line in process.stdout or []:
+                    raw_handle.write(line)
+                    raw_handle.flush()
+
+                    stripped_line = line.strip()
+                    if not stripped_line:
+                        continue
+
+                    try:
+                        event = json.loads(stripped_line)
+                    except json.JSONDecodeError:
+                        log_message(f"  {shorten(stripped_line)}")  # plain stderr text
+                        events.claude_output(stripped_line)
+                        continue
+
+                    if isinstance(event, dict):
+                        events.claude_event(event)
+                        for summary in summarise_stream_event(event):
+                            log_message(summary)
+
+            exit_code = process.wait()
+        finally:
+            watchdog.cancel()
+
+        if timed_out:
+            log_message(f"Prompt timed out after {CLAUDE_TIMEOUT_SECONDS}s and was killed")
+            return 1, "timeout"
+
+        log_message(f"Prompt finished with exit code {exit_code}")
+        return exit_code, ("completed" if exit_code == 0 else "error")
     finally:
-        watchdog.cancel()
-
-    if timed_out:
-        log_message(f"Prompt timed out after {CLAUDE_TIMEOUT_SECONDS}s and was killed")
-        return 1
-
-    log_message(f"Prompt finished with exit code {exit_code}")
-    return exit_code
+        signal.signal(signal.SIGTERM, previous_termination_handler)
 
 
 def main() -> int:
@@ -549,11 +720,16 @@ def main() -> int:
     )
     arguments = argument_parser.parse_args()
 
+    # A dry run is an inspection, so it neither records events nor trims the file
+    # — asking what would happen must not disturb the record of what did.
+    events = RunEventStream(run_id=utc_now_iso(), enabled=not arguments.dry_run)
+
     if arguments.force:
         log_message("Pace gate bypassed (--force)")
     else:
         pace_snapshot = read_pace_snapshot()
         if pace_snapshot is None:
+            events.skipped("noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
             return 0
 
         snapshot_description = (
@@ -566,17 +742,23 @@ def main() -> int:
                 f"On pace — {snapshot_description}, "
                 f"threshold is {describe_pace(PACE_THRESHOLD_MS)}"
             )
+            events.skipped(
+                "onPace",
+                f"{snapshot_description}, threshold is {describe_pace(PACE_THRESHOLD_MS)}",
+            )
             return 0
 
         log_message(f"Behind pace — {snapshot_description}")
 
     queue_lines = read_queue_lines()
     if queue_lines is None:
+        events.skipped("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
         return 0
 
     next_entry = find_next_todo(parse_queue(queue_lines))
     if next_entry is None:
         log_message("No todo prompts in queue (all completed, errored or empty)")
+        events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored or empty)")
         return 0
 
     working_directory, is_new_project = resolve_working_directory(next_entry)
@@ -586,11 +768,14 @@ def main() -> int:
         log_message(f"Dry run — would execute in {destination}:\n{next_entry.prompt}")
         return 0
 
-    exit_code = run_claude(next_entry, working_directory, is_new_project)
-    write_queue_status(
-        next_entry.status_line_index,
-        STATUS_COMPLETED if exit_code == 0 else STATUS_ERROR,
+    exit_code, outcome = run_claude(
+        next_entry, working_directory, is_new_project, events, arguments.force
     )
+    queue_status = STATUS_COMPLETED if exit_code == 0 else STATUS_ERROR
+    write_queue_status(next_entry.status_line_index, queue_status)
+    # Last, so the terminal event is only written once the queue reflects the
+    # outcome the viewer is about to show.
+    events.finished(outcome, exit_code, queue_status)
     return exit_code
 
 

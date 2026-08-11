@@ -9,6 +9,7 @@ import {
 } from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
 import {
+  OPEN_RUN_LOG_MESSAGE,
   REFRESH_USAGE_MESSAGE,
   RUN_AUTONOMOUS_WORK_MESSAGE,
   SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE,
@@ -115,6 +116,19 @@ export function PopupRoot() {
     );
   }, []);
 
+  /**
+   * Show the run log. Focuses the window if one is already open — the service
+   * worker is what remembers that, so this goes through it rather than calling
+   * `chrome.windows` here.
+   */
+  const openRunLog = useCallback(() => {
+    chrome.runtime.sendMessage({ type: OPEN_RUN_LOG_MESSAGE }, () => {
+      // Nothing to report: the window either appeared in front of the user or
+      // the popup has already closed, and `lastError` must be read regardless.
+      void chrome.runtime.lastError;
+    });
+  }, []);
+
   const runAutonomousWork = useCallback(() => {
     setAutonomousWorkStatus({ kind: 'starting' });
     chrome.runtime.sendMessage(
@@ -131,12 +145,17 @@ export function PopupRoot() {
           setAutonomousWorkStatus({ kind: 'failed', error: 'No response from the extension' });
           return;
         }
-        setAutonomousWorkStatus(
-          response.started ? { kind: 'started' } : { kind: 'failed', error: response.error ?? '' },
-        );
+        if (!response.started) {
+          setAutonomousWorkStatus({ kind: 'failed', error: response.error ?? '' });
+          return;
+        }
+        setAutonomousWorkStatus({ kind: 'started' });
+        // Only once the host has accepted: a window that opens on a failed
+        // start would show an empty log and say nothing about why.
+        openRunLog();
       },
     );
-  }, []);
+  }, [openRunLog]);
 
   const requestTestNotification = useCallback(() => {
     chrome.runtime.sendMessage({ type: TEST_NOTIFICATION_MESSAGE }, (response) => {
@@ -293,6 +312,7 @@ export function PopupRoot() {
           autonomousWorkSettingsStatus={autonomousWorkSettingsStatus}
           autonomousWorkStatus={autonomousWorkStatus}
           onRunAutonomousWork={runAutonomousWork}
+          onOpenRunLog={openRunLog}
           onBack={closeSettings}
         />
       ) : (

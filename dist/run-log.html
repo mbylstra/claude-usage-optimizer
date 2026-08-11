@@ -3,17 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="color-scheme" content="light dark" />
-    <title>Claude Usage Optimizer</title>
+    <title>Autonomous run</title>
     <style>
-      /* The popup sizes itself to its content; without this Chrome adds a gap. */
+      /* A detached window, not a popup: the page fills whatever size it is
+         given, and the timeline scrolls inside it rather than the window. */
       html,
-      body {
+      body,
+      #root {
         margin: 0;
         padding: 0;
-        width: 22rem;
+        height: 100%;
+        overflow: hidden;
       }
     </style>
-    <script type="module" crossorigin src="./assets/popup-DYNdJbq9.js"></script>
+    <script type="module" crossorigin src="./assets/runLog-BuKfdKDk.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/src-wAtFIqx8.js">
     <link rel="stylesheet" crossorigin href="./assets/src-C2G13Kkp.css">
   </head>

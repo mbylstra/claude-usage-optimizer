@@ -10,19 +10,27 @@ rather than the real scheduler, so running these checks never starts a billable
 Claude session. The `setAutonomousWorkSettings` case likewise redirects the
 settings file, the LaunchAgent path and `launchctl` itself into a temporary
 directory, so it never touches the job actually installed on this machine.
+`cancelAutonomousWork` gets the same treatment, and `tailAutonomousRun` runs
+against a synthetic events file — including the one genuine race in the design,
+where a starting run replaces that file while the tail is reading it.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import queue
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 HOST_SCRIPT = Path(__file__).resolve().parent / "usage-host.py"
+
+REPLY_TIMEOUT_SECONDS = 10
 
 SAMPLE_SNAPSHOT = {
     "fetchedAt": "2026-08-10T02:00:00Z",
@@ -58,9 +66,207 @@ def ask_host(message: dict, environment_overrides: dict | None = None) -> dict |
     return json.loads(host_process.stdout[4 : 4 + reply_length])
 
 
+class HostSession:
+    """A host kept alive across several messages, the way `connectNative` does.
+
+    `ask_host` above runs the host to completion, which cannot exercise anything
+    that pushes messages *after* its reply. Replies are drained on a reader
+    thread so a missing message shows up as a timeout rather than a hung test.
+    """
+
+    def __init__(self, environment_overrides: dict | None = None) -> None:
+        environment = dict(os.environ)
+        environment.update(environment_overrides or {})
+        self.process = subprocess.Popen(
+            [sys.executable, str(HOST_SCRIPT)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        self.replies: queue.Queue = queue.Queue()
+        self.reader = threading.Thread(target=self._read_replies, daemon=True)
+        self.reader.start()
+
+    def _read_replies(self) -> None:
+        stream = self.process.stdout
+        while stream is not None:
+            header = stream.read(4)
+            if len(header) < 4:
+                return
+            (length,) = struct.unpack("=I", header)
+            payload = stream.read(length)
+            if len(payload) < length:
+                return
+            self.replies.put(json.loads(payload.decode("utf-8")))
+
+    def send(self, message: dict) -> None:
+        request = json.dumps(message).encode("utf-8")
+        assert self.process.stdin is not None
+        self.process.stdin.write(struct.pack("=I", len(request)) + request)
+        self.process.stdin.flush()
+
+    def next_message(self, timeout: float = REPLY_TIMEOUT_SECONDS) -> dict | None:
+        try:
+            return self.replies.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def next_message_of_type(
+        self, message_type: str, timeout: float = REPLY_TIMEOUT_SECONDS
+    ) -> dict | None:
+        """Skip past whatever else arrives — the tail pushes on its own schedule."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            message = self.next_message(timeout=max(0.05, deadline - time.monotonic()))
+            if message is None:
+                return None
+            if message.get("type") == message_type:
+                return message
+        return None
+
+    def collected_events(self, until_type: str, timeout: float = REPLY_TIMEOUT_SECONDS) -> list:
+        """Every event pushed up to and including one of `until_type`."""
+        events: list = []
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            message = self.next_message(timeout=max(0.05, deadline - time.monotonic()))
+            if message is None:
+                break
+            if message.get("type") != "runEvents":
+                continue
+            if message.get("replace"):
+                events = []
+            events.extend(message.get("events", []))
+            if any(event.get("type") == until_type for event in events):
+                break
+        return events
+
+    def close(self) -> None:
+        if self.process.stdin is not None:
+            self.process.stdin.close()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+
+
 def check(description: str, passed: bool) -> bool:
     print(f"  {'ok  ' if passed else 'FAIL'}  {description}")
     return passed
+
+
+def run_event_line(event_type: str, run_id: str, **fields: object) -> str:
+    envelope = {"type": event_type, "runId": run_id, "at": "2026-08-11T12:44:02Z"}
+    envelope.update(fields)
+    return json.dumps(envelope) + "\n"
+
+
+def append_line(path: Path, line: str) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.flush()
+
+
+def check_tail(results: list) -> None:
+    """Backfill, live append, and the file being replaced underneath the tail."""
+    print("tailAutonomousRun message:")
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        events_file = Path(temporary_directory) / "run-events.jsonl"
+        # Two runs in the file: only the second should be replayed.
+        events_file.write_text(
+            run_event_line("runStarted", "run-1", prompt="an older run")
+            + run_event_line("runFinished", "run-1", outcome="completed", exitCode=0)
+            + run_event_line("runStarted", "run-2", prompt="the current run")
+            + run_event_line("claudeEvent", "run-2", event={"type": "system", "subtype": "init"}),
+            encoding="utf-8",
+        )
+
+        session = HostSession({"USAGE_HOST_RUN_EVENT_FILE": str(events_file)})
+        try:
+            session.send({"type": "tailAutonomousRun"})
+            results.append(
+                check(
+                    "host acknowledges the tail",
+                    bool(session.next_message_of_type("tailStarted")),
+                )
+            )
+
+            backfilled = session.collected_events("claudeEvent")
+            results.append(
+                check(
+                    "backfill replays only the most recent run",
+                    [event.get("runId") for event in backfilled] == ["run-2", "run-2"],
+                )
+            )
+
+            append_line(
+                events_file,
+                run_event_line("runFinished", "run-2", outcome="completed", exitCode=0),
+            )
+            appended = session.collected_events("runFinished")
+            results.append(
+                check(
+                    "a new line is pushed as it is written",
+                    [event.get("type") for event in appended] == ["runFinished"],
+                )
+            )
+
+            # What a run start does: the file is replaced, and is shorter than
+            # what the tail has already read.
+            events_file.write_text(
+                run_event_line("runStarted", "run-3", prompt="a new run"), encoding="utf-8"
+            )
+            after_truncation = session.collected_events("runStarted")
+            results.append(
+                check(
+                    "a truncated file restarts the stream rather than duplicating it",
+                    [event.get("runId") for event in after_truncation] == ["run-3"],
+                )
+            )
+        finally:
+            session.close()
+
+
+def check_cancel(results: list) -> None:
+    print("cancelAutonomousWork message:")
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        marker_file = Path(temporary_directory) / "cancelled"
+        stand_in = Path(temporary_directory) / "stand-in-cancel.py"
+        stand_in.write_text(
+            "import pathlib\n"
+            f"pathlib.Path({str(marker_file)!r}).write_text('yes')\n"
+            "print('Stopping 123  claude -p ...')\nprint('Stopped.')\n",
+            encoding="utf-8",
+        )
+
+        reply = ask_host(
+            {"type": "cancelAutonomousWork"},
+            {"USAGE_HOST_CANCEL_COMMAND": str(stand_in)},
+        )
+        results.append(check("host ran the cancel script", marker_file.exists()))
+        results.append(
+            check("reply says something was stopped", bool(reply and reply.get("stopped")))
+        )
+        results.append(
+            check(
+                "reply carries what was killed",
+                bool(reply) and "Stopping 123" in str(reply.get("detail")),
+            )
+        )
+
+        idle_stand_in = Path(temporary_directory) / "stand-in-idle.py"
+        idle_stand_in.write_text("print('No autonomous work running.')\n", encoding="utf-8")
+        reply = ask_host(
+            {"type": "cancelAutonomousWork"},
+            {"USAGE_HOST_CANCEL_COMMAND": str(idle_stand_in)},
+        )
+        results.append(
+            check(
+                "an idle machine reports nothing stopped",
+                bool(reply) and reply.get("ok") is True and not reply.get("stopped"),
+            )
+        )
 
 
 def main() -> int:
@@ -162,6 +368,9 @@ def main() -> int:
                 "unload" in launchctl_calls and "load" in launchctl_calls,
             )
         )
+
+    check_tail(results)
+    check_cancel(results)
 
     print("unknown message:")
     reply = ask_host({"type": "somethingElse"})

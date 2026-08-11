@@ -90,9 +90,10 @@ Then reload the extension in `chrome://extensions` so it picks up the host.
 
 **4. Test it end to end.** Open the popup, go to **Settings**, and press
 **Run now** — it runs the first `todo` prompt immediately, ignoring the pace
-gate. The button only reports whether the run _started_; follow the run itself
-with `just autonomous-log`. If the button errors, the native host is not
-connected — rebuild, re-run `just install-usage-host`, and reload the extension.
+gate, and opens a window that follows the run as it happens. (Or watch it in a
+terminal with `just autonomous-log`.) If the button errors, the native host is
+not connected — rebuild, re-run `just install-usage-host`, and reload the
+extension.
 
 ## What it shows
 
@@ -183,6 +184,7 @@ two more steps; skip it if you only want the popup.
 just check           # typecheck + lint + format-check — the gate
 just build           # production build into dist/
 just dev             # Vite dev server for the popup UI (no chrome.* available)
+just run-log-preview # the run-log window UI, on fixture events
 just package         # zip dist/ for a Web Store upload
 just --list          # everything else
 ```
@@ -312,14 +314,21 @@ just cancel-autonomous-work      # stop an in-flight run
 ```
 
 Settings in the popup has a **Run now** button that does the same thing as
-`just trigger-autonomous-work --force`. It reports only whether the run
-_started_ — the work itself outlives the button press by up to an hour and
-reports into `.claude-scripts/autonomous-work.log`.
+`just trigger-autonomous-work --force`, and a **View run** button beside it.
+Both open a detached window that streams the run — a status header with elapsed
+time and cost, a timeline of what Claude is doing, a Cancel button, and a raw
+JSON toggle. The window follows the newest line until you scroll away from it,
+and a **live** button brings it back.
+
+The nightly 2 AM run deliberately raises no window; it writes to the same
+stream, so opening **View run** later shows what it did.
 
 Runs are followed live because `claude` is invoked with `--output-format
 stream-json --verbose` and read line by line; each event is summarised into
 `autonomous-work.log` as it arrives, with the raw events kept beside it in
-`autonomous-work.jsonl`. Cancelling needs `just cancel-autonomous-work` rather
+`autonomous-work.jsonl` and a structured, run-scoped version — the one the
+window reads — in `autonomous-run-events.jsonl`, trimmed to the last five runs.
+Cancelling needs `just cancel-autonomous-work` rather
 than a plain kill: the run is deliberately detached so it survives Chrome
 tearing the native host down, so the script matches both processes by command
 line, SIGTERMs, then SIGKILLs whatever is left.
@@ -363,7 +372,10 @@ Two consequences worth keeping:
   loading, logged out, ahead, behind, window inactive, stale, refresh-failed —
   can be rendered from a hand-written fixture with no extension host. That is
   what `preview.html` / `src/popup/previewMain.tsx` do: run `just dev` and open
-  `/preview.html` to see the states side by side in the browser.
+  `/preview.html` to see the states side by side in the browser. The run-log
+  window has the same arrangement — `just run-log-preview` drives it from
+  recorded-looking events, including one panel that replays them on a timer, so
+  the live behaviour can be developed without starting a billable run.
 
 ### The claude.ai API
 

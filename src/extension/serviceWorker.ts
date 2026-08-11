@@ -5,14 +5,17 @@ import { deriveUsageStatuses } from '@/lib/usagePace';
 import type { UsageSnapshot } from '@/lib/usageTypes';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
+  isOpenRunLogMessage,
   isRefreshUsageMessage,
   isRunAutonomousWorkMessage,
   isSyncAutonomousWorkSettingsMessage,
   isTestNotificationMessage,
+  type OpenRunLogResponse,
   type RefreshUsageResponse,
   type RunAutonomousWorkResponse,
   type SyncAutonomousWorkSettingsResponse,
 } from './messages';
+import { openRunLogWindow, trackRunLogWindowClosure } from './runLogWindow';
 import {
   exportUsageSnapshot,
   requestAutonomousWorkRun,
@@ -212,6 +215,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (isOpenRunLogMessage(message)) {
+    openRunLogWindow().then(
+      () => sendResponse({ opened: true } satisfies OpenRunLogResponse),
+      (error: unknown) =>
+        sendResponse({ opened: false, error: String(error) } satisfies OpenRunLogResponse),
+    );
+    return true;
+  }
+
   if (isSyncAutonomousWorkSettingsMessage(message)) {
     void syncAutonomousWorkSettings(message.settings).then((result) =>
       sendResponse(result satisfies SyncAutonomousWorkSettingsResponse),
@@ -231,6 +243,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+chrome.windows.onRemoved.addListener(trackRunLogWindowClosure);
 
 // A worker that was woken for any other reason still ought to have its alarm.
 ensureRefreshAlarm();
