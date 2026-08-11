@@ -83,9 +83,10 @@ duration when both ends are known.
 ## Autonomous work scheduler
 
 `.claude-scripts/` holds a launchd job that runs a queued Claude Code prompt at
-2 AM, but **only when the weekly window is behind an even burn** — the point is
-to keep subscription burn-rate level, so being on pace means nothing runs and
-nothing is spent. Design rationale in `plans/autonomous-credit-utilization.md`.
+2 AM (configurable — see below), but **only when the weekly window is behind an
+even burn** — the point is to keep subscription burn-rate level, so being on
+pace means nothing runs and nothing is spent. Design rationale in
+`plans/autonomous-credit-utilization.md`.
 
 The extension is the data source. After each successful refresh
 `exportUsageSnapshot` hands the figures to a **native-messaging host**,
@@ -111,10 +112,11 @@ just test-usage-host             # exercise the host directly, without Chrome
 just extension-id                # the ID Chrome derives from dist/
 just uninstall-usage-host
 
+just autonomous-settings         # the scheduled time and new-projects folder
 just autonomous-dry-run          # what would run next, without running it
 just trigger-autonomous-work     # run now if behind pace (--force to ignore pace)
 just autonomous-run-and-watch    # run now and follow the log in one go
-just install-autonomous-work     # schedule the nightly 2 AM run
+just install-autonomous-work     # schedule the nightly run at the configured time
 just uninstall-autonomous-work   # unschedule it
 just autonomous-status           # is it scheduled?
 
@@ -157,16 +159,40 @@ or pass an explicit ID as an argument.
 **Editing the queue.** `prompts.txt` at the repository root is checked in and
 user-editable — deliberately at the top level rather than in `.claude-scripts/`,
 being the only file here meant for regular hand-editing. Sections split on a
-line of `===`; each has a required
-`STATUS: todo|completed|error`, an optional `REPO:` (default
-`~/code/auto-claude`), and a multi-line prompt. The scheduler takes the first
-`todo`, runs it, and rewrites that status to `completed` or `error`. Failed
-items are skipped until you edit them back to `todo`.
+line of `===`; each has a required `STATUS: todo|completed|error`, an optional
+`REPO:`, and a multi-line prompt. The scheduler takes the first `todo`, runs it,
+and rewrites that status to `completed` or `error`. Failed items are skipped
+until you edit them back to `todo`.
 
-Every knob is an environment variable rather than a code edit —
+**A prompt with no `REPO:` gets a new repository**, `git init`-ed under the
+configured new-projects folder and named after the date and the first words of
+the prompt. It used to share one fixed `~/code/auto-claude` working copy, which
+made every "build me an X" prompt contend with the last one's leftovers.
+
+**Settings the extension owns but launchd must read.** The scheduled time and
+the new-projects folder are edited in the popup, live in `chrome.storage` — and
+neither launchd nor `run-autonomous-work.py` can see that. So the native host
+mirrors them to `.claude-scripts/autonomous-work-settings.json`, and
+`autonomous_work_settings.py` is the single module that knows that file's shape.
+
+That module is imported by `usage-host.py`, so it inherits the host's
+constraints exactly: **stdlib-only and 3.9-compatible.** Underscores in its name
+rather than the hyphens its sibling scripts use, because a hyphen would make it
+unimportable.
+
+Changing the time rewrites the installed launch agent and reloads it, since
+launchd holds the definition it was given and ignores an edited file. It does
+this **only if the agent is already installed** — the settings screen may change
+_when_ unattended work runs, but scheduling it in the first place stays an
+explicit `just install-autonomous-work`.
+
+Every knob is also an environment variable rather than a code edit —
 `AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default −2h),
-`AUTONOMOUS_WORK_TIMEOUT_SECONDS`, `AUTONOMOUS_WORK_DEFAULT_REPO`, and the
-file-path overrides used by the tests.
+`AUTONOMOUS_WORK_TIMEOUT_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which
+wins over the mirrored setting), and the file-path overrides used by the tests —
+including `AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST` and `AUTONOMOUS_WORK_LAUNCHCTL`,
+which are what let `just test-usage-host` exercise the rescheduling path without
+touching the job installed on the machine.
 
 **The newest snapshot is used however old it is — there is no freshness gate.**
 That is deliberate: the extension can only refresh while Chrome is running, so

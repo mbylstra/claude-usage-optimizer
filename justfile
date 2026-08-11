@@ -91,17 +91,16 @@ autonomous-run-and-watch:
     {{ autonomous_script }} --force || true
     sleep 0.5
 
-# Schedule the nightly 2 AM run
+# Schedule the nightly run, at whatever time the extension's settings say (2 AM by default)
 install-autonomous-work:
     @command -v uv >/dev/null || { echo "uv not found on PATH"; exit 1; }
     @command -v claude >/dev/null || { echo "claude not found on PATH"; exit 1; }
-    mkdir -p "{{ home_directory() }}/Library/LaunchAgents"
-    launchctl unload {{ launch_agent_plist }} 2>/dev/null || true
-    sed -e 's|__PROJECT_ROOT__|{{ justfile_directory() }}|g' \
-        -e 's|__HOME__|{{ home_directory() }}|g' \
-        .claude-scripts/{{ launch_agent_label }}.plist > {{ launch_agent_plist }}
-    launchctl load {{ launch_agent_plist }}
-    @echo "Loaded {{ launch_agent_label }} — runs daily at 02:00"
+    @python3 .claude-scripts/autonomous_work_settings.py --install
+
+# Show the scheduled time and new-projects folder the extension has stored
+[no-exit-message]
+autonomous-settings:
+    @python3 .claude-scripts/autonomous_work_settings.py
 
 # Unschedule the nightly run
 uninstall-autonomous-work:

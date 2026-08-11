@@ -25,6 +25,13 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+# A sibling module, and importable only because Python puts this script's own
+# directory on sys.path. Chrome may spawn us from anywhere, so nothing here can
+# rely on the working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
+
 HOST_DIRECTORY = Path(__file__).resolve().parent
 SNAPSHOT_FILE = HOST_DIRECTORY / "claude-usage.json"
 LOG_FILE = HOST_DIRECTORY / "usage-host.log"
@@ -36,6 +43,7 @@ SCHEDULER_COMMAND = os.environ.get(
 
 MESSAGE_TYPE_SNAPSHOT = "snapshot"
 MESSAGE_TYPE_RUN_WORK = "runAutonomousWork"
+MESSAGE_TYPE_SET_SETTINGS = "setAutonomousWorkSettings"
 
 # Chrome spawns this process with its own environment, which will not have the
 # user's shell PATH. `uv` and `claude` live in these directories.
@@ -143,9 +151,38 @@ def start_autonomous_work():
         log_handle.close()
 
 
+def apply_autonomous_work_settings(message):
+    # type: (dict) -> dict
+    """Mirror the extension's settings to disk and reschedule the launchd job.
+
+    Reports `launchAgentUpdated` separately from `ok`: settings are always
+    stored, but a machine that never ran `just install-autonomous-work` has no
+    job to reschedule, and the popup says so rather than implying the new time
+    will be honoured.
+    """
+    settings = autonomous_work_settings.parse_settings(message.get("settings"))
+    result = autonomous_work_settings.apply_settings(settings)
+
+    log_message(
+        "Settings updated: run at {}, new projects in {} ({})".format(
+            settings.describe_schedule(), settings.new_projects_directory, result.detail
+        )
+    )
+
+    return {
+        "ok": True,
+        "launchAgentUpdated": result.applied,
+        "detail": result.detail,
+        "scheduledFor": settings.describe_schedule(),
+    }
+
+
 def handle_message(message):
     # type: (dict) -> dict
     message_type = message.get("type")
+
+    if message_type == MESSAGE_TYPE_SET_SETTINGS:
+        return apply_autonomous_work_settings(message)
 
     if message_type == MESSAGE_TYPE_RUN_WORK:
         start_autonomous_work()
@@ -178,8 +215,12 @@ def main():
 
         try:
             write_message(handle_message(message))
-        except OSError as error:
-            log_message("Failed handling message: {}".format(error))
+        except Exception as error:  # noqa: BLE001 — see below
+            # Deliberately broad. Dying here costs the extension its connection
+            # and shows up as nothing more than "host disconnected", so any
+            # failure is worth more as a logged reply than as a traceback into a
+            # stderr nobody reads.
+            log_message("Failed handling message: {!r}".format(error))
             write_message({"ok": False, "error": str(error)})
 
 

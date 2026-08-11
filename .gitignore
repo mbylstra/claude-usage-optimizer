@@ -5,6 +5,14 @@ dist-storybook/
 *.log
 .vite/
 
-# Runtime snapshot written by the native-messaging host
+# Your own work queue. Tracking it meant a "chore(queue)" commit every time a
+# run rewrote a STATUS line. Start from prompts.example.txt.
+prompts.txt
+
+# The native host imports a sibling module, so Chrome leaves bytecode here
+.claude-scripts/__pycache__/
+
+# Runtime snapshot and settings mirror written by the native-messaging host
 .claude-scripts/claude-usage.json
+.claude-scripts/autonomous-work-settings.json
 .claude-scripts/autonomous-work.jsonl

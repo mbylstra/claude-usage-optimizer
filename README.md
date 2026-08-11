@@ -9,8 +9,8 @@ the point of the first:
   optional notifications when that suggestion changes.
 - **[An autonomous work scheduler](#autonomous-work)** — a nightly job that
   spends the headroom you would otherwise waste, running a queued Claude Code
-  prompt at 2 AM, **but only when the week is behind pace.** On pace, nothing
-  runs and nothing is spent.
+  prompt at 2 AM (or whatever time you set in Settings), **but only when the
+  week is behind pace.** On pace, nothing runs and nothing is spent.
 
 Knowing you are at 61% is only half the picture. Knowing you are at 61% with 47%
 of the week gone is the half you act on — in both directions. Overshooting the
@@ -73,13 +73,14 @@ Run `just check` and fix any lint, type, or format errors.
 Leave the changes uncommitted for review.
 ```
 
-([Full format](#editing-the-queue).)
+Leave the `REPO:` line off and the prompt gets a fresh repository of its own
+instead. ([Full format](#editing-the-queue).)
 
 **3. Wire up the scheduler.**
 
 ```sh
 just install-usage-host         # let the extension write usage to disk
-just install-autonomous-work    # schedule the nightly 2 AM run
+just install-autonomous-work    # schedule the nightly run (2 AM by default)
 ```
 
 Then reload the extension in `chrome://extensions` so it picks up the host.
@@ -193,6 +194,10 @@ Claude Code prompt at 2 AM — **but only when the weekly window is behind an ev
 burn.** Being on pace means nothing runs and nothing is spent; the point is to
 level out subscription burn rate, not to add to it.
 
+The time is set in the popup's Settings screen, along with the folder new
+projects are created in. See [Scheduling and new
+projects](#scheduling-and-new-projects).
+
 It is opt-in — the popup works without any of this — but it is where the
 indicator's numbers stop being something to read and start being something that
 acts.
@@ -210,7 +215,7 @@ is in `plans/autonomous-credit-utilization.md`.
 ```sh
 just build                      # the host manifest names the ID Chrome derives from dist/
 just install-usage-host         # register the native host
-just install-autonomous-work    # schedule the nightly 2 AM run
+just install-autonomous-work    # schedule the nightly run (2 AM by default)
 ```
 
 Then reload the extension in `chrome://extensions` so it picks up the host, and
@@ -245,9 +250,13 @@ Leave the changes uncommitted for review.
   `todo`, `completed`, or `error`. A section without one is ignored entirely,
   which is what lets the file carry `#` comments at the top.
 - **`REPO:`** is optional and must come before the prompt body. It is the
-  working directory the prompt runs in, `~` included; it defaults to
-  `~/code/auto-claude` (override with `AUTONOMOUS_WORK_DEFAULT_REPO`). The
-  directory is created if it does not exist.
+  working directory the prompt runs in, `~` included, created if it does not
+  exist. **Leave it out and the prompt gets a brand-new repository instead** —
+  created and `git init`-ed under the new-projects folder from Settings, named
+  after the date and the first few words of the prompt
+  (`~/code/2026-08-11-build-a-tetris-clone-in-plain`). A queue of unrelated
+  "build me an X" prompts is the normal case, and sharing one working copy
+  between them just makes each run contend with the last one's leftovers.
 - **Everything after the headers is the prompt**, and may span as many lines as
   you like.
 
@@ -261,6 +270,29 @@ not an error.
 The status is rewritten by line index rather than by search-and-replace, so a
 prompt body containing the word `STATUS` is harmless, and the file is swapped
 atomically so an edit made mid-run never leaves it truncated.
+
+### Scheduling and new projects
+
+Two settings in the popup's **Settings** screen shape how the nightly run
+behaves:
+
+- **Run at** — the local wall-clock time launchd fires the job. 2 AM by default.
+  Changing it rewrites the installed launch agent and reloads it, so the change
+  takes effect for the next night. Hour and minute rather than an instant,
+  because "2 AM daily" has to survive daylight saving.
+- **New projects folder** — where a queue prompt with no `REPO:` line starts its
+  new repository. `~/code` by default.
+
+Both settings live in `chrome.storage`, which launchd cannot read, so the native
+host mirrors them to `.claude-scripts/autonomous-work-settings.json` — the file
+`run-autonomous-work.py` and `just install-autonomous-work` both read.
+`just autonomous-settings` prints the current state.
+
+Changing the time **only reschedules a job that is already installed.** If you
+have never run `just install-autonomous-work`, the setting is saved and the
+screen says so rather than quietly scheduling unattended work you never asked
+for. Without the native host installed at all, both settings stay in the browser
+and the screen says that too.
 
 ### Watching and driving it
 
@@ -290,8 +322,8 @@ line, SIGTERMs, then SIGKILLs whatever is left.
 Every knob is an environment variable rather than a code edit —
 `AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default −2h),
 `AUTONOMOUS_WORK_TIMEOUT_SECONDS` (default 1 hour),
-`AUTONOMOUS_WORK_DEFAULT_REPO`, and file-path overrides for the queue, log and
-snapshot.
+`AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which wins over the Settings screen, for a
+one-off run), and file-path overrides for the queue, log, snapshot and settings.
 
 ### One deliberate rough edge
 

@@ -2,16 +2,26 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { SettingsPage } from '@/components/SettingsPage';
 import { UsagePopup } from '@/components/UsagePopup';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
-import { DEFAULT_EXTENSION_SETTINGS, type ExtensionSettings } from '@/lib/settingsTypes';
+import {
+  DEFAULT_EXTENSION_SETTINGS,
+  type AutonomousWorkSettings,
+  type ExtensionSettings,
+} from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
 import {
   REFRESH_USAGE_MESSAGE,
   RUN_AUTONOMOUS_WORK_MESSAGE,
+  SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE,
   TEST_NOTIFICATION_MESSAGE,
   type RefreshUsageResponse,
   type RunAutonomousWorkResponse,
+  type SyncAutonomousWorkSettingsResponse,
 } from '@/extension/messages';
 import { IDLE_AUTONOMOUS_WORK_STATUS, type AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
+import {
+  IDLE_AUTONOMOUS_WORK_SETTINGS_STATUS,
+  type AutonomousWorkSettingsStatus,
+} from '@/lib/autonomousWorkSettingsStatus';
 import {
   readExtensionSettings,
   SETTINGS_CHANGE_KEY,
@@ -29,6 +39,17 @@ import { readUsageCache, USAGE_CACHE_CHANGE_KEY } from '@/extension/usageStorage
 
 /** Keeps "2h 14m left" and "updated 3m ago" honest while the popup is open. */
 const CLOCK_TICK_MS = 30_000;
+
+/**
+ * How long the autonomous-work settings must sit unchanged before they are
+ * pushed to the native host.
+ *
+ * The folder field is typed a character at a time, and each push spawns a host
+ * process that rewrites a launchd job — worth waiting out. Storage is still
+ * written on every keystroke, so nothing is lost if the popup closes first; the
+ * service worker re-pushes on its next startup.
+ */
+const SETTINGS_SYNC_DEBOUNCE_MS = 600;
 
 const CLAUDE_URL = 'https://claude.ai';
 
@@ -54,6 +75,8 @@ export function PopupRoot() {
   const [autonomousWorkStatus, setAutonomousWorkStatus] = useState<AutonomousWorkStatus>(
     IDLE_AUTONOMOUS_WORK_STATUS,
   );
+  const [autonomousWorkSettingsStatus, setAutonomousWorkSettingsStatus] =
+    useState<AutonomousWorkSettingsStatus>(IDLE_AUTONOMOUS_WORK_SETTINGS_STATUS);
   const now = useTickingClock();
 
   // Chrome sizes the popup to whatever is currently rendered, so switching to
@@ -189,6 +212,68 @@ export function PopupRoot() {
     });
   }, []);
 
+  // Only the latest edit is worth pushing, so a pending timer is replaced rather
+  // than queued behind.
+  const settingsSyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const syncAutonomousWorkSettings = useCallback((autonomousWork: AutonomousWorkSettings) => {
+    setAutonomousWorkSettingsStatus({ kind: 'saving' });
+    chrome.runtime.sendMessage(
+      { type: SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE, settings: autonomousWork },
+      (response?: SyncAutonomousWorkSettingsResponse) => {
+        if (chrome.runtime.lastError !== undefined) {
+          setAutonomousWorkSettingsStatus({
+            kind: 'failed',
+            error: chrome.runtime.lastError.message ?? '',
+          });
+          return;
+        }
+        if (response === undefined) {
+          setAutonomousWorkSettingsStatus({
+            kind: 'failed',
+            error: 'No response from the extension',
+          });
+          return;
+        }
+        if (!response.saved) {
+          setAutonomousWorkSettingsStatus({ kind: 'failed', error: response.error ?? '' });
+          return;
+        }
+        setAutonomousWorkSettingsStatus(
+          response.launchAgentUpdated
+            ? { kind: 'scheduled', scheduleTime: autonomousWork.scheduleTime }
+            : { kind: 'savedWithoutSchedule' },
+        );
+      },
+    );
+  }, []);
+
+  /**
+   * Store the change now, tell the host about it shortly.
+   *
+   * The write is immediate so the field never fights what the user typed and so
+   * a popup that closes mid-edit keeps the value; only the host round trip —
+   * which rewrites a launchd job — waits for the typing to stop.
+   */
+  const handleAutonomousWorkSettingsChange = useCallback(
+    (autonomousWork: AutonomousWorkSettings) => {
+      setSettings((current) => {
+        const next: ExtensionSettings = { ...current, autonomousWork };
+        void writeExtensionSettings(next);
+        return next;
+      });
+
+      clearTimeout(settingsSyncTimer.current);
+      settingsSyncTimer.current = setTimeout(
+        () => syncAutonomousWorkSettings(autonomousWork),
+        SETTINGS_SYNC_DEBOUNCE_MS,
+      );
+    },
+    [syncAutonomousWorkSettings],
+  );
+
+  useEffect(() => () => clearTimeout(settingsSyncTimer.current), []);
+
   // Before the cache read resolves we genuinely know nothing — show the loading
   // state rather than flashing "no data yet".
   const data = buildUsagePopupData(hasLoadedCache ? cacheEntry : null, now);
@@ -203,6 +288,9 @@ export function PopupRoot() {
           notificationsEnabled={settings.notificationsEnabled}
           onNotificationsEnabledChange={handleNotificationsEnabledChange}
           onTestNotification={requestTestNotification}
+          autonomousWorkSettings={settings.autonomousWork}
+          onAutonomousWorkSettingsChange={handleAutonomousWorkSettingsChange}
+          autonomousWorkSettingsStatus={autonomousWorkSettingsStatus}
           autonomousWorkStatus={autonomousWorkStatus}
           onRunAutonomousWork={runAutonomousWork}
           onBack={closeSettings}

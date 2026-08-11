@@ -1,3 +1,4 @@
+import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from './usageStorage';
 
 /**
@@ -24,14 +25,42 @@ export interface RunAutonomousWorkMessage {
   type: typeof RUN_AUTONOMOUS_WORK_MESSAGE;
 }
 
+export const SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE = 'SYNC_AUTONOMOUS_WORK_SETTINGS' as const;
+
+/**
+ * Push the autonomous-work settings out to the native host, which mirrors them
+ * to disk and reschedules the launchd job.
+ *
+ * The settings ride along rather than being re-read from storage, so a change
+ * cannot be applied out of order with the write that produced it.
+ */
+export interface SyncAutonomousWorkSettingsMessage {
+  type: typeof SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE;
+  settings: AutonomousWorkSettings;
+}
+
 export type ExtensionMessage =
-  RefreshUsageMessage | TestNotificationMessage | RunAutonomousWorkMessage;
+  | RefreshUsageMessage
+  | TestNotificationMessage
+  | RunAutonomousWorkMessage
+  | SyncAutonomousWorkSettingsMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
 
 /** Whether the native host accepted the request, not whether the work succeeded. */
 export interface RunAutonomousWorkResponse {
   started: boolean;
+  error?: string;
+}
+
+export interface SyncAutonomousWorkSettingsResponse {
+  /** The host stored the settings. */
+  saved: boolean;
+  /**
+   * The nightly launchd job now runs at the new time. False when the job was
+   * never installed — the settings are still saved, but nothing is scheduled.
+   */
+  launchAgentUpdated: boolean;
   error?: string;
 }
 
@@ -56,5 +85,15 @@ export function isRunAutonomousWorkMessage(message: unknown): message is RunAuto
     typeof message === 'object' &&
     message !== null &&
     (message as { type?: unknown }).type === RUN_AUTONOMOUS_WORK_MESSAGE
+  );
+}
+
+export function isSyncAutonomousWorkSettingsMessage(
+  message: unknown,
+): message is SyncAutonomousWorkSettingsMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE
   );
 }

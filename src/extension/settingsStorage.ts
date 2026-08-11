@@ -1,4 +1,4 @@
-import { DEFAULT_EXTENSION_SETTINGS, type ExtensionSettings } from '@/lib/settingsTypes';
+import { normaliseExtensionSettings, type ExtensionSettings } from '@/lib/settingsTypes';
 
 /**
  * The only module that reads or writes extension settings in
@@ -11,8 +11,7 @@ export const SETTINGS_CHANGE_KEY = SETTINGS_STORAGE_KEY;
 
 export async function readExtensionSettings(): Promise<ExtensionSettings> {
   const stored = await chrome.storage.local.get(SETTINGS_STORAGE_KEY);
-  const value = stored[SETTINGS_STORAGE_KEY] as Partial<ExtensionSettings> | undefined;
-  return { ...DEFAULT_EXTENSION_SETTINGS, ...value };
+  return normaliseExtensionSettings(stored[SETTINGS_STORAGE_KEY]);
 }
 
 export async function writeExtensionSettings(settings: ExtensionSettings): Promise<void> {

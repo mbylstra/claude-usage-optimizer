@@ -7,11 +7,17 @@ import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
   isRefreshUsageMessage,
   isRunAutonomousWorkMessage,
+  isSyncAutonomousWorkSettingsMessage,
   isTestNotificationMessage,
   type RefreshUsageResponse,
   type RunAutonomousWorkResponse,
+  type SyncAutonomousWorkSettingsResponse,
 } from './messages';
-import { exportUsageSnapshot, requestAutonomousWorkRun } from './usageSnapshotExporter';
+import {
+  exportUsageSnapshot,
+  requestAutonomousWorkRun,
+  syncAutonomousWorkSettings,
+} from './usageSnapshotExporter';
 import {
   appendUsageHistorySample,
   chromeOrganizationIdCache,
@@ -146,6 +152,19 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
   }
 }
 
+/**
+ * Re-push the stored autonomous-work settings to the native host.
+ *
+ * The popup pushes on every change, so this is pure reconciliation — it covers
+ * the case where the settings were changed before the host was installed, which
+ * would otherwise leave the launchd job on a schedule the settings screen says
+ * it is not using. Failure is expected and silent for anyone with no host.
+ */
+async function reconcileAutonomousWorkSettings(): Promise<void> {
+  const settings = await readExtensionSettings();
+  await syncAutonomousWorkSettings(settings.autonomousWork);
+}
+
 function ensureRefreshAlarm(): void {
   chrome.alarms.create(REFRESH_ALARM_NAME, {
     periodInMinutes: REFRESH_PERIOD_MINUTES,
@@ -158,11 +177,13 @@ function ensureRefreshAlarm(): void {
 chrome.runtime.onInstalled.addListener(() => {
   ensureRefreshAlarm();
   void refreshUsage();
+  void reconcileAutonomousWorkSettings();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureRefreshAlarm();
   void refreshUsage();
+  void reconcileAutonomousWorkSettings();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -187,6 +208,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (isRunAutonomousWorkMessage(message)) {
     void requestAutonomousWorkRun().then((result) =>
       sendResponse(result satisfies RunAutonomousWorkResponse),
+    );
+    return true;
+  }
+
+  if (isSyncAutonomousWorkSettingsMessage(message)) {
+    void syncAutonomousWorkSettings(message.settings).then((result) =>
+      sendResponse(result satisfies SyncAutonomousWorkSettingsResponse),
     );
     return true;
   }

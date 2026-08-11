@@ -4,6 +4,8 @@ import { UsagePopup } from '@/components/UsagePopup';
 import { SettingsPage } from '@/components/SettingsPage';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
 import type { AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
+import type { AutonomousWorkSettingsStatus } from '@/lib/autonomousWorkSettingsStatus';
+import { DEFAULT_AUTONOMOUS_WORK_SETTINGS } from '@/lib/settingsTypes';
 import type { UsageCacheEntry } from '@/lib/usageTypes';
 import '@/index.css';
 
@@ -44,19 +46,28 @@ const CASES: { label: string; entry: UsageCacheEntry }[] = [
   { label: 'barely started (2%)', entry: sessionEntry(2, 4.9) },
 ];
 
-const AUTONOMOUS_WORK_CASES: { label: string; status: AutonomousWorkStatus }[] = [
-  { label: 'settings — idle', status: { kind: 'idle' } },
-  { label: 'settings — started', status: { kind: 'started' } },
+const AUTONOMOUS_WORK_CASES: {
+  label: string;
+  status: AutonomousWorkStatus;
+  settingsStatus: AutonomousWorkSettingsStatus;
+}[] = [
+  { label: 'settings — idle', status: { kind: 'idle' }, settingsStatus: { kind: 'idle' } },
+  {
+    label: 'settings — started',
+    status: { kind: 'started' },
+    settingsStatus: { kind: 'scheduled', scheduleTime: { hour: 3, minute: 30 } },
+  },
   {
     label: 'settings — host missing',
     status: { kind: 'failed', error: 'Specified native messaging host not found.' },
+    settingsStatus: { kind: 'savedWithoutSchedule' },
   },
 ];
 
 function Column({ dark }: { dark: boolean }) {
   return (
     <div className={dark ? 'dark' : ''} style={{ background: dark ? '#111' : '#fff', padding: 8 }}>
-      {AUTONOMOUS_WORK_CASES.map(({ label, status }) => (
+      {AUTONOMOUS_WORK_CASES.map(({ label, status, settingsStatus }) => (
         <div key={label}>
           <div
             style={{
@@ -71,6 +82,9 @@ function Column({ dark }: { dark: boolean }) {
             notificationsEnabled={true}
             onNotificationsEnabledChange={() => {}}
             onTestNotification={() => {}}
+            autonomousWorkSettings={DEFAULT_AUTONOMOUS_WORK_SETTINGS}
+            onAutonomousWorkSettingsChange={() => {}}
+            autonomousWorkSettingsStatus={settingsStatus}
             autonomousWorkStatus={status}
             onRunAutonomousWork={() => {}}
             onBack={() => {}}

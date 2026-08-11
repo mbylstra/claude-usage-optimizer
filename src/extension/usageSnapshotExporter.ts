@@ -1,4 +1,5 @@
 import { buildUsageSnapshotExport } from '@/lib/usageSnapshotExport';
+import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
 import type { UsageSnapshot } from '@/lib/usageTypes';
 
 /**
@@ -34,6 +35,7 @@ function logExportFailureOnce(error: unknown): void {
 /** Message envelopes the host understands; mirrored in `usage-host.py`. */
 const SNAPSHOT_MESSAGE_TYPE = 'snapshot';
 const RUN_WORK_MESSAGE_TYPE = 'runAutonomousWork';
+const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
 
 export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Date): Promise<void> {
   try {
@@ -82,5 +84,54 @@ export async function requestAutonomousWorkRun(): Promise<{ started: boolean; er
     return { started: false, error: 'Host sent no reply' };
   } catch (error) {
     return { started: false, error: String(error) };
+  }
+}
+
+export interface AutonomousWorkSettingsSyncResult {
+  saved: boolean;
+  launchAgentUpdated: boolean;
+  error?: string;
+}
+
+/**
+ * Mirror the autonomous-work settings to disk, and reschedule the launchd job.
+ *
+ * Only the host can do either — `chrome.storage` is invisible to launchd, and
+ * MV3 has no filesystem. A machine with no host installed simply keeps the
+ * settings in the browser, which is the honest outcome: there is no nightly job
+ * there to reschedule.
+ */
+export async function syncAutonomousWorkSettings(
+  settings: AutonomousWorkSettings,
+): Promise<AutonomousWorkSettingsSyncResult> {
+  try {
+    const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
+      type: SET_SETTINGS_MESSAGE_TYPE,
+      settings: {
+        scheduleHour: settings.scheduleTime.hour,
+        scheduleMinute: settings.scheduleTime.minute,
+        newProjectsDirectory: settings.newProjectsDirectory,
+      },
+    });
+
+    if (typeof response === 'object' && response !== null && 'ok' in response) {
+      const { ok, launchAgentUpdated, error } = response as {
+        ok: unknown;
+        launchAgentUpdated?: unknown;
+        error?: unknown;
+      };
+      if (ok === true) {
+        return { saved: true, launchAgentUpdated: launchAgentUpdated === true };
+      }
+      return {
+        saved: false,
+        launchAgentUpdated: false,
+        error: error === undefined ? 'Host refused the settings' : String(error),
+      };
+    }
+
+    return { saved: false, launchAgentUpdated: false, error: 'Host sent no reply' };
+  } catch (error) {
+    return { saved: false, launchAgentUpdated: false, error: String(error) };
   }
 }

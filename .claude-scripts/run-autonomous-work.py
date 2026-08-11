@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,12 @@ from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIRECTORY.parent
+
+# Sibling module, importable because Python puts this script's directory on
+# sys.path. It owns the settings the Chrome extension mirrors to disk.
+sys.path.insert(0, str(SCRIPT_DIRECTORY))
+
+import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
 
 MILLISECONDS_PER_HOUR = 3_600_000
 
@@ -70,8 +77,11 @@ LOG_FILE = environment_path("AUTONOMOUS_WORK_LOG_FILE", SCRIPT_DIRECTORY / "auto
 RAW_EVENT_FILE = environment_path(
     "AUTONOMOUS_WORK_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-work.jsonl"
 )
-DEFAULT_REPOSITORY = environment_path(
-    "AUTONOMOUS_WORK_DEFAULT_REPO", Path.home() / "code" / "auto-claude"
+# Where a prompt with no REPO: line starts a *new* repository. Set in the
+# extension's settings screen, which mirrors it to disk through the native host;
+# the environment variable still wins, for a one-off run.
+NEW_PROJECTS_DIRECTORY = environment_path(
+    "AUTONOMOUS_WORK_NEW_PROJECTS_DIR", autonomous_work_settings.read_settings().new_projects_path
 )
 # Negative milliseconds: how far behind an even weekly burn we must be to act.
 PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", -2 * MILLISECONDS_PER_HOUR)
@@ -205,7 +215,8 @@ class QueueEntry:
     status: str
     """Index into the file's line list, so the status can be rewritten in place."""
     status_line_index: int
-    repository_path: Path
+    """The REPO: line as a path, or None to start a new project — see `resolve_working_directory`."""
+    repository_path: Path | None
     prompt: str
 
 
@@ -242,9 +253,7 @@ def _parse_section(first_line_index: int, section_lines: list[str]) -> QueueEntr
         return None
 
     prompt = "\n".join(prompt_lines).strip()
-    repository_path = (
-        Path(os.path.expanduser(repository_text)) if repository_text else DEFAULT_REPOSITORY
-    )
+    repository_path = Path(os.path.expanduser(repository_text)) if repository_text else None
 
     return QueueEntry(
         status=status,
@@ -386,14 +395,79 @@ def summarise_stream_event(event: dict) -> list[str]:
     return []
 
 
-def run_claude(entry: QueueEntry) -> int:
+def slugify_prompt(prompt: str, word_limit: int = 6) -> str:
+    """A few words from the prompt, safe as a directory name.
+
+    The directory is the only lasting trace of which queue entry produced a
+    project, so it is named after the prompt rather than given a bare timestamp —
+    `~/code` stays readable months later.
+    """
+    words = re.findall(r"[a-z0-9]+", prompt.lower())
+    slug = "-".join(words[:word_limit])
+    return slug or "prompt"
+
+
+def resolve_working_directory(entry: QueueEntry) -> tuple[Path, bool]:
+    """Where this entry runs, and whether that is a project we are about to create.
+
+    An entry with a REPO: line runs there. Without one it gets a brand-new
+    repository under the configured new-projects directory, because a queue of
+    unrelated "build me an X" prompts sharing one working copy just makes each
+    run contend with the leftovers of the last.
+    """
+    if entry.repository_path is not None:
+        return entry.repository_path, False
+
+    dated_name = f"{datetime.now().strftime('%Y-%m-%d')}-{slugify_prompt(entry.prompt)}"
+
+    # Two prompts on one night, or a re-queued entry, must not land on top of an
+    # existing project.
+    candidate = NEW_PROJECTS_DIRECTORY / dated_name
+    suffix_number = 2
+    while candidate.exists():
+        candidate = NEW_PROJECTS_DIRECTORY / f"{dated_name}-{suffix_number}"
+        suffix_number += 1
+
+    return candidate, True
+
+
+def prepare_working_directory(working_directory: Path, is_new_project: bool) -> bool:
+    """Create the directory, and initialise a repository when it is a new project."""
     try:
-        entry.repository_path.mkdir(parents=True, exist_ok=True)
+        working_directory.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        log_message(f"Could not prepare working directory {entry.repository_path}: {error}")
+        log_message(f"Could not prepare working directory {working_directory}: {error}")
+        return False
+
+    if not is_new_project:
+        return True
+
+    try:
+        git_result = subprocess.run(
+            ["git", "init", "--quiet"],
+            cwd=working_directory,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as error:
+        # Worth the run anyway: an uninitialised directory still gets the work
+        # done, and the user can `git init` afterwards.
+        log_message(f"Could not run git init in {working_directory}: {error}")
+        return True
+
+    if git_result.returncode != 0:
+        log_message(f"git init failed: {git_result.stdout.decode().strip()}")
+    return True
+
+
+def run_claude(entry: QueueEntry, working_directory: Path, is_new_project: bool) -> int:
+    if not prepare_working_directory(working_directory, is_new_project):
         return 1
 
-    log_message(f"Running queued prompt in {entry.repository_path}")
+    log_message(
+        f"Running queued prompt in {working_directory}"
+        + (" (new project)" if is_new_project else "")
+    )
 
     try:
         # Streamed rather than captured, so `just autonomous-log` shows progress
@@ -403,7 +477,7 @@ def run_claude(entry: QueueEntry) -> int:
         # second unread pipe.
         process = subprocess.Popen(
             ["claude", "-p", entry.prompt, *CLAUDE_BASE_ARGUMENTS],
-            cwd=entry.repository_path,
+            cwd=working_directory,
             # Without this `claude` spends three seconds waiting on an inherited
             # stdin that is never going to produce anything, and warns about it.
             stdin=subprocess.DEVNULL,
@@ -505,13 +579,14 @@ def main() -> int:
         log_message("No todo prompts in queue (all completed, errored or empty)")
         return 0
 
+    working_directory, is_new_project = resolve_working_directory(next_entry)
+
     if arguments.dry_run:
-        log_message(
-            f"Dry run — would execute in {next_entry.repository_path}:\n{next_entry.prompt}"
-        )
+        destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
+        log_message(f"Dry run — would execute in {destination}:\n{next_entry.prompt}")
         return 0
 
-    exit_code = run_claude(next_entry)
+    exit_code = run_claude(next_entry, working_directory, is_new_project)
     write_queue_status(
         next_entry.status_line_index,
         STATUS_COMPLETED if exit_code == 0 else STATUS_ERROR,

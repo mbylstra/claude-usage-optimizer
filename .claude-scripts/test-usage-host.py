@@ -7,7 +7,9 @@ the difference between a two-minute fix and an afternoon.
 
 The `runAutonomousWork` case points the host at a harmless stand-in command
 rather than the real scheduler, so running these checks never starts a billable
-Claude session.
+Claude session. The `setAutonomousWorkSettings` case likewise redirects the
+settings file, the LaunchAgent path and `launchctl` itself into a temporary
+directory, so it never touches the job actually installed on this machine.
 """
 
 from __future__ import annotations
@@ -90,6 +92,76 @@ def main() -> int:
                 break
             subprocess.run(["sleep", "0.1"])
         results.append(check("scheduler was actually spawned", marker_file.exists()))
+
+    print("setAutonomousWorkSettings message (no launch agent installed):")
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        settings_file = Path(temporary_directory) / "settings.json"
+        plist_file = Path(temporary_directory) / "agent.plist"
+        launchctl_log = Path(temporary_directory) / "launchctl-calls"
+        fake_launchctl = Path(temporary_directory) / "launchctl"
+        fake_launchctl.write_text(
+            f'#!/bin/bash\necho "$@" >> "{launchctl_log}"\n', encoding="utf-8"
+        )
+        fake_launchctl.chmod(0o755)
+
+        overrides = {
+            "AUTONOMOUS_WORK_SETTINGS_FILE": str(settings_file),
+            "AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST": str(plist_file),
+            "AUTONOMOUS_WORK_LAUNCHCTL": str(fake_launchctl),
+        }
+        settings_message = {
+            "type": "setAutonomousWorkSettings",
+            "settings": {
+                "scheduleHour": 3,
+                "scheduleMinute": 30,
+                "newProjectsDirectory": "~/code/experiments",
+            },
+        }
+
+        reply = ask_host(settings_message, overrides)
+        results.append(check("host stores the settings", bool(reply and reply.get("ok"))))
+        results.append(
+            check("no launch agent is created behind the user's back", not plist_file.exists())
+        )
+        results.append(
+            check("reply says nothing was rescheduled", bool(reply) and not reply.get("launchAgentUpdated"))
+        )
+        if settings_file.exists():
+            stored = json.loads(settings_file.read_text(encoding="utf-8"))
+            results.append(
+                check(
+                    "settings round-trip",
+                    stored
+                    == {
+                        "scheduleHour": 3,
+                        "scheduleMinute": 30,
+                        "newProjectsDirectory": "~/code/experiments",
+                    },
+                )
+            )
+
+        print("setAutonomousWorkSettings message (launch agent installed):")
+        plist_file.write_text("placeholder\n", encoding="utf-8")
+        reply = ask_host(settings_message, overrides)
+        results.append(
+            check("reply says the job was rescheduled", bool(reply and reply.get("launchAgentUpdated")))
+        )
+        rewritten_plist = plist_file.read_text(encoding="utf-8")
+        results.append(
+            check("plist carries the new time", "<integer>3</integer>" in rewritten_plist)
+        )
+        results.append(
+            check("plist has no placeholders left", "__" not in rewritten_plist)
+        )
+        launchctl_calls = (
+            launchctl_log.read_text(encoding="utf-8") if launchctl_log.exists() else ""
+        )
+        results.append(
+            check(
+                "launchd was told to reload",
+                "unload" in launchctl_calls and "load" in launchctl_calls,
+            )
+        )
 
     print("unknown message:")
     reply = ask_host({"type": "somethingElse"})

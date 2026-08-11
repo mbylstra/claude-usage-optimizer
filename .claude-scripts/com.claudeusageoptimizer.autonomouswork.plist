@@ -2,9 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template. `just install-autonomous-work` expands the placeholders below and
-  copies the result into ~/Library/LaunchAgents. Do not edit the installed copy;
-  edit this one and re-run the recipe.
+  Template. `autonomous_work_settings.py` expands the placeholders below and
+  copies the result into ~/Library/LaunchAgents — from `just
+  install-autonomous-work`, and again whenever the extension's settings screen
+  changes the scheduled time. Do not edit the installed copy; edit this one and
+  re-run the recipe.
+
+  The hour and minute placeholders below come from
+  .claude-scripts/autonomous-work-settings.json, which the extension writes
+  through the native-messaging host. They default to 2 AM.
+
+  Every placeholder here is substituted textually, so do not name one in prose.
 
   PATH matters more than anything else here: launchd starts jobs with a bare
   environment, and both `uv` and `claude` install under the home directory
@@ -26,9 +34,9 @@
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>2</integer>
+    <integer>__HOUR__</integer>
     <key>Minute</key>
-    <integer>0</integer>
+    <integer>__MINUTE__</integer>
   </dict>
 
   <key>WorkingDirectory</key>

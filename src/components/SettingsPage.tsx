@@ -2,24 +2,40 @@ import { ArrowLeft, Play } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import {
   describeAutonomousWorkStatus,
   isAutonomousWorkStatusError,
   type AutonomousWorkStatus,
 } from '@/lib/autonomousWorkStatus';
+import {
+  describeAutonomousWorkSettingsStatus,
+  isAutonomousWorkSettingsStatusError,
+  type AutonomousWorkSettingsStatus,
+} from '@/lib/autonomousWorkSettingsStatus';
+import {
+  describeScheduleTime,
+  formatScheduleTimeInputValue,
+  parseScheduleTimeInputValue,
+  type ScheduleTime,
+} from '@/lib/scheduleTime';
+import { DEFAULT_NEW_PROJECTS_DIRECTORY, type AutonomousWorkSettings } from '@/lib/settingsTypes';
 
 /**
  * The settings screen, shown inside the popup in place of the usage view.
  *
- * It never touches `chrome.*` — `PopupRoot` supplies the value and the change
- * handler, the same split as `UsagePopup`.
+ * It never touches `chrome.*` — `PopupRoot` supplies the values and the change
+ * handlers, the same split as `UsagePopup`.
  */
 
 export interface SettingsPageProps {
   notificationsEnabled: boolean;
   onNotificationsEnabledChange: (enabled: boolean) => void;
   onTestNotification: () => void;
+  autonomousWorkSettings: AutonomousWorkSettings;
+  onAutonomousWorkSettingsChange: (settings: AutonomousWorkSettings) => void;
+  autonomousWorkSettingsStatus: AutonomousWorkSettingsStatus;
   autonomousWorkStatus: AutonomousWorkStatus;
   onRunAutonomousWork: () => void;
   onBack: () => void;
@@ -29,11 +45,24 @@ export function SettingsPage({
   notificationsEnabled,
   onNotificationsEnabledChange,
   onTestNotification,
+  autonomousWorkSettings,
+  onAutonomousWorkSettingsChange,
+  autonomousWorkSettingsStatus,
   autonomousWorkStatus,
   onRunAutonomousWork,
   onBack,
 }: SettingsPageProps) {
   const autonomousWorkMessage = describeAutonomousWorkStatus(autonomousWorkStatus);
+  const settingsMessage = describeAutonomousWorkSettingsStatus(autonomousWorkSettingsStatus);
+
+  const handleScheduleTimeChange = (value: string) => {
+    // A half-typed field reports "" or an impossible hour; there is nothing to
+    // save until it is a real time again.
+    const scheduleTime: ScheduleTime | null = parseScheduleTimeInputValue(value);
+    if (scheduleTime === null) return;
+    onAutonomousWorkSettingsChange({ ...autonomousWorkSettings, scheduleTime });
+  };
+
   return (
     <PopupFrame>
       <header className="flex items-center gap-1">
@@ -67,14 +96,64 @@ export function SettingsPage({
       </Card>
 
       <Card>
-        <CardContent className="flex flex-col gap-3 pt-3.5">
+        <CardContent className="flex flex-col gap-3.5 pt-3.5">
           <div className="flex flex-col gap-0.5">
             <h2 className="text-sm font-medium">Autonomous work</h2>
             <p className="text-muted-foreground text-xs">
-              A run starts automatically at 2 AM when the week is far enough behind pace. Running it
-              now skips that check and starts the next queued prompt straight away.
+              A run starts automatically at{' '}
+              {describeScheduleTime(autonomousWorkSettings.scheduleTime)} when the week is far
+              enough behind pace.
             </p>
           </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <label htmlFor="schedule-time" className="text-sm">
+              Run at
+            </label>
+            <Input
+              id="schedule-time"
+              type="time"
+              className="w-28"
+              value={formatScheduleTimeInputValue(autonomousWorkSettings.scheduleTime)}
+              onChange={(event) => handleScheduleTimeChange(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="new-projects-directory" className="text-sm">
+              New projects folder
+            </label>
+            <Input
+              id="new-projects-directory"
+              type="text"
+              spellCheck={false}
+              placeholder={DEFAULT_NEW_PROJECTS_DIRECTORY}
+              value={autonomousWorkSettings.newProjectsDirectory}
+              onChange={(event) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  newProjectsDirectory: event.target.value,
+                })
+              }
+            />
+            <p className="text-muted-foreground text-xs">
+              A queued prompt with no <code>REPO:</code> line starts a new repository here, named
+              after the prompt.
+            </p>
+          </div>
+
+          {settingsMessage !== null && (
+            <p
+              role="status"
+              className={
+                isAutonomousWorkSettingsStatusError(autonomousWorkSettingsStatus)
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+            >
+              {settingsMessage}
+            </p>
+          )}
 
           <Button
             variant="outline"
@@ -85,6 +164,10 @@ export function SettingsPage({
             <Play className="size-3.5" aria-hidden="true" />
             Run now
           </Button>
+
+          <p className="text-muted-foreground text-xs">
+            Running now skips the pace check and starts the next queued prompt straight away.
+          </p>
 
           {autonomousWorkMessage !== null && (
             <p

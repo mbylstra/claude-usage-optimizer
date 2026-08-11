@@ -1,0 +1,27 @@
+# Autonomous work queue. Copy this to prompts.txt, which is gitignored:
+#
+#   cp prompts.example.txt prompts.txt
+#
+# Sections are separated by a line of three or more '=' characters. Each section
+# is:
+#
+#   STATUS: todo | completed | error   (required, first line of the section)
+#   REPO: ~/path/to/project            (optional — see below)
+#   <everything else is the prompt, and may span multiple lines>
+#
+# With no REPO line the prompt gets a brand-new repository of its own, created
+# and 'git init'-ed under the new-projects folder set in the extension's
+# Settings screen (~/code by default) and named after the date and the prompt.
+#
+# The scheduler runs the first 'todo' section and rewrites its status to
+# 'completed' (exit 0) or 'error' (anything else). Re-queue a failed item by
+# editing its status back to 'todo'.
+===
+STATUS: todo
+REPO: ~/code/current/claude-usage-optimizer
+Run `just check` and fix any lint, type, or format errors.
+Leave the changes uncommitted for review.
+===
+STATUS: todo
+Create an HTML/JS tic tac toe game with a two-player mode and a simple AI
+opponent. No build step and no dependencies — one page that opens in a browser.
