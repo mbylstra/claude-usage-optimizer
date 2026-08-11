@@ -507,6 +507,53 @@ in `chrome.storage.local`. Nothing reads it yet. It serves two future purposes:
    rolling one creeps forward continuously with utilisation decaying gradually.
    Weekly pace is only meaningful in the fixed case — see the assumption above.
 
+## Security
+
+The nightly job runs `claude -p` with `--permission-mode auto` — the same
+classifier-gated mode an interactive session defaults to, not
+`--dangerously-skip-permissions`. In terms of what Claude is _permitted_ to do,
+this is not a loosening of what you already run in a terminal.
+
+The distinction is whether anything is judging the actions at all. Under `auto`
+every tool call still goes through the permission layer: your allow and deny
+rules apply, and a classifier waves through the calls it reads as low-risk and
+stops on the ones it does not — so `auto` is really "don't interrupt me for the
+routine things", not "don't check". `--dangerously-skip-permissions` removes
+that layer outright; there is nothing left to consult, no rule to hit and no
+call it would decline. The gap between them is exactly the set of actions the
+classifier would have refused, which for an unattended run is the only thing
+standing between a bad prompt and the rest of your disk.
+
+At the OS level it is narrower, which is the opposite of how granting a folder
+to a binary feels. The intuition to check is that ticking `~/Documents` for the
+private `uv` hands it something it did not have before — but compare it against
+the alternative, which is running `uv` from a terminal. There it is attributed
+to Terminal or iTerm and inherits *their* grants, and those are typically
+already wide: whatever you have ever approved for your terminal, for anything
+that terminal has ever launched. Against that baseline the re-signed copy is a
+reduction. It is a separate TCC client holding only the folders you ticked for
+it, nothing else inherits them, and the uv on your `PATH` is unaffected in
+either direction — see [Protected folders](#protected-folders).
+
+What is genuinely new is not the breadth but the absence of a person: those
+grants get exercised at 2 AM by a prompt you wrote days ago. That is an argument
+about supervision, below, not about reach.
+
+Nor can the extension make Claude do anything new: the native host answers a
+fixed set of messages, with no path for arbitrary commands, and the work comes
+from `prompts.txt`, which you write by hand.
+
+What genuinely differs is supervision. An interactive session has you reading
+the stream with Esc under your thumb; a 2 AM run has nobody. `-p` has no turn
+boundary, so a classifier denial persists for the rest of the run and repeated
+denials abort it rather than asking you. It fails closed — but no one is there
+to approve a block that was wrong, either.
+
+Note also what none of this covers: `~/.ssh`, `~/.aws` and `~/.claude` are not
+TCC-protected, so they are readable here exactly as they are from any terminal.
+Making them off-limits takes a `permissions.deny` rule in Claude Code's own
+settings, the only layer in this stack that can.
+
 ## Privacy
 
 Everything stays on your machine. The extension talks to claude.ai and nothing
