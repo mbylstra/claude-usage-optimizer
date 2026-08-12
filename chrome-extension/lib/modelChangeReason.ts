@@ -1,20 +1,31 @@
-import { paceTone } from './paceTone';
+import { paceDescription } from './paceDescription';
 import { findWindowStatus } from './usagePace';
-import type { DerivedWindowStatus } from './usageTypes';
+import {
+  USAGE_WINDOW_LABELS,
+  type ActiveWindowStatus,
+  type DerivedWindowStatus,
+} from './usageTypes';
 import type { SuggestedModel } from './suggestedModel';
+
+const MODEL_LABELS: Record<SuggestedModel, string> = {
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+  haiku: 'Haiku',
+};
 
 /**
  * Explain why a model recommendation changed, so users understand which usage
  * window drove the change.
+ *
+ * States the same "1h 12m ahead/behind pace" gap the usage card shows, rather
+ * than a vague "critical" or "healthy" label — a duration is something the
+ * user can act on without having to cross-reference the popup.
  */
 export function deriveModelChangeReason(
   previousModel: string | null,
   newModel: SuggestedModel,
   windows: DerivedWindowStatus[],
 ): string {
-  const fiveHourStatus = findWindowStatus(windows, 'fiveHour');
-  const weeklyStatus = findWindowStatus(windows, 'sevenDay');
-
   if (previousModel === null) {
     return 'Initial recommendation';
   }
@@ -23,16 +34,34 @@ export function deriveModelChangeReason(
     return 'Recommendation unchanged';
   }
 
-  const fiveHourTone = fiveHourStatus?.isActive ? paceTone(fiveHourStatus) : null;
-  const weeklyTone = weeklyStatus?.isActive ? paceTone(weeklyStatus) : null;
+  const fiveHourStatus = activeStatus(findWindowStatus(windows, 'fiveHour'));
+  const weeklyStatus = activeStatus(findWindowStatus(windows, 'sevenDay'));
 
-  const isMovingToBetter = isBetterModel(newModel, previousModel);
+  const gaps = [
+    fiveHourStatus && gapPhrase('fiveHour', fiveHourStatus),
+    weeklyStatus && gapPhrase('sevenDay', weeklyStatus),
+  ].filter((gap): gap is string => Boolean(gap));
 
+  const action = describeAction(isBetterModel(newModel, previousModel), newModel);
+
+  return gaps.length === 0 ? action : `${gaps.join(', ')} — ${action}`;
+}
+
+function activeStatus(status: DerivedWindowStatus | undefined): ActiveWindowStatus | null {
+  return status?.isActive ? status : null;
+}
+
+function gapPhrase(kind: ActiveWindowStatus['kind'], status: ActiveWindowStatus): string {
+  return `${USAGE_WINDOW_LABELS[kind]} ${paceDescription(status.paceDeltaMs)}`;
+}
+
+function describeAction(isMovingToBetter: boolean, newModel: SuggestedModel): string {
   if (isMovingToBetter) {
-    return deriveImprovement(fiveHourTone, weeklyTone, newModel);
-  } else {
-    return deriveConservation(fiveHourTone, weeklyTone, newModel);
+    return newModel === 'opus' ? 'try Opus' : `switch to ${MODEL_LABELS[newModel]}`;
   }
+  return newModel === 'haiku'
+    ? 'switch to Haiku to conserve'
+    : `switch to ${MODEL_LABELS[newModel]}`;
 }
 
 function isBetterModel(modelA: string, modelB: string): boolean {
@@ -40,72 +69,4 @@ function isBetterModel(modelA: string, modelB: string): boolean {
   const rankA = modelRank[modelA as SuggestedModel] ?? -1;
   const rankB = modelRank[modelB as SuggestedModel] ?? -1;
   return rankA > rankB;
-}
-
-function deriveImprovement(
-  fiveHourTone: string | null,
-  weeklyTone: string | null,
-  newModel: SuggestedModel,
-): string {
-  const isFiveHourHealthy = !['aheadSlight', 'aheadModerate', 'aheadSevere'].includes(
-    fiveHourTone || '',
-  );
-  const isWeeklyHealthy = !['aheadSlight', 'aheadModerate', 'aheadSevere'].includes(
-    weeklyTone || '',
-  );
-
-  if (isFiveHourHealthy && isWeeklyHealthy) {
-    if (newModel === 'opus') {
-      return 'Usage back on track, try Opus';
-    }
-    return 'Usage improving';
-  }
-
-  if (newModel === 'sonnet') {
-    if (isFiveHourHealthy && !isWeeklyHealthy) {
-      return '5-hour session is healthy, weekly pace improving';
-    }
-    if (!isFiveHourHealthy && isWeeklyHealthy) {
-      return 'Weekly pace is healthy, 5-hour session improving';
-    }
-    return 'Usage improving';
-  }
-
-  return 'Usage improving';
-}
-
-function deriveConservation(
-  fiveHourTone: string | null,
-  weeklyTone: string | null,
-  newModel: SuggestedModel,
-): string {
-  const fiveHourSevere = fiveHourTone === 'aheadSevere';
-  const weeklySevere = weeklyTone === 'aheadSevere';
-
-  if (newModel === 'haiku') {
-    if (fiveHourSevere && weeklySevere) {
-      return 'Both windows at critical pace — switch to Haiku to conserve';
-    }
-    if (fiveHourSevere) {
-      return '5-hour session at critical pace — switch to Haiku to conserve';
-    }
-    if (weeklySevere) {
-      return 'Weekly usage at critical pace — switch to Haiku to conserve';
-    }
-    return 'Usage accelerating — switch to Haiku to conserve';
-  }
-
-  if (newModel === 'sonnet') {
-    if (fiveHourTone === 'aheadModerate' || fiveHourTone === 'aheadSlight') {
-      if (weeklyTone === 'aheadModerate' || weeklyTone === 'aheadSlight') {
-        return 'Both windows approaching limit — switch to Sonnet';
-      }
-      return '5-hour session approaching limit — switch to Sonnet';
-    }
-    if (weeklyTone === 'aheadModerate' || weeklyTone === 'aheadSlight') {
-      return 'Weekly usage approaching limit — switch to Sonnet';
-    }
-  }
-
-  return 'Usage pattern changed';
 }
