@@ -103,8 +103,11 @@ PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", -2 * MI
 # this percentage, waiting it out would mean sitting idle for up to five hours,
 # so the run ends instead.
 FIVE_HOUR_EXHAUSTED_PERCENT = environment_int("AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT", 100)
-# A wedged unattended session must not run until morning.
-CLAUDE_TIMEOUT_SECONDS = environment_int("AUTONOMOUS_WORK_TIMEOUT_SECONDS", 3600)
+# A wedged unattended session must not run until morning. There is no way to
+# tell a stuck prompt from a slow one — this is a flat ceiling on wall-clock
+# time, not an inactivity timeout — so it is set to the longest a prompt
+# should legitimately ever run: one five-hour session window.
+CLAUDE_MAX_RUN_DURATION_SECONDS = environment_int("AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS", 5 * 3600)
 # Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
 # which is tuned for interactive use and has already silently switched a nightly
 # run to Haiku. The whole point is to spend the weekly window, so the model this
@@ -734,14 +737,14 @@ def run_claude(
 
         # A wedged session must not run until morning, and `Popen` has no timeout
         # of its own once we are reading its output line by line.
-        timed_out = False
+        ran_too_long = False
 
-        def stop_for_timeout() -> None:
-            nonlocal timed_out
-            timed_out = True
+        def kill_for_max_duration() -> None:
+            nonlocal ran_too_long
+            ran_too_long = True
             process.kill()
 
-        watchdog = threading.Timer(CLAUDE_TIMEOUT_SECONDS, stop_for_timeout)
+        watchdog = threading.Timer(CLAUDE_MAX_RUN_DURATION_SECONDS, kill_for_max_duration)
         watchdog.daemon = True
         watchdog.start()
 
@@ -771,8 +774,8 @@ def run_claude(
         finally:
             watchdog.cancel()
 
-        if timed_out:
-            log_message(f"Prompt timed out after {CLAUDE_TIMEOUT_SECONDS}s and was killed")
+        if ran_too_long:
+            log_message(f"Prompt exceeded the {CLAUDE_MAX_RUN_DURATION_SECONDS}s max run time and was killed")
             return 1, "timeout"
 
         log_message(f"Prompt finished with exit code {exit_code}")
