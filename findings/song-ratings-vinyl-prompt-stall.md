@@ -131,11 +131,15 @@ missing `caffeinate` logs a warning rather than failing the run.
 Separately, this machine's own AC power settings are the underlying reason
 sleep was happening at all: `pmset -g custom` showed `sleep 1` (idle sleep
 after one minute) on AC, independent of `displaysleep` (10 minutes). Running
-`sudo pmset -c sleep 0` disables AC idle sleep while leaving `displaysleep`
-alone, so the monitor still turns off — that machine-level change is still
-**pending**, since it needs an interactive sudo password. The `caffeinate`
-wrapper covers the run either way, including if that setting is ever reset or
-the job runs on a machine with different power settings.
+`sudo pmset -c sleep 0` would disable AC idle sleep while leaving
+`displaysleep` alone, so the monitor still turns off — but this is no longer
+considered necessary. `caffeinate -s` overrides the idle-sleep timer entirely
+while its assertion is held, whatever that timer is set to, so the `pmset`
+change would be pure redundancy on top of it. The one thing `caffeinate -s`
+does not override is running on battery — per `man caffeinate`, `-s` is a
+no-op off AC — but this machine is only ever on AC power during these
+overnight automated runs, so that gap does not apply here. Decision: leave
+`pmset` untouched; `caffeinate` alone is the fix.
 
 ## Update 2026-08-12: detect the CLI's own truncation message
 
@@ -158,6 +162,12 @@ needed on top of a plain substring check.
 
 This only catches _this_ failure mode by name. It does not generalize to
 other ways a turn could be cut short silently (see below).
+
+**Status 2026-08-12: unverified.** The `caffeinate` fix has not yet run through
+a real overnight session — it landed the same day as the failures above but
+after the night's queue had already finished. Next confirmation point is
+whether tonight's run (2026-08-13) completes without a sleep-triggered error or
+silent background-task truncation.
 
 ## Not yet addressed
 
