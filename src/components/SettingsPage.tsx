@@ -29,6 +29,10 @@ import {
 } from '@/lib/scheduleTime';
 import { DEFAULT_NEW_PROJECTS_DIRECTORY, type AutonomousWorkSettings } from '@/lib/settingsTypes';
 
+/** Clamped so a stray edit cannot save an interval that would never trigger the watchdog. */
+const MIN_MAX_PROMPT_DURATION_HOURS = 0.5;
+const MAX_MAX_PROMPT_DURATION_HOURS = 24;
+
 /**
  * The settings screen, shown inside the popup in place of the usage view.
  *
@@ -77,6 +81,22 @@ export function SettingsPage({
     const scheduleTime: ScheduleTime | null = parseScheduleTimeInputValue(value);
     if (scheduleTime === null) return;
     onAutonomousWorkSettingsChange({ ...autonomousWorkSettings, scheduleTime });
+  };
+
+  const handleMaxPromptDurationHoursChange = (value: string) => {
+    // A half-typed field reports ""; there is nothing to save until it parses.
+    const parsedHours = Number.parseFloat(value);
+    if (
+      !Number.isFinite(parsedHours) ||
+      parsedHours < MIN_MAX_PROMPT_DURATION_HOURS ||
+      parsedHours > MAX_MAX_PROMPT_DURATION_HOURS
+    ) {
+      return;
+    }
+    onAutonomousWorkSettingsChange({
+      ...autonomousWorkSettings,
+      maxPromptDurationHours: parsedHours,
+    });
   };
 
   return (
@@ -182,6 +202,27 @@ export function SettingsPage({
             </SelectPrimitive.Root>
             <p className="text-muted-foreground text-xs">
               The Claude model to use when running queued prompts automatically.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="max-prompt-duration-hours" className="text-sm">
+              Max duration per prompt (hours)
+            </label>
+            <Input
+              id="max-prompt-duration-hours"
+              type="number"
+              className="w-28"
+              min={MIN_MAX_PROMPT_DURATION_HOURS}
+              max={MAX_MAX_PROMPT_DURATION_HOURS}
+              step={0.5}
+              value={autonomousWorkSettings.maxPromptDurationHours}
+              onChange={(event) => handleMaxPromptDurationHoursChange(event.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              Hours before a single stuck <code>claude</code> call is killed. This does not limit
+              the nightly job itself — it keeps going, prompt after prompt, until the queue is
+              empty, it is back on pace, or the session window runs out.
             </p>
           </div>
 

@@ -64,6 +64,17 @@ def environment_int(name: str, default: int) -> int:
         return default
 
 
+def environment_int_override(name: str) -> int | None:
+    """Like `environment_int`, but with no static default — the caller computes one."""
+    raw_value = os.environ.get(name)
+    if not raw_value:
+        return None
+    try:
+        return int(raw_value)
+    except ValueError:
+        return None
+
+
 # All tunable without rebuilding the extension or editing this file.
 # Written by the native-messaging host (`usage-host.py`), not by a download.
 USAGE_SNAPSHOT_FILE = environment_path(
@@ -103,19 +114,22 @@ PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", -2 * MI
 # this percentage, waiting it out would mean sitting idle for up to five hours,
 # so the run ends instead.
 FIVE_HOUR_EXHAUSTED_PERCENT = environment_int("AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT", 100)
-# A wedged unattended session must not run until morning. There is no way to
-# tell a stuck prompt from a slow one — this is a flat ceiling on wall-clock
-# time, not an inactivity timeout — so it is set to the longest a prompt
-# should legitimately ever run: one five-hour session window.
-CLAUDE_MAX_RUN_DURATION_SECONDS = environment_int("AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS", 5 * 3600)
+# The environment variable wins first, then the settings (set by the extension
+# in hours), then the default — same precedence as the model, just below.
+_settings = autonomous_work_settings.read_settings()
+# A single wedged `claude` call must not run until morning — this bounds one
+# prompt's invocation, not the nightly session, which can run many prompts in a
+# row and is bounded separately above, by pace and the usage window. There is no
+# way to tell a stuck prompt from a slow one, so this is a flat ceiling on
+# wall-clock time, not an inactivity timeout.
+CLAUDE_MAX_PROMPT_DURATION_SECONDS = environment_int_override(
+    "AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS"
+) or int(_settings.max_prompt_duration_hours * 3600)
 # Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
 # which is tuned for interactive use and has already silently switched a nightly
 # run to Haiku. The whole point is to spend the weekly window, so the model this
 # job runs on should not be a side effect of an unrelated interactive preference.
 # Only the main thread is pinned — a subagent that names its own model keeps it.
-# The environment variable wins first, then the settings (set by the extension),
-# then the default.
-_settings = autonomous_work_settings.read_settings()
 _model_name = os.environ.get("AUTONOMOUS_WORK_MODEL") or _settings.model
 _MODEL_ID_MAP = {
     "haiku": "claude-haiku-4-5-20251001",
@@ -744,7 +758,7 @@ def run_claude(
             ran_too_long = True
             process.kill()
 
-        watchdog = threading.Timer(CLAUDE_MAX_RUN_DURATION_SECONDS, kill_for_max_duration)
+        watchdog = threading.Timer(CLAUDE_MAX_PROMPT_DURATION_SECONDS, kill_for_max_duration)
         watchdog.daemon = True
         watchdog.start()
 
@@ -775,7 +789,7 @@ def run_claude(
             watchdog.cancel()
 
         if ran_too_long:
-            log_message(f"Prompt exceeded the {CLAUDE_MAX_RUN_DURATION_SECONDS}s max run time and was killed")
+            log_message(f"Prompt exceeded the {CLAUDE_MAX_PROMPT_DURATION_SECONDS}s max run time and was killed")
             return 1, "timeout"
 
         log_message(f"Prompt finished with exit code {exit_code}")

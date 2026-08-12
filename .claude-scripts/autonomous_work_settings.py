@@ -50,6 +50,11 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
 DEFAULT_MODEL = "opus"
+# Hours, not seconds: the settings screen speaks in hours, and
+# `run-autonomous-work.py` is the one place that converts to seconds. A cap on a
+# single `claude` call, not on the nightly session — a session can run many
+# prompts in a row and is bounded separately, by pace and the usage window.
+DEFAULT_MAX_PROMPT_DURATION_HOURS = 5.0
 
 
 def _environment_path(name: str, default: Path) -> Path:
@@ -85,6 +90,7 @@ class AutonomousWorkSettings:
     schedule_minute: int = DEFAULT_SCHEDULE_MINUTE
     new_projects_directory: str = DEFAULT_NEW_PROJECTS_DIRECTORY
     model: str = DEFAULT_MODEL
+    max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
 
     @property
     def new_projects_path(self) -> Path:
@@ -111,6 +117,19 @@ def _coerce_hour_or_minute(value: object, default: int, upper_bound: int) -> int
     if not 0 <= whole_value <= upper_bound:
         return default
     return whole_value
+
+
+def _coerce_positive_hours(value: object, default: float) -> float:
+    """Like `_coerce_hour_or_minute`, but for a positive, possibly-fractional hour count.
+
+    The file is user-visible and written by a browser extension, so a wrong type
+    or a non-positive number is a plausible state rather than an impossible one.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    if value <= 0:
+        return default
+    return float(value)
 
 
 def parse_settings(settings_data: object) -> AutonomousWorkSettings:
@@ -141,6 +160,9 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         ),
         new_projects_directory=new_projects_directory,
         model=model,
+        max_prompt_duration_hours=_coerce_positive_hours(
+            settings_data.get("maxPromptDurationHours"), DEFAULT_MAX_PROMPT_DURATION_HOURS
+        ),
     )
 
 
@@ -163,6 +185,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "scheduleMinute": settings.schedule_minute,
         "newProjectsDirectory": settings.new_projects_directory,
         "model": settings.model,
+        "maxPromptDurationHours": settings.max_prompt_duration_hours,
     }
 
     temporary_path = None
@@ -319,6 +342,7 @@ def main() -> int:
     print("Scheduled run:      {}".format(settings.describe_schedule()))
     print("New projects in:    {}".format(settings.new_projects_directory))
     print("Model for runs:     {}".format(settings.model))
+    print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Settings file:      {}".format(SETTINGS_FILE))
     print(
         "Launch agent:       {}".format(

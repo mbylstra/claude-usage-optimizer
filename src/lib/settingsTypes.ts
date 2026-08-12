@@ -17,6 +17,14 @@ export interface AutonomousWorkSettings {
   newProjectsDirectory: string;
   /** The Claude model to use for autonomous runs (haiku, sonnet, opus). */
   model: 'haiku' | 'sonnet' | 'opus';
+  /**
+   * The longest a single queued prompt may run before it is killed, in hours.
+   * There is no way to tell a stuck prompt from a slow one, so this is a flat
+   * ceiling rather than an inactivity timeout — converted to seconds only where
+   * the scheduler consumes it. Distinct from a *session*, which can run many
+   * prompts in a row and is bounded separately, by pace and the usage window.
+   */
+  maxPromptDurationHours: number;
 }
 
 export interface ExtensionSettings {
@@ -31,11 +39,13 @@ export interface ExtensionSettings {
 
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
 export const DEFAULT_MODEL = 'opus';
+export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
 
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
   newProjectsDirectory: DEFAULT_NEW_PROJECTS_DIRECTORY,
   model: DEFAULT_MODEL,
+  maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
 };
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -60,7 +70,12 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
 
   const autonomousWorkValue = (
     typeof autonomousWork === 'object' && autonomousWork !== null ? autonomousWork : {}
-  ) as { scheduleTime?: unknown; newProjectsDirectory?: unknown; model?: unknown };
+  ) as {
+    scheduleTime?: unknown;
+    newProjectsDirectory?: unknown;
+    model?: unknown;
+    maxPromptDurationHours?: unknown;
+  };
 
   const newProjectsDirectory =
     typeof autonomousWorkValue.newProjectsDirectory === 'string' &&
@@ -72,6 +87,13 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     ? (autonomousWorkValue.model as 'haiku' | 'sonnet' | 'opus')
     : DEFAULT_MODEL;
 
+  const maxPromptDurationHours =
+    typeof autonomousWorkValue.maxPromptDurationHours === 'number' &&
+    Number.isFinite(autonomousWorkValue.maxPromptDurationHours) &&
+    autonomousWorkValue.maxPromptDurationHours > 0
+      ? autonomousWorkValue.maxPromptDurationHours
+      : DEFAULT_MAX_PROMPT_DURATION_HOURS;
+
   return {
     notificationsEnabled:
       typeof notificationsEnabled === 'boolean'
@@ -81,6 +103,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       scheduleTime: normaliseScheduleTime(autonomousWorkValue.scheduleTime),
       newProjectsDirectory,
       model,
+      maxPromptDurationHours,
     },
   };
 }

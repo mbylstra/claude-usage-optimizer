@@ -509,7 +509,8 @@ var U = "~/code", W = "opus", G = {
 	autonomousWork: {
 		scheduleTime: V,
 		newProjectsDirectory: U,
-		model: W
+		model: W,
+		maxPromptDurationHours: 5
 	}
 };
 function K(e) {
@@ -518,13 +519,14 @@ function K(e) {
 		"haiku",
 		"sonnet",
 		"opus"
-	].includes(r.model) ? r.model : W;
+	].includes(r.model) ? r.model : W, o = typeof r.maxPromptDurationHours == "number" && Number.isFinite(r.maxPromptDurationHours) && r.maxPromptDurationHours > 0 ? r.maxPromptDurationHours : 5;
 	return {
 		notificationsEnabled: typeof t == "boolean" ? t : G.notificationsEnabled,
 		autonomousWork: {
 			scheduleTime: Ke(r.scheduleTime),
 			newProjectsDirectory: i,
-			model: a
+			model: a,
+			maxPromptDurationHours: o
 		}
 	};
 }

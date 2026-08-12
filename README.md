@@ -447,7 +447,8 @@ Every knob is an environment variable rather than a code edit —
 `AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default −2h),
 `AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT` (default 100 — the session-window
 usage that ends a session instead of moving on to the next `todo`),
-`AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS` (default 5 hours, per prompt),
+`AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS` (default 5 hours, per prompt —
+also settable in hours from the extension's settings screen),
 `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which wins over the Settings screen, for a
 one-off run), and file-path overrides for the queue, log, snapshot and settings.
 
