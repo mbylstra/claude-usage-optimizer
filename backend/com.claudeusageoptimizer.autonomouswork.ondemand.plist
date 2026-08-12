@@ -37,7 +37,7 @@
        "claude-usage-autonomous-work" instead of "env". -->
   <key>ProgramArguments</key>
   <array>
-    <string>__PROJECT_ROOT__/.claude-scripts/claude-usage-autonomous-work</string>
+    <string>__PROJECT_ROOT__/backend/claude-usage-autonomous-work</string>
     <string>--force</string>
   </array>
 
@@ -45,9 +45,9 @@
   <string>__PROJECT_ROOT__</string>
 
   <key>StandardOutPath</key>
-  <string>__PROJECT_ROOT__/.claude-scripts/system.log</string>
+  <string>__PROJECT_ROOT__/backend/system.log</string>
   <key>StandardErrorPath</key>
-  <string>__PROJECT_ROOT__/.claude-scripts/system.log</string>
+  <string>__PROJECT_ROOT__/backend/system.log</string>
 
   <key>EnvironmentVariables</key>
   <dict>

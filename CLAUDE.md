@@ -3,12 +3,32 @@
 A Chrome MV3 extension showing Claude.ai usage limits with a **pace** indicator —
 whether you are ahead of or behind an even burn for each window.
 
+## Top-level layout
+
+Two top-level directories hold code; the rest is docs and the work queue.
+
+```
+chrome-extension/   the Chrome MV3 extension — see below. Owns node_modules/,
+                     package.json and the whole Vite/TS/eslint/prettier toolchain,
+                     since none of that applies to backend/.
+backend/             the native-messaging host + autonomous-work scheduler —
+                     see "Autonomous work scheduler" below. stdlib-only Python,
+                     deliberately dependency-free.
+findings/            postmortems
+marketing/           the Chrome Web Store listing assets
+plans/               design docs
+```
+
+`justfile` and `CLAUDE.md` stay at the repository root, as does `prompts.txt`
+(explained below) — everything else that is specific to one side lives inside
+its directory.
+
 ## Architecture — the rule that matters
 
 **`chrome.*` is never called from a React component.**
 
 ```
-src/
+chrome-extension/
   lib/          pure TypeScript, zero browser-extension dependencies
                 pace maths, formatters, view-model construction, toolbar title,
                 types
@@ -41,7 +61,7 @@ to do.
 ```sh
 just setup           # everything a fresh clone needs, in one command
 just check           # typecheck + lint + format-check — the gate
-just build           # production build into dist/
+just build           # production build into chrome-extension/dist/
 just --list          # everything else
 ```
 
@@ -100,7 +120,7 @@ duration when both ends are known.
 
 ## Autonomous work scheduler
 
-`.claude-scripts/` holds a launchd job that works through queued Claude Code
+`backend/` holds a launchd job that works through queued Claude Code
 prompts starting at 2 AM (configurable — see below), but **only when the weekly
 window is behind an even burn** — the point is to keep subscription burn-rate
 level, so being on pace means nothing runs and nothing is spent. Design
@@ -117,8 +137,8 @@ check it exists to keep re-evaluating, so it runs exactly one prompt.
 
 The extension is the data source. After each successful refresh
 `exportUsageSnapshot` hands the figures to a **native-messaging host**,
-`.claude-scripts/usage-host.py`, which writes
-`.claude-scripts/claude-usage.json`.
+`backend/usage-host.py`, which writes
+`backend/claude-usage.json`.
 
 MV3 has no filesystem API, and the obvious escape hatch — `chrome.downloads` —
 was tried first and abandoned: Chrome can put a confirmation dialog in front of a
@@ -136,7 +156,7 @@ just sees the host die.
 ```sh
 just install-usage-host          # register the native host (needs the extension built)
 just test-usage-host             # exercise the host directly, without Chrome
-just extension-id                # the ID Chrome derives from dist/
+just extension-id                # the ID Chrome derives from chrome-extension/dist/
 just uninstall-usage-host
 
 just check-folder-access         # what the nightly run can actually read
@@ -283,12 +303,12 @@ what every run start does when it trims the file — and re-reads from the top.
 
 The host manifest names one `allowed_origins` extension ID. For an unpacked
 extension Chrome derives that ID from the absolute load path, which
-`extension-id.py` recomputes — so moving or renaming `dist/` changes the ID and
+`extension-id.py` recomputes — so moving or renaming `chrome-extension/dist/` changes the ID and
 silently breaks the connection. Re-run `just install-usage-host` if that happens,
 or pass an explicit ID as an argument.
 
 **Editing the queue.** `prompts.txt` at the repository root is user-editable —
-deliberately at the top level rather than in `.claude-scripts/`, being the only
+deliberately at the top level rather than in `backend/`, being the only
 file here meant for regular hand-editing. Sections split on a line of `===`;
 each has a required `STATUS: todo|completed|error`, an optional `REPO:`, and a
 multi-line prompt. The scheduler takes the first `todo`, runs it, rewrites that
@@ -309,7 +329,7 @@ made every "build me an X" prompt contend with the last one's leftovers.
 **Settings the extension owns but launchd must read.** The scheduled time and
 the new-projects folder are edited in the popup, live in `chrome.storage` — and
 neither launchd nor `run-autonomous-work.py` can see that. So the native host
-mirrors them to `.claude-scripts/autonomous-work-settings.json`, and
+mirrors them to `backend/autonomous-work-settings.json`, and
 `autonomous_work_settings.py` is the single module that knows that file's shape.
 
 That module is imported by `usage-host.py`, so it inherits the host's
@@ -343,7 +363,7 @@ an inactive weekly window is genuinely no data rather than a stale reading.
 
 **launchd starts jobs with a bare environment.** `uv` and `claude` live in
 `~/.local/bin`, which is why the plist sets `PATH` explicitly. A missing entry
-surfaces only as "command not found" in `.claude-scripts/system.log`.
+surfaces only as "command not found" in `backend/system.log`.
 
 **Protected folders — measured, and counter-intuitive.** `~/Desktop`,
 `~/Documents`, `~/Downloads` and iCloud Drive are gated by TCC. The failure
@@ -366,7 +386,7 @@ available, because access is attributed to Terminal or iTerm and their grants
 pass down. Any test of this run from a shell is worthless.
 
 **The grant is scoped by code signature, and that is the whole mechanism.** The
-job runs `.claude-scripts/bin/claude-usage-optimizer-uv`, a copy of uv re-signed
+job runs `backend/bin/claude-usage-optimizer-uv`, a copy of uv re-signed
 with the identifier `com.claudeusageoptimizer.autonomouswork.uv`. Re-signing is what
 makes it a separate client from the uv on `PATH`, which has three consequences
 worth knowing before touching any of it:
@@ -408,9 +428,9 @@ auto`. Notably it does **not** pass `--bare`, which would authenticate with
 
 - **Language**: TypeScript with strict mode enabled
 - **Styling**: Tailwind CSS v4 with the Vite plugin, CSS-first config in
-  `src/index.css`
+  `chrome-extension/index.css`
 - **UI Components**: shadcn/ui-style primitives, hand-written in
-  `src/components/ui/`
+  `chrome-extension/components/ui/`
 - **Icons**: Lucide React
 - **Build Tool**: Vite with React plugin
 

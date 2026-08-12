@@ -24,11 +24,15 @@
     "types": ["chrome", "node", "vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./*"]
     }
   },
   "include": [
-    "src",
+    "lib",
+    "extension",
+    "components",
+    "popup",
+    "runLog",
     "vite.config.ts",
     "vite.config.serviceWorker.ts",
     "vitest.config.ts",

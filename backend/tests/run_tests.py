@@ -9,7 +9,7 @@
 (run-autonomous-work.py) requires Python >=3.10, same as this file declares
 above, while the system `python3` on a fresh Mac is often older. This mirrors
 how `run-autonomous-work.py` itself is invoked — see
-`.claude-scripts/claude-usage-autonomous-work`.
+`backend/claude-usage-autonomous-work`.
 """
 
 from __future__ import annotations

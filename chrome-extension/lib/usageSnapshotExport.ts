@@ -5,7 +5,7 @@ import type { PaceStatus, UsageSnapshot, UsageWindowKind } from './usageTypes';
  * The JSON handed to the autonomous-work scheduler via
  * `~/Downloads/claude-usage.json`.
  *
- * This file is a contract with `.claude-scripts/run-autonomous-work.py`, so the
+ * This file is a contract with `backend/run-autonomous-work.py`, so the
  * field names are deliberately stable and flat — the reader is a Python script,
  * not the popup. Every figure is nullable because a window the API did not
  * report is a real, expected state (see `UsageWindowSnapshot.resetsAt`), and the

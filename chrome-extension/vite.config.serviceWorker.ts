@@ -11,7 +11,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@': fileURLToPath(new URL('.', import.meta.url)),
     },
   },
   build: {
@@ -19,7 +19,7 @@ export default defineConfig({
     emptyOutDir: false,
     target: 'esnext',
     lib: {
-      entry: fileURLToPath(new URL('./src/extension/serviceWorker.ts', import.meta.url)),
+      entry: fileURLToPath(new URL('./extension/serviceWorker.ts', import.meta.url)),
       formats: ['es'],
       fileName: () => 'serviceWorker.js',
     },

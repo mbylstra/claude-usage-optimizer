@@ -5,6 +5,7 @@ default:
     @just --list
 
 # Install dependencies
+[working-directory('chrome-extension')]
 install:
     pnpm install
 
@@ -18,7 +19,7 @@ setup: install build install-private-uv install-usage-host install-autonomous-wo
       cp prompts.example.txt prompts.txt
       echo "Created prompts.txt from prompts.example.txt"
     fi
-    extension_id="$(python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist")"
+    extension_id="$(python3 backend/extension-id.py "{{ justfile_directory() }}/chrome-extension/dist")"
     echo
     echo "Done. The nightly run is scheduled — 'just autonomous-settings' for the"
     echo "time, 'just uninstall-autonomous-work' to unschedule it."
@@ -27,7 +28,7 @@ setup: install build install-private-uv install-usage-host install-autonomous-wo
     echo
     echo "   Load the extension. chrome://extensions, enable Developer mode,"
     echo "   'Load unpacked', and choose:"
-    echo "       {{ justfile_directory() }}/dist"
+    echo "       {{ justfile_directory() }}/chrome-extension/dist"
     echo "   Then reload it, so it picks up the native host."
     echo "   If the popup cannot reach the host, re-run 'just install-usage-host'"
     echo "   (safe any time). Still stuck? Chrome is showing an ID other than"
@@ -42,35 +43,43 @@ setup: install build install-private-uv install-usage-host install-autonomous-wo
     echo "To check afterwards: just check-folder-access"
 
 # Vite dev server for the popup UI (no chrome.* APIs available)
+[working-directory('chrome-extension')]
 dev:
     pnpm exec vite
 
 # The run-log window UI, driven by fixture events — no extension, no host, no run
+[working-directory('chrome-extension')]
 run-log-preview:
     pnpm exec vite --open /run-log-preview.html
 
-# Production build of the unpacked extension into dist/
+# Production build of the unpacked extension into chrome-extension/dist/
+[working-directory('chrome-extension')]
 build:
     pnpm exec vite build
     pnpm exec vite build --config vite.config.serviceWorker.ts
 
 # Lint
+[working-directory('chrome-extension')]
 lint:
     pnpm exec eslint .
 
 # Rewrite files with Prettier
+[working-directory('chrome-extension')]
 format:
     pnpm exec prettier --write .
 
 # Fail if anything is not Prettier-formatted
+[working-directory('chrome-extension')]
 format-check:
     pnpm exec prettier --check .
 
 # Type-check without emitting
+[working-directory('chrome-extension')]
 typecheck:
     pnpm exec tsc --noEmit
 
 # Regenerate the toolbar icons in public/icons/
+[working-directory('chrome-extension')]
 icons:
     pnpm exec node scripts/generateIcons.js
 
@@ -80,7 +89,7 @@ check: typecheck lint format-check
 ### Autonomous work — see plans/autonomous-credit-utilization.md
 
 # The same entry point launchd uses, so a manual run exercises the real path
-autonomous_script := ".claude-scripts/claude-usage-autonomous-work"
+autonomous_script := "backend/claude-usage-autonomous-work"
 launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
 launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
 # The unscheduled twin the popup's "Run now" kickstarts, so that run belongs to
@@ -93,9 +102,9 @@ on_demand_plist := home_directory() / "Library/LaunchAgents" / on_demand_label +
 # unbundled binary by its filename, and two rows both called "uv" are
 # indistinguishable. Measured to make no difference to what is readable — kept because the
 # grant lands somewhere regardless, and here is no worse. See CLAUDE.md.
-private_uv := justfile_directory() / ".claude-scripts/bin/claude-usage-optimizer-uv"
+private_uv := justfile_directory() / "backend/bin/claude-usage-optimizer-uv"
 
-# Copy uv into .claude-scripts/bin/, once, with its own code-signing identity
+# Copy uv into backend/bin/, once, with its own code-signing identity
 install-private-uv:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -141,7 +150,7 @@ check-folder-access:
       <key>Label</key><string>$label</string>
       <key>ProgramArguments</key><array>
         <string>$uv_path</string><string>run</string><string>--script</string>
-        <string>{{ justfile_directory() }}/.claude-scripts/check-folder-access.py</string>
+        <string>{{ justfile_directory() }}/backend/check-folder-access.py</string>
       </array>
       <key>StandardOutPath</key><string>$work/report.txt</string>
       <key>StandardErrorPath</key><string>$work/report.txt</string>
@@ -177,7 +186,7 @@ autonomous-dry-run:
 # Stop any in-flight run (the scheduler and the claude session it spawned)
 [no-exit-message]
 cancel-autonomous-work:
-    @python3 .claude-scripts/cancel-autonomous-work.py
+    @python3 backend/cancel-autonomous-work.py
 
 # Is a run in flight right now?
 [no-exit-message]
@@ -187,22 +196,22 @@ autonomous-running:
 # Follow the run log live (ctrl-C to stop watching; the run keeps going)
 [no-exit-message]
 autonomous-log lines="40":
-    @touch .claude-scripts/autonomous-work.log
-    @tail -n {{ lines }} -f .claude-scripts/autonomous-work.log
+    @touch backend/autonomous-work.log
+    @tail -n {{ lines }} -f backend/autonomous-work.log
 
 # Follow the raw stream-json events, for when a summary line is not enough
 [no-exit-message]
 autonomous-log-raw lines="10":
-    @touch .claude-scripts/autonomous-work.jsonl
-    @tail -n {{ lines }} -f .claude-scripts/autonomous-work.jsonl
+    @touch backend/autonomous-work.jsonl
+    @tail -n {{ lines }} -f backend/autonomous-work.jsonl
 
 # Start a run and follow it in one go
 [no-exit-message]
 autonomous-run-and-watch:
     #!/usr/bin/env bash
     set -euo pipefail
-    touch .claude-scripts/autonomous-work.log
-    tail -n 0 -f .claude-scripts/autonomous-work.log &
+    touch backend/autonomous-work.log
+    tail -n 0 -f backend/autonomous-work.log &
     tail_pid=$!
     trap 'kill $tail_pid 2>/dev/null || true' EXIT
     {{ autonomous_script }} --force || true
@@ -267,7 +276,7 @@ test-launchd-run timeout="900":
     # of the project does, and only then take the job definition away.
     stop_run_if_still_going() {
       launchctl list "$label" 2>/dev/null | grep -q '"PID"' || return 0
-      python3 .claude-scripts/cancel-autonomous-work.py >/dev/null 2>&1 || true
+      python3 backend/cancel-autonomous-work.py >/dev/null 2>&1 || true
     }
     cleanup() {
       [ -n "$watcher_pid" ] && kill "$watcher_pid" 2>/dev/null || true
@@ -286,8 +295,8 @@ test-launchd-run timeout="900":
     done &
     watcher_pid=$!
 
-    touch .claude-scripts/autonomous-work.log
-    tail -n 0 -f .claude-scripts/autonomous-work.log &
+    touch backend/autonomous-work.log
+    tail -n 0 -f backend/autonomous-work.log &
     tail_pid=$!
 
     launchctl unload "$work/job.plist" 2>/dev/null || true
@@ -346,12 +355,12 @@ test-launchd-run timeout="900":
 # Schedule the nightly run, at whatever time the extension's settings say (2 AM by default)
 install-autonomous-work: install-private-uv
     @command -v claude >/dev/null || { echo "claude not found on PATH"; exit 1; }
-    @python3 .claude-scripts/autonomous_work_settings.py --install
+    @python3 backend/autonomous_work_settings.py --install
 
 # Show the scheduled time and new-projects folder the extension has stored
 [no-exit-message]
 autonomous-settings:
-    @python3 .claude-scripts/autonomous_work_settings.py
+    @python3 backend/autonomous_work_settings.py
 
 # Unschedule the nightly run
 uninstall-autonomous-work:
@@ -372,9 +381,9 @@ native_host_dir := home_directory() / "Library/Application Support/Google/Chrome
 # Print the extension ID Chrome derives from dist/
 [no-exit-message]
 extension-id:
-    @python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist"
+    @python3 backend/extension-id.py "{{ justfile_directory() }}/chrome-extension/dist"
 
-# Register the native host that writes .claude-scripts/claude-usage.json.
+# Register the native host that writes backend/claude-usage.json.
 # Rewrites the manifest from the template every time, so re-running is safe at
 # any point and always produces the same file for the same dist/ path.
 install-usage-host extension_id="":
@@ -382,13 +391,13 @@ install-usage-host extension_id="":
     set -euo pipefail
     extension_id="{{ extension_id }}"
     if [ -z "$extension_id" ]; then
-      extension_id="$(python3 .claude-scripts/extension-id.py "{{ justfile_directory() }}/dist")"
+      extension_id="$(python3 backend/extension-id.py "{{ justfile_directory() }}/chrome-extension/dist")"
     fi
     mkdir -p "{{ native_host_dir }}"
-    chmod +x .claude-scripts/usage-host.py
+    chmod +x backend/usage-host.py
     sed -e 's|__PROJECT_ROOT__|{{ justfile_directory() }}|g' \
         -e "s|__EXTENSION_ID__|$extension_id|g" \
-        ".claude-scripts/{{ native_host_name }}.json" \
+        "backend/{{ native_host_name }}.json" \
         > "{{ native_host_dir }}/{{ native_host_name }}.json"
     echo "Registered {{ native_host_name }} for extension $extension_id"
     echo "Check that ID matches chrome://extensions, then reload the extension."
@@ -401,15 +410,15 @@ uninstall-usage-host:
 # Exercise the native host directly, without Chrome
 [no-exit-message]
 test-usage-host:
-    @python3 .claude-scripts/test-usage-host.py
+    @python3 backend/test-usage-host.py
 
 # Unit tests for the pure logic in run-autonomous-work.py and autonomous_work_settings.py
 [no-exit-message]
 test-autonomous-work:
-    @uv run --script .claude-scripts/tests/run_tests.py
+    @uv run --script backend/tests/run_tests.py
 
 # Zip dist/ for a Chrome Web Store upload
 package: build
     rm -f claude-usage-optimizer.zip
-    cd dist && zip -r ../claude-usage-optimizer.zip . -x '.*'
+    cd chrome-extension/dist && zip -r ../../claude-usage-optimizer.zip . -x '.*'
     @echo "Wrote claude-usage-optimizer.zip"

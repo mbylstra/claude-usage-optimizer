@@ -4,7 +4,7 @@ import type { UsageSnapshot } from '@/lib/usageTypes';
 
 /**
  * Hands each usage snapshot to a native-messaging host, which writes it to
- * `.claude-scripts/claude-usage.json` for the autonomous-work scheduler.
+ * `backend/claude-usage.json` for the autonomous-work scheduler.
  *
  * This replaces an earlier `chrome.downloads` approach. Downloads were the only
  * filesystem route that needs no host installed, but Chrome can put a

@@ -4,7 +4,7 @@
 The Chrome extension owns these settings — they are edited in its Settings
 screen — but launchd and `run-autonomous-work.py` cannot read `chrome.storage`,
 so the native-messaging host mirrors them into
-`.claude-scripts/autonomous-work-settings.json` and this module is the one place
+`backend/autonomous-work-settings.json` and this module is the one place
 that file's shape is known.
 
 Two consumers with incompatible needs meet here, which is why this module is

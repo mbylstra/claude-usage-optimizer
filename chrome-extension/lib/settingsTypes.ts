@@ -5,7 +5,7 @@ import { DEFAULT_SCHEDULE_TIME, normaliseScheduleTime, type ScheduleTime } from 
  * normaliser — no browser APIs, no I/O.
  */
 
-/** Mirrored to `.claude-scripts/autonomous-work-settings.json` by the native host. */
+/** Mirrored to `backend/autonomous-work-settings.json` by the native host. */
 export interface AutonomousWorkSettings {
   /** Local wall-clock time the nightly run fires, if the week is behind pace. */
   scheduleTime: ScheduleTime;

@@ -59,7 +59,7 @@ Then, from the repository root:
 just setup
 ```
 
-One command for the whole thing: dependencies, a build into `dist/`, the
+One command for the whole thing: dependencies, a build into `chrome-extension/dist/`, the
 native-messaging host, `prompts.txt` started from the template, and the nightly job scheduled. It is
 safe to re-run, and it leaves anything already set up alone.
 
@@ -70,7 +70,7 @@ step 1 below. If you ran `just setup` and change your mind,
 `setup` finishes by printing the one step it cannot do for you:
 
 **1. Load the extension.** In Chrome, go to `chrome://extensions`, turn on
-**Developer mode** (top right), click **Load unpacked** and pick the `dist/`
+**Developer mode** (top right), click **Load unpacked** and pick the `chrome-extension/dist/`
 directory. Pin it, and make sure you are signed in to <https://claude.ai>. That
 is the whole popup — no configuration. Then reload it once so it picks up the
 native host. ([More detail](#install-it-locally).)
@@ -166,7 +166,7 @@ Then in Chrome:
 
 1. Go to `chrome://extensions`
 2. Turn on **Developer mode** (top right)
-3. Click **Load unpacked** and select the `dist/` directory
+3. Click **Load unpacked** and select the `chrome-extension/dist/` directory
 4. Pin the extension, and make sure you are signed in to <https://claude.ai>
 
 Data refreshes every 5 minutes in the background, and again whenever you open
@@ -185,10 +185,10 @@ you only want the popup. `just setup` sets up both halves in one command.
 ```sh
 just setup           # everything a fresh clone needs, in one command
 just check           # typecheck + lint + format-check — the gate
-just build           # production build into dist/
+just build           # production build into chrome-extension/dist/
 just dev             # Vite dev server for the popup UI (no chrome.* available)
 just run-log-preview # the run-log window UI, on fixture events
-just package         # zip dist/ for a Web Store upload
+just package         # zip chrome-extension/dist/ for a Web Store upload
 just --list          # everything else
 ```
 
@@ -196,7 +196,7 @@ just --list          # everything else
 
 The half that makes this an _optimizer_ rather than a monitor. Unused weekly
 capacity does not roll over, so headroom you never spend is simply gone.
-`.claude-scripts/` holds a launchd job that puts it to work: starting at 2 AM it
+`backend/` holds a launchd job that puts it to work: starting at 2 AM it
 works through queued Claude Code prompts — **but only when the weekly window is
 behind an even burn.** Being on pace means nothing runs and nothing is spent;
 the point is to level out subscription burn rate, not to add to it.
@@ -219,7 +219,7 @@ acts.
 
 The extension is the data source. After each successful refresh it hands the
 figures to a native-messaging host, which writes
-`.claude-scripts/claude-usage.json`. The scheduler reads that file before every
+`backend/claude-usage.json`. The scheduler reads that file before every
 queued prompt, and keeps going only while `weeklyPaceDeltaMs` is at least 2
 hours behind pace and `fiveHourPercent` is under 100.
 
@@ -232,7 +232,7 @@ is in `plans/autonomous-credit-utilization.md`.
 or repairing one piece rather than starting from scratch:
 
 ```sh
-just build                      # the host manifest names the ID Chrome derives from dist/
+just build                      # the host manifest names the ID Chrome derives from chrome-extension/dist/
 just install-usage-host         # register the native host
 just install-autonomous-work    # schedule the nightly run (2 AM by default)
 ```
@@ -250,9 +250,9 @@ cancellation and leaves the queue entry `todo`, so nothing is lost, but it does
 mean not re-running it at 2:30 AM.
 
 `install-usage-host` pins one extension ID, and for an unpacked extension Chrome
-derives that ID from the absolute load path — so **moving or renaming `dist/`
+derives that ID from the absolute load path — so **moving or renaming `chrome-extension/dist/`
 silently breaks the connection.** Re-running fixes that, since it re-derives the
-ID from wherever `dist/` now is.
+ID from wherever `chrome-extension/dist/` now is.
 
 What re-running cannot fix is Chrome showing an ID that the path does not
 predict — which means the extension was loaded from some _other_ directory, an
@@ -312,7 +312,7 @@ grants and lend them to everything they start. Only launchd reproduces the
 nightly chain's permissions.
 
 **This project never asks for Full Disk Access**, and does not need to. It runs
-its own copy of `uv`, `.claude-scripts/bin/claude-usage-optimizer-uv`, re-signed
+its own copy of `uv`, `backend/bin/claude-usage-optimizer-uv`, re-signed
 with its own code-signing identifier — so the folders you allow are allowed for
 the nightly job and for nothing else. Your everyday `uv run` and `uvx` stay
 unprivileged, which matters because `uvx` runs arbitrary packages from PyPI on
@@ -342,7 +342,7 @@ delete it with the **−** button, then press Grant folder access.
 
 `prompts.txt` at the repository root is meant to be edited by hand — it is the
 one file in this whole setup you touch regularly, which is why it sits at the
-top level rather than in `.claude-scripts/`. It is **gitignored**, since it is
+top level rather than in `backend/`. It is **gitignored**, since it is
 your own task list and every run rewrites a status line in it; copy
 `prompts.example.txt` to start one.
 
@@ -396,7 +396,7 @@ behaves:
   new repository. `~/code` by default.
 
 Both settings live in `chrome.storage`, which launchd cannot read, so the native
-host mirrors them to `.claude-scripts/autonomous-work-settings.json` — the file
+host mirrors them to `backend/autonomous-work-settings.json` — the file
 `run-autonomous-work.py` and `just install-autonomous-work` both read.
 `just autonomous-settings` prints the current state.
 
@@ -468,7 +468,7 @@ The rule that makes the tooling worth having: **`chrome.*` is never called from
 a React component.**
 
 ```
-src/
+chrome-extension/
   lib/          pure TypeScript, no browser-extension dependencies
                 pace maths, formatters, view-model construction, types
   extension/    the only place chrome.* is touched
@@ -479,12 +479,12 @@ src/
 
 Two consequences worth keeping:
 
-- Pure functions in `src/lib` take `now` as an explicit argument and never read
+- Pure functions in `chrome-extension/lib` take `now` as an explicit argument and never read
   the clock. That is what makes the pace maths predictable and inspectable.
 - `UsagePopup` renders a fully-derived view model, so every visual state —
   loading, logged out, ahead, behind, window inactive, stale, refresh-failed —
   can be rendered from a hand-written fixture with no extension host. That is
-  what `preview.html` / `src/popup/previewMain.tsx` do: run `just dev` and open
+  what `preview.html` / `chrome-extension/popup/previewMain.tsx` do: run `just dev` and open
   `/preview.html` to see the states side by side in the browser. The run-log
   window has the same arrangement — `just run-log-preview` drives it from
   recorded-looking events, including one panel that replays them on a timer, so

@@ -59,7 +59,7 @@ def ask_host(message: dict, environment_overrides: dict | None = None) -> dict |
     if host_process.stderr:
         print(f"  host stderr: {host_process.stderr.decode().strip()}")
     if len(host_process.stdout) < 4:
-        print("  host sent no reply — check .claude-scripts/usage-host.log")
+        print("  host sent no reply — check backend/usage-host.log")
         return None
 
     (reply_length,) = struct.unpack("=I", host_process.stdout[:4])
