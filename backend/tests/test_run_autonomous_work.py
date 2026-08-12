@@ -379,6 +379,22 @@ class SummariseStreamEventTests(unittest.TestCase):
         self.assertEqual(work.summarise_stream_event({"type": "something_else"}), [])
 
 
+class BuildPromptTests(unittest.TestCase):
+    def test_empty_append_setting_leaves_prompt_unchanged(self):
+        with mock.patch.object(work, "APPEND_TO_ALL_PROMPTS", ""):
+            self.assertEqual(work.build_prompt("Fix the bug"), "Fix the bug")
+
+    def test_blank_append_setting_leaves_prompt_unchanged(self):
+        with mock.patch.object(work, "APPEND_TO_ALL_PROMPTS", "   "):
+            self.assertEqual(work.build_prompt("Fix the bug"), "Fix the bug")
+
+    def test_append_setting_is_appended_with_a_blank_line(self):
+        with mock.patch.object(work, "APPEND_TO_ALL_PROMPTS", "Keep changes small."):
+            self.assertEqual(
+                work.build_prompt("Fix the bug"), "Fix the bug\n\nKeep changes small."
+            )
+
+
 class SlugifyPromptTests(unittest.TestCase):
     def test_basic_slug(self):
         self.assertEqual(

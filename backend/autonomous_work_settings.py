@@ -55,6 +55,9 @@ DEFAULT_MODEL = "opus"
 # single `claude` call, not on the nightly session — a session can run many
 # prompts in a row and is bounded separately, by pace and the usage window.
 DEFAULT_MAX_PROMPT_DURATION_HOURS = 5.0
+# Appended to every queued prompt before it is sent to `claude -p`. Empty by
+# default -- most installs run the queue's prompts unmodified.
+DEFAULT_APPEND_TO_ALL_PROMPTS = ""
 
 
 def _environment_path(name: str, default: Path) -> Path:
@@ -91,6 +94,7 @@ class AutonomousWorkSettings:
     new_projects_directory: str = DEFAULT_NEW_PROJECTS_DIRECTORY
     model: str = DEFAULT_MODEL
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
+    append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
 
     @property
     def new_projects_path(self) -> Path:
@@ -151,6 +155,13 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         else DEFAULT_MODEL
     )
 
+    append_to_all_prompts_value = settings_data.get("appendToAllPrompts")
+    append_to_all_prompts = (
+        append_to_all_prompts_value
+        if isinstance(append_to_all_prompts_value, str)
+        else DEFAULT_APPEND_TO_ALL_PROMPTS
+    )
+
     return AutonomousWorkSettings(
         schedule_hour=_coerce_hour_or_minute(
             settings_data.get("scheduleHour"), DEFAULT_SCHEDULE_HOUR, 23
@@ -163,6 +174,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         max_prompt_duration_hours=_coerce_positive_hours(
             settings_data.get("maxPromptDurationHours"), DEFAULT_MAX_PROMPT_DURATION_HOURS
         ),
+        append_to_all_prompts=append_to_all_prompts,
     )
 
 
@@ -186,6 +198,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "newProjectsDirectory": settings.new_projects_directory,
         "model": settings.model,
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
+        "appendToAllPrompts": settings.append_to_all_prompts,
     }
 
     temporary_path = None
@@ -343,6 +356,7 @@ def main() -> int:
     print("New projects in:    {}".format(settings.new_projects_directory))
     print("Model for runs:     {}".format(settings.model))
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
+    print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Settings file:      {}".format(SETTINGS_FILE))
     print(
         "Launch agent:       {}".format(

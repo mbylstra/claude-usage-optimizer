@@ -402,6 +402,7 @@ def main() -> int:
                         # these in from defaults, and write_settings persists them.
                         "model": "opus",
                         "maxPromptDurationHours": 5.0,
+                        "appendToAllPrompts": "",
                     },
                 )
             )

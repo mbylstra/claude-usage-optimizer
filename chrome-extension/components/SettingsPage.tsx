@@ -206,6 +206,28 @@ export function SettingsPage({
           </div>
 
           <div className="flex flex-col gap-1">
+            <label htmlFor="append-to-all-prompts" className="text-sm">
+              Append to all prompts
+            </label>
+            <Input
+              id="append-to-all-prompts"
+              type="text"
+              spellCheck={false}
+              placeholder="e.g. Keep changes small and run tests before finishing."
+              value={autonomousWorkSettings.appendToAllPrompts}
+              onChange={(event) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  appendToAllPrompts: event.target.value,
+                })
+              }
+            />
+            <p className="text-muted-foreground text-xs">
+              Added to the end of every queued prompt before it runs. Empty by default.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
             <label htmlFor="max-prompt-duration-hours" className="text-sm">
               Max duration per prompt (hours)
             </label>

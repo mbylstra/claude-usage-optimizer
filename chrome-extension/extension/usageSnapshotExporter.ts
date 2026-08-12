@@ -144,6 +144,7 @@ export async function syncAutonomousWorkSettings(
         scheduleMinute: settings.scheduleTime.minute,
         newProjectsDirectory: settings.newProjectsDirectory,
         model: settings.model,
+        appendToAllPrompts: settings.appendToAllPrompts,
       },
     });
 

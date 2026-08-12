@@ -138,6 +138,10 @@ CLAUDE_MAX_PROMPT_DURATION_SECONDS = environment_int_override(
 # job runs on should not be a side effect of an unrelated interactive preference.
 # Only the main thread is pinned — a subagent that names its own model keeps it.
 _model_name = os.environ.get("AUTONOMOUS_WORK_MODEL") or _settings.model
+# Tacked onto every queued prompt before it reaches `claude -p` — see
+# `build_prompt`. Naming and logging of the *queue entry* still use its own
+# prompt unappended; only the invocation sees this.
+APPEND_TO_ALL_PROMPTS = _settings.append_to_all_prompts
 _MODEL_ID_MAP = {
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-5",
@@ -683,6 +687,18 @@ def summarise_stream_event(event: dict) -> list[str]:
     return []
 
 
+def build_prompt(entry_prompt: str) -> str:
+    """The text actually sent to `claude -p`: the queue entry's prompt, plus the
+    user's "append to all prompts" setting if one is configured.
+
+    Project naming (`dated_project_name`) and the queue file itself keep using
+    the entry's own prompt unappended — only the invocation sees this.
+    """
+    if not APPEND_TO_ALL_PROMPTS.strip():
+        return entry_prompt
+    return f"{entry_prompt}\n\n{APPEND_TO_ALL_PROMPTS}"
+
+
 def slugify_prompt(prompt: str, word_limit: int = 6) -> str:
     """A few words from the prompt, safe as a directory name.
 
@@ -799,7 +815,8 @@ def run_claude(
     forced: bool,
 ) -> tuple[int, str]:
     """Execute one queued prompt. Returns its exit code and the outcome to record."""
-    events.started(working_directory, is_new_project, entry.prompt, forced)
+    prompt_text = build_prompt(entry.prompt)
+    events.started(working_directory, is_new_project, prompt_text, forced)
 
     if not prepare_working_directory(working_directory, is_new_project):
         return 1, "error"
@@ -829,7 +846,7 @@ def run_claude(
             # `stream-json` emits an event per step. stderr is merged in so
             # nothing is lost or deadlocks on a second unread pipe.
             process = subprocess.Popen(
-                ["claude", "-p", entry.prompt, *CLAUDE_BASE_ARGUMENTS],
+                ["claude", "-p", prompt_text, *CLAUDE_BASE_ARGUMENTS],
                 cwd=working_directory,
                 # Without this `claude` spends three seconds waiting on an
                 # inherited stdin that is never going to produce anything, and
@@ -960,7 +977,7 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
-        log_message(f"Dry run — would execute in {destination}:\n{next_entry.prompt}")
+        log_message(f"Dry run — would execute in {destination}:\n{build_prompt(next_entry.prompt)}")
         return 0
 
     # Behind pace keeps working through the queue rather than stopping after one

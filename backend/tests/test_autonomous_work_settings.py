@@ -65,6 +65,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "newProjectsDirectory": "~/code/projects",
                 "model": "sonnet",
                 "maxPromptDurationHours": 2.5,
+                "appendToAllPrompts": "Keep changes small.",
             }
         )
         self.assertEqual(result.schedule_hour, 3)
@@ -72,6 +73,7 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.new_projects_directory, "~/code/projects")
         self.assertEqual(result.model, "sonnet")
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
+        self.assertEqual(result.append_to_all_prompts, "Keep changes small.")
 
     def test_out_of_range_hour_falls_back_to_default(self):
         result = settings_module.parse_settings({"scheduleHour": 24})
@@ -108,6 +110,14 @@ class ParseSettingsTests(unittest.TestCase):
             settings_module.parse_settings({"maxPromptDurationHours": -5}).max_prompt_duration_hours,
             settings_module.DEFAULT_MAX_PROMPT_DURATION_HOURS,
         )
+
+    def test_missing_append_to_all_prompts_falls_back_to_default(self):
+        result = settings_module.parse_settings({})
+        self.assertEqual(result.append_to_all_prompts, settings_module.DEFAULT_APPEND_TO_ALL_PROMPTS)
+
+    def test_non_string_append_to_all_prompts_falls_back_to_default(self):
+        result = settings_module.parse_settings({"appendToAllPrompts": 123})
+        self.assertEqual(result.append_to_all_prompts, settings_module.DEFAULT_APPEND_TO_ALL_PROMPTS)
 
 
 class AutonomousWorkSettingsTests(unittest.TestCase):
@@ -148,6 +158,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             new_projects_directory="~/code/nightly",
             model="haiku",
             max_prompt_duration_hours=1.5,
+            append_to_all_prompts="Keep changes small.",
         )
         settings_module.write_settings(settings)
         self.assertEqual(settings_module.read_settings(), settings)

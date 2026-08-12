@@ -25,6 +25,12 @@ export interface AutonomousWorkSettings {
    * prompts in a row and is bounded separately, by pace and the usage window.
    */
   maxPromptDurationHours: number;
+  /**
+   * Text appended to every queued prompt before it is sent to `claude -p`.
+   * Empty by default. The queue entry's own prompt — unappended — is still
+   * what names a new project's directory.
+   */
+  appendToAllPrompts: string;
 }
 
 export interface ExtensionSettings {
@@ -40,12 +46,14 @@ export interface ExtensionSettings {
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
 export const DEFAULT_MODEL = 'opus';
 export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
+export const DEFAULT_APPEND_TO_ALL_PROMPTS = '';
 
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
   newProjectsDirectory: DEFAULT_NEW_PROJECTS_DIRECTORY,
   model: DEFAULT_MODEL,
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
+  appendToAllPrompts: DEFAULT_APPEND_TO_ALL_PROMPTS,
 };
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -75,6 +83,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     newProjectsDirectory?: unknown;
     model?: unknown;
     maxPromptDurationHours?: unknown;
+    appendToAllPrompts?: unknown;
   };
 
   const newProjectsDirectory =
@@ -94,6 +103,11 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       ? autonomousWorkValue.maxPromptDurationHours
       : DEFAULT_MAX_PROMPT_DURATION_HOURS;
 
+  const appendToAllPrompts =
+    typeof autonomousWorkValue.appendToAllPrompts === 'string'
+      ? autonomousWorkValue.appendToAllPrompts
+      : DEFAULT_APPEND_TO_ALL_PROMPTS;
+
   return {
     notificationsEnabled:
       typeof notificationsEnabled === 'boolean'
@@ -104,6 +118,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       newProjectsDirectory,
       model,
       maxPromptDurationHours,
+      appendToAllPrompts,
     },
   };
 }
