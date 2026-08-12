@@ -749,6 +749,22 @@ def run_claude(
             events.claude_output(message)
             return 1, "error"
 
+        # System sleep freezes the network connection carrying claude's response
+        # with no error on either side — the CLI's own background-task wait
+        # ceiling only notices once the machine wakes, by which point it has
+        # already been exceeded, so it kills the task and the turn ends having
+        # done nothing. `-w` ties the assertion to claude's PID so it needs no
+        # cleanup of its own: it exits the moment claude does, however that
+        # happens. Best-effort — a missing `caffeinate` should not fail the run.
+        try:
+            subprocess.Popen(
+                ["caffeinate", "-s", "-w", str(process.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            log_message("`caffeinate` not found on PATH — system sleep may interrupt this run")
+
         # A wedged session must not run until morning, and `Popen` has no timeout
         # of its own once we are reading its output line by line.
         ran_too_long = False
