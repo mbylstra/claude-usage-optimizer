@@ -3,6 +3,12 @@ import { deriveSuggestedModel, type SuggestedModel } from '@/lib/suggestedModel'
 import { deriveModelChangeReason } from '@/lib/modelChangeReason';
 import { deriveUsageStatuses } from '@/lib/usagePace';
 import type { UsageSnapshot } from '@/lib/usageTypes';
+import {
+  deriveNewUsageLimitWarnings,
+  usageLimitWarningBody,
+  usageLimitWarningTitle,
+  type UsageLimitWarning,
+} from '@/lib/usageLimitWarnings';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
   isOpenRunLogMessage,
@@ -31,6 +37,8 @@ import {
   writeUsageCache,
   readPreviousSuggestedModel,
   writeSuggestedModel,
+  readUsageLimitWarningState,
+  writeUsageLimitWarningState,
   type UsageCacheEntry,
 } from './usageStorage';
 import { readExtensionSettings } from './settingsStorage';
@@ -89,6 +97,42 @@ async function notifyModelChange(
   }
 }
 
+/**
+ * Fires once per newly crossed threshold. There is usually at most one —
+ * `deriveNewUsageLimitWarnings` only reports thresholds not already claimed
+ * for the window's current generation — but a slow refresh cadence can jump
+ * two at once (e.g. 89% straight to 96%), so each gets its own notification
+ * rather than only the highest.
+ */
+async function notifyUsageLimitWarnings(warnings: UsageLimitWarning[]): Promise<void> {
+  if (warnings.length === 0) return;
+
+  const settings = await readExtensionSettings();
+  if (!settings.notificationsEnabled) return;
+
+  if (Notification.permission !== 'granted') {
+    console.warn('Notification permission not granted');
+    return;
+  }
+
+  for (const warning of warnings) {
+    try {
+      const timestamp = Date.now();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (self as any).registration.showNotification(
+        usageLimitWarningTitle(warning.kind, warning.threshold),
+        {
+          icon: chrome.runtime.getURL('icons/icon-128.png'),
+          body: usageLimitWarningBody(warning.threshold),
+          tag: `usage-limit-${warning.kind}-${warning.threshold}-${timestamp}`,
+        },
+      );
+    } catch (error) {
+      console.error('Failed to send usage limit warning notification:', error);
+    }
+  }
+}
+
 async function sendTestNotification(): Promise<void> {
   try {
     if (Notification.permission !== 'granted') {
@@ -141,6 +185,14 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
         await writeSuggestedModel(newModel);
       }
     }
+
+    const previousLimitWarningState = await readUsageLimitWarningState();
+    const { warnings, state: newLimitWarningState } = deriveNewUsageLimitWarnings(
+      snapshot.windows,
+      previousLimitWarningState,
+    );
+    await writeUsageLimitWarningState(newLimitWarningState);
+    await notifyUsageLimitWarnings(warnings);
 
     return entry;
   } catch (error) {

@@ -4,6 +4,7 @@ import type {
   UsageWindowKind,
   UsageWindowSnapshot,
 } from '@/lib/usageTypes';
+import type { UsageLimitWarningStateByWindow } from '@/lib/usageLimitWarnings';
 import type { OrganizationIdCache } from './claudeUsageClient';
 
 export type { UsageCacheEntry };
@@ -19,6 +20,7 @@ const ORGANIZATION_ID_STORAGE_KEY = 'organizationId';
 const USAGE_CACHE_STORAGE_KEY = 'usageCache';
 const USAGE_HISTORY_STORAGE_KEY = 'usageHistory';
 const SUGGESTED_MODEL_STORAGE_KEY = 'suggestedModel';
+const USAGE_LIMIT_WARNING_STATE_STORAGE_KEY = 'usageLimitWarningState';
 
 const ORGANIZATION_ID_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -151,4 +153,17 @@ export async function readPreviousSuggestedModel(): Promise<string | null> {
 
 export async function writeSuggestedModel(model: string): Promise<void> {
   await chrome.storage.local.set({ [SUGGESTED_MODEL_STORAGE_KEY]: model });
+}
+
+export async function readUsageLimitWarningState(): Promise<UsageLimitWarningStateByWindow> {
+  const stored = await readStorageValue<UsageLimitWarningStateByWindow>(
+    USAGE_LIMIT_WARNING_STATE_STORAGE_KEY,
+  );
+  return stored ?? {};
+}
+
+export async function writeUsageLimitWarningState(
+  state: UsageLimitWarningStateByWindow,
+): Promise<void> {
+  await chrome.storage.local.set({ [USAGE_LIMIT_WARNING_STATE_STORAGE_KEY]: state });
 }
