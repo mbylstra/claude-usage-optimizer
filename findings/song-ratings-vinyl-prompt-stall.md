@@ -39,6 +39,7 @@ From `.claude-scripts/autonomous-work.log`, run started 2026-08-12 04:19:32
 
    The background Explore agent had not returned within 10 minutes, so the CLI
    force-ended the turn and killed it.
+
 3. `claude finished: success (6 turns, 30s, $0.27)` — a suspiciously small
    turn/cost count for 17 minutes of wall-clock time, consistent with the run
    being cut off mid-exploration rather than reaching a natural stop.
@@ -74,7 +75,7 @@ This is unrelated to either of this repo's own duration guards:
   close to firing; the whole run finished in under a minute of actual `claude`
   runtime once the CLI's own 600s ceiling cut it off.
 - **`FIVE_HOUR_EXHAUSTED_PERCENT`** (the pace-gated session's usage-window
-  stop condition) — governs whether the *scheduler* starts another queued
+  stop condition) — governs whether the _scheduler_ starts another queued
   prompt, not any single prompt's behavior.
 
 ## Why it reads as a false "completed"
@@ -84,7 +85,7 @@ This is unrelated to either of this repo's own duration guards:
 timeout) still exits `0` like a turn that finished normally — there is no
 signal in the exit code that distinguishes "the model decided it was done"
 from "the harness cut it off mid-task." Nothing in the current pipeline
-inspects *what* happened during the run (e.g., whether a branch was created or
+inspects _what_ happened during the run (e.g., whether a branch was created or
 a commit made) before trusting the exit code.
 
 ## Update 2026-08-12: the real root cause is the machine going to sleep
@@ -96,11 +97,11 @@ kills logged overnight (song-ratings at 04:36:04, tododoo at 04:52:37 and
 DarkWake — entered a few hundred seconds earlier, with a scheduled wake time
 that lines up with the kill to the second:
 
-| Kill logged | `Entering Sleep` | Scheduled duration | Scheduled wake |
-| ----------- | ----------------- | ------------------- | ---------------- |
-| 04:36:04    | 04:20:10 (`Sleep Service Back to Sleep`) | 954s | 04:36:04 |
-| 04:52:37    | 04:36:48 (`Sleep Service Back to Sleep`) | 949s | 04:52:37 |
-| 06:14:25    | 05:58:22 (`Maintenance Sleep`)           | 963s | 06:14:25 |
+| Kill logged | `Entering Sleep`                         | Scheduled duration | Scheduled wake |
+| ----------- | ---------------------------------------- | ------------------ | -------------- |
+| 04:36:04    | 04:20:10 (`Sleep Service Back to Sleep`) | 954s               | 04:36:04       |
+| 04:52:37    | 04:36:48 (`Sleep Service Back to Sleep`) | 949s               | 04:52:37       |
+| 06:14:25    | 05:58:22 (`Maintenance Sleep`)           | 963s               | 06:14:25       |
 
 The subagent's own transcript (still on disk under
 `/private/tmp/claude-501/.../tasks/<agentId>.output` when this was checked) did
@@ -136,13 +137,37 @@ alone, so the monitor still turns off — that machine-level change is still
 wrapper covers the run either way, including if that setting is ever reset or
 the job runs on a machine with different power settings.
 
+## Update 2026-08-12: detect the CLI's own truncation message
+
+`run_claude()` in `run-autonomous-work.py` now watches the merged
+stdout/stderr stream for the literal marker
+(`BACKGROUND_TASK_TIMEOUT_MARKER = "Background tasks still running after"`)
+the CLI prints right before it force-ends a turn stuck on a background task —
+the same line quoted above. It's a substring match on a plain (non-JSON) line
+in the stream `run_claude()` was already reading line-by-line, so no new
+parsing is needed. If that marker was seen at all during the run, an exit
+code of 0 is now downgraded to `STATUS: error` instead of `completed`, with a
+log line explaining why.
+
+Checked against the doc's own evidence that the marker line is always
+immediately followed by the final `result` event with no further activity in
+between (the "6 turns, 30s, $0.27" for 17 minutes of wall time) — i.e. seeing
+the marker anywhere in a run is equivalent to it being the reason the run
+ended, so no position-tracking (e.g. "is it the second-to-last line") was
+needed on top of a plain substring check.
+
+This only catches _this_ failure mode by name. It does not generalize to
+other ways a turn could be cut short silently (see below).
+
 ## Not yet addressed
 
 - The `song-ratings` queue entry is still `STATUS: completed` and needs to be
   hand-edited back to `todo` to retry.
-- The scheduler still trusts exit code alone (see "Why it reads as a false
-  'completed'" above) — the sleep-avoidance fix stops this specific cause, but
-  a session cut short for some other reason would still be misreported as
-  `completed`. Having the scheduler treat "0 files changed, no commit" as
-  suspicious for a prompt that explicitly asked for a branch and a commit is
-  still worth considering.
+- The scheduler now catches this specific CLI message, but still trusts exit
+  code alone for everything else (see "Why it reads as a false 'completed'"
+  above) — a session cut short for some other reason would still be
+  misreported as `completed`. Having the scheduler treat "0 files changed, no
+  commit" as suspicious for a prompt that explicitly asked for a branch and a
+  commit is still worth considering, as is a more general check (e.g. did any
+  state-changing tool fire at all) that wouldn't depend on matching specific
+  CLI wording.

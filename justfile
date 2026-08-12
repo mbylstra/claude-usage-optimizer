@@ -403,6 +403,11 @@ uninstall-usage-host:
 test-usage-host:
     @python3 .claude-scripts/test-usage-host.py
 
+# Unit tests for the pure logic in run-autonomous-work.py and autonomous_work_settings.py
+[no-exit-message]
+test-autonomous-work:
+    @uv run --script .claude-scripts/tests/run_tests.py
+
 # Zip dist/ for a Chrome Web Store upload
 package: build
     rm -f claude-usage-optimizer.zip

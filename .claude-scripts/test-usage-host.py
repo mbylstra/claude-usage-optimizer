@@ -398,6 +398,10 @@ def main() -> int:
                         "scheduleHour": 3,
                         "scheduleMinute": 30,
                         "newProjectsDirectory": "~/code/experiments",
+                        # Not sent in settings_message above — parse_settings fills
+                        # these in from defaults, and write_settings persists them.
+                        "model": "opus",
+                        "maxPromptDurationHours": 5.0,
                     },
                 )
             )

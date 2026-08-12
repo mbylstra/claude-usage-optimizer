@@ -400,6 +400,52 @@ class GateResult:
     detail: str | None = None
 
 
+def evaluate_pace_gate(
+    pace_snapshot: PaceSnapshot | None,
+    *,
+    force: bool,
+    pace_threshold_ms: float,
+    five_hour_exhausted_percent: float,
+) -> GateResult:
+    """Pure decision logic behind `check_pace_gate` — no I/O, no logging.
+
+    Split out so the threshold arithmetic (the part most worth getting right)
+    can be unit-tested against explicit snapshots and thresholds, without
+    needing a real usage-snapshot file or the module's own env-configured
+    constants.
+    """
+    if force:
+        return GateResult(ok=True)
+
+    if pace_snapshot is None:
+        return GateResult(False, "noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
+
+    snapshot_description = (
+        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms)} "
+        f"(snapshot {describe_age(pace_snapshot.age_seconds)})"
+    )
+
+    if pace_snapshot.weekly_pace_delta_ms > pace_threshold_ms:
+        return GateResult(
+            False,
+            "onPace",
+            f"{snapshot_description}, threshold is {describe_pace(pace_threshold_ms)}",
+        )
+
+    if (
+        pace_snapshot.five_hour_percent is not None
+        and pace_snapshot.five_hour_percent >= five_hour_exhausted_percent
+    ):
+        return GateResult(
+            False,
+            "fiveHourExhausted",
+            f"5-hour session window at {pace_snapshot.five_hour_percent:.0f}% "
+            "— ending the run rather than waiting for it to reset",
+        )
+
+    return GateResult(True, detail=snapshot_description)
+
+
 def check_pace_gate(force: bool) -> GateResult:
     """Whether another queued prompt should run right now.
 
@@ -415,35 +461,24 @@ def check_pace_gate(force: bool) -> GateResult:
         return GateResult(ok=True)
 
     pace_snapshot = read_pace_snapshot()
-    if pace_snapshot is None:
-        return GateResult(False, "noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
-
-    snapshot_description = (
-        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms)} "
-        f"(snapshot {describe_age(pace_snapshot.age_seconds)})"
+    result = evaluate_pace_gate(
+        pace_snapshot,
+        force=False,
+        pace_threshold_ms=PACE_THRESHOLD_MS,
+        five_hour_exhausted_percent=FIVE_HOUR_EXHAUSTED_PERCENT,
     )
 
-    if pace_snapshot.weekly_pace_delta_ms > PACE_THRESHOLD_MS:
-        log_message(
-            f"On pace — {snapshot_description}, threshold is {describe_pace(PACE_THRESHOLD_MS)}"
-        )
-        return GateResult(
-            False, "onPace", f"{snapshot_description}, threshold is {describe_pace(PACE_THRESHOLD_MS)}"
-        )
+    if pace_snapshot is None:
+        return result  # read_pace_snapshot() already logged why
 
-    if (
-        pace_snapshot.five_hour_percent is not None
-        and pace_snapshot.five_hour_percent >= FIVE_HOUR_EXHAUSTED_PERCENT
-    ):
-        detail = (
-            f"5-hour session window at {pace_snapshot.five_hour_percent:.0f}% "
-            "— ending the run rather than waiting for it to reset"
-        )
-        log_message(detail)
-        return GateResult(False, "fiveHourExhausted", detail)
+    if result.reason == "onPace":
+        log_message(f"On pace — {result.detail}")
+    elif result.reason == "fiveHourExhausted":
+        log_message(result.detail)
+    elif result.ok:
+        log_message(f"Behind pace — {result.detail}")
 
-    log_message(f"Behind pace — {snapshot_description}")
-    return GateResult(True)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -547,27 +582,39 @@ def find_next_todo(entries: list[QueueEntry]) -> QueueEntry | None:
     return None
 
 
+def rewrite_status_line(lines: list[str], status_line_index: int, new_status: str) -> list[str] | None:
+    """The queue lines with one STATUS line replaced, or None if the index no longer lines up.
+
+    Pure line-rewriting, split out from the file I/O around it. Targeting the
+    line by index rather than by string replacement keeps the update correct
+    even when a prompt body happens to contain the word STATUS.
+    """
+    if not 0 <= status_line_index < len(lines):
+        return None
+    updated_lines = list(lines)
+    updated_lines[status_line_index] = f"{STATUS_FIELD_PREFIX} {new_status}"
+    return updated_lines
+
+
 def write_queue_status(status_line_index: int, new_status: str) -> None:
     """Rewrite one STATUS line, replacing the file atomically.
 
-    Targeting the line by index rather than by string replacement keeps the
-    update correct even when a prompt body happens to contain the word STATUS,
-    and the temp-file swap means a queue edited mid-run is never left truncated.
+    The temp-file swap means a queue edited mid-run is never left truncated.
     """
     lines = read_queue_lines()
     if lines is None:
         return
-    if not 0 <= status_line_index < len(lines):
+
+    updated_lines = rewrite_status_line(lines, status_line_index, new_status)
+    if updated_lines is None:
         log_message(f"Queue changed while running; not updating status to {new_status}")
         return
-
-    lines[status_line_index] = f"{STATUS_FIELD_PREFIX} {new_status}"
 
     try:
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=QUEUE_FILE.parent, delete=False
         ) as temp_handle:
-            temp_handle.write("\n".join(lines))
+            temp_handle.write("\n".join(updated_lines))
             temporary_path = Path(temp_handle.name)
         os.replace(temporary_path, QUEUE_FILE)
         log_message(f"Queue entry marked '{new_status}'")
@@ -648,6 +695,31 @@ def slugify_prompt(prompt: str, word_limit: int = 6) -> str:
     return slug or "prompt"
 
 
+def dated_project_name(prompt: str, today: datetime) -> str:
+    """The directory name a fresh project gets — a date plus a few words of the prompt.
+
+    The directory is the only lasting trace of which queue entry produced a
+    project, so it is named after the prompt rather than given a bare timestamp —
+    `~/code` stays readable months later. `today` is a parameter rather than an
+    internal `datetime.now()` call so this is testable without freezing the clock.
+    """
+    return f"{today.strftime('%Y-%m-%d')}-{slugify_prompt(prompt)}"
+
+
+def first_available_path(base_directory: Path, dated_name: str) -> Path:
+    """`dated_name` under `base_directory`, suffixed until it does not already exist.
+
+    Two prompts on one night, or a re-queued entry, must not land on top of an
+    existing project.
+    """
+    candidate = base_directory / dated_name
+    suffix_number = 2
+    while candidate.exists():
+        candidate = base_directory / f"{dated_name}-{suffix_number}"
+        suffix_number += 1
+    return candidate
+
+
 def resolve_working_directory(entry: QueueEntry) -> tuple[Path, bool]:
     """Where this entry runs, and whether that is a project we are about to create.
 
@@ -659,17 +731,8 @@ def resolve_working_directory(entry: QueueEntry) -> tuple[Path, bool]:
     if entry.repository_path is not None:
         return entry.repository_path, False
 
-    dated_name = f"{datetime.now().strftime('%Y-%m-%d')}-{slugify_prompt(entry.prompt)}"
-
-    # Two prompts on one night, or a re-queued entry, must not land on top of an
-    # existing project.
-    candidate = NEW_PROJECTS_DIRECTORY / dated_name
-    suffix_number = 2
-    while candidate.exists():
-        candidate = NEW_PROJECTS_DIRECTORY / f"{dated_name}-{suffix_number}"
-        suffix_number += 1
-
-    return candidate, True
+    dated_name = dated_project_name(entry.prompt, datetime.now())
+    return first_available_path(NEW_PROJECTS_DIRECTORY, dated_name), True
 
 
 def prepare_working_directory(working_directory: Path, is_new_project: bool) -> bool:
@@ -699,6 +762,33 @@ def prepare_working_directory(working_directory: Path, is_new_project: bool) -> 
     if git_result.returncode != 0:
         log_message(f"git init failed: {git_result.stdout.decode().strip()}")
     return True
+
+
+def determine_outcome(exit_code: int, ran_too_long: bool, background_task_timed_out: bool) -> tuple[int, str]:
+    """The exit code alone is not trustworthy — decide what actually happened.
+
+    Two things can make the process exit 0 without the prompt having finished:
+    the CLI's own background-task wait ceiling (BACKGROUND_TASK_TIMEOUT_MARKER)
+    and this script's own max-duration watchdog. Split out from `run_claude` so
+    the decision can be unit-tested against the four exit_code/ran_too_long/
+    background_task_timed_out combinations without spawning a real subprocess.
+    """
+    if ran_too_long:
+        return 1, "timeout"
+    if exit_code == 0 and background_task_timed_out:
+        return exit_code, "error"
+    return exit_code, ("completed" if exit_code == 0 else "error")
+
+
+def queue_status_for_outcome(outcome: str) -> str:
+    """The queue's STATUS value for a run's outcome.
+
+    Keyed off `outcome`, never off the exit code directly: `determine_outcome`
+    can report "error" for an exit code of 0 (a background task that timed
+    out, or a watchdog kill), and a queue status derived from the exit code
+    alone would silently undo that — see findings/song-ratings-vinyl-prompt-stall.md.
+    """
+    return STATUS_COMPLETED if outcome == "completed" else STATUS_ERROR
 
 
 def run_claude(
@@ -815,24 +905,23 @@ def run_claude(
         finally:
             watchdog.cancel()
 
+        result_exit_code, outcome = determine_outcome(exit_code, ran_too_long, background_task_timed_out)
+
         if ran_too_long:
             log_message(f"Prompt exceeded the {CLAUDE_MAX_PROMPT_DURATION_SECONDS}s max run time and was killed")
-            return 1, "timeout"
-
-        log_message(f"Prompt finished with exit code {exit_code}")
-
-        # The CLI ends the turn (and so the process, with exit code 0) the
-        # instant it kills a stuck background task — see
-        # BACKGROUND_TASK_TIMEOUT_MARKER above. A 0 here means "the CLI gave
-        # up," not "the model finished," so it must not read as completed.
-        if exit_code == 0 and background_task_timed_out:
+        elif exit_code == 0 and background_task_timed_out:
+            # The CLI ends the turn (and so the process, with exit code 0) the
+            # instant it kills a stuck background task — see
+            # BACKGROUND_TASK_TIMEOUT_MARKER above. A 0 here means "the CLI gave
+            # up," not "the model finished," so it must not read as completed.
             log_message(
                 "Exit code was 0, but the CLI force-ended the turn waiting on a "
                 "background task — treating as an error rather than completed"
             )
-            return exit_code, "error"
+        else:
+            log_message(f"Prompt finished with exit code {exit_code}")
 
-        return exit_code, ("completed" if exit_code == 0 else "error")
+        return result_exit_code, outcome
     finally:
         signal.signal(signal.SIGTERM, previous_termination_handler)
 
@@ -909,7 +998,7 @@ def main() -> int:
         exit_code, outcome = run_claude(
             next_entry, working_directory, is_new_project, events, arguments.force
         )
-        queue_status = STATUS_COMPLETED if exit_code == 0 else STATUS_ERROR
+        queue_status = queue_status_for_outcome(outcome)
         write_queue_status(next_entry.status_line_index, queue_status)
         # Last, so the terminal event is only written once the queue reflects the
         # outcome the viewer is about to show.
