@@ -12,6 +12,7 @@ prompts.txt
 
 # The native host imports a sibling module, so Chrome leaves bytecode here
 backend/__pycache__/
+backend/tests/__pycache__/
 
 # The private uv the scheduler runs, reproduced by `just install-private-uv`
 backend/bin/
