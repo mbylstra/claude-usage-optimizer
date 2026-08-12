@@ -4,6 +4,7 @@ import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 import { Switch } from './ui/switch';
 import { SelectContent, SelectItem, SelectTrigger } from './ui/select';
 import {
@@ -209,9 +210,9 @@ export function SettingsPage({
             <label htmlFor="append-to-all-prompts" className="text-sm">
               Append to all prompts
             </label>
-            <Input
+            <Textarea
               id="append-to-all-prompts"
-              type="text"
+              rows={6}
               spellCheck={false}
               placeholder="e.g. Keep changes small and run tests before finishing."
               value={autonomousWorkSettings.appendToAllPrompts}
