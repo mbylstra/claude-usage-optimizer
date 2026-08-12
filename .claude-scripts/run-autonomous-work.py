@@ -47,6 +47,13 @@ SECTION_SEPARATOR_PREFIX = "==="
 STATUS_FIELD_PREFIX = "STATUS:"
 REPOSITORY_FIELD_PREFIX = "REPO:"
 
+# Printed by the Claude Code CLI itself (not this repo) when a turn is still
+# waiting on a background task past CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS. The
+# CLI kills the task and ends the turn right there, but the process still
+# exits 0 — see findings/song-ratings-vinyl-prompt-stall.md. Matched as a
+# substring so a differently-configured ceiling value doesn't break the check.
+BACKGROUND_TASK_TIMEOUT_MARKER = "Background tasks still running after"
+
 
 def environment_path(name: str, default: Path) -> Path:
     """Read a path from the environment, expanding `~`, falling back to `default`."""
@@ -778,6 +785,8 @@ def run_claude(
         watchdog.daemon = True
         watchdog.start()
 
+        background_task_timed_out = False
+
         try:
             with RAW_EVENT_FILE.open("a", encoding="utf-8") as raw_handle:
                 for line in process.stdout or []:
@@ -793,6 +802,8 @@ def run_claude(
                     except json.JSONDecodeError:
                         log_message(f"  {shorten(stripped_line)}")  # plain stderr text
                         events.claude_output(stripped_line)
+                        if BACKGROUND_TASK_TIMEOUT_MARKER in stripped_line:
+                            background_task_timed_out = True
                         continue
 
                     if isinstance(event, dict):
@@ -809,6 +820,18 @@ def run_claude(
             return 1, "timeout"
 
         log_message(f"Prompt finished with exit code {exit_code}")
+
+        # The CLI ends the turn (and so the process, with exit code 0) the
+        # instant it kills a stuck background task — see
+        # BACKGROUND_TASK_TIMEOUT_MARKER above. A 0 here means "the CLI gave
+        # up," not "the model finished," so it must not read as completed.
+        if exit_code == 0 and background_task_timed_out:
+            log_message(
+                "Exit code was 0, but the CLI force-ended the turn waiting on a "
+                "background task — treating as an error rather than completed"
+            )
+            return exit_code, "error"
+
         return exit_code, ("completed" if exit_code == 0 else "error")
     finally:
         signal.signal(signal.SIGTERM, previous_termination_handler)
