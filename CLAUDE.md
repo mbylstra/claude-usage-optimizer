@@ -344,7 +344,7 @@ _when_ unattended work runs, but scheduling it in the first place stays an
 explicit `just install-autonomous-work`.
 
 Every knob is also an environment variable rather than a code edit —
-`AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default −2h),
+`AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default 0h),
 `AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT` (default 100 — the utilisation
 that ends a session rather than moving on to the next `todo`),
 `AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which

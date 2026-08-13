@@ -115,7 +115,7 @@ NEW_PROJECTS_DIRECTORY = environment_path(
     "AUTONOMOUS_WORK_NEW_PROJECTS_DIR", autonomous_work_settings.read_settings().new_projects_path
 )
 # Negative milliseconds: how far behind an even weekly burn we must be to act.
-PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", -2 * MILLISECONDS_PER_HOUR)
+PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", 0)
 # The scheduler works through the queue while behind weekly pace, but a
 # five-hour session window does not refill early — once it reports at or above
 # this percentage, waiting it out would mean sitting idle for up to five hours,
