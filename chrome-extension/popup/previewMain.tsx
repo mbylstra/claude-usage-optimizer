@@ -85,6 +85,7 @@ function Column({ dark }: { dark: boolean }) {
             onTestNotification={() => {}}
             autonomousWorkSettings={DEFAULT_AUTONOMOUS_WORK_SETTINGS}
             onAutonomousWorkSettingsChange={() => {}}
+            onSyncSettingsNow={() => {}}
             autonomousWorkSettingsStatus={settingsStatus}
             autonomousWorkStatus={status}
             onRunAutonomousWork={() => {}}

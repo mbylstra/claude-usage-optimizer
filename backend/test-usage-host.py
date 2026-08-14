@@ -403,6 +403,7 @@ def main() -> int:
                         "model": "opus",
                         "maxPromptDurationHours": 5.0,
                         "appendToAllPrompts": "",
+                        "paceThresholdHours": 0.0,
                     },
                 )
             )

@@ -13,6 +13,11 @@ import tailwindcss from '@tailwindcss/vite';
  * so that it lands in `dist/` as one self-contained file with no shared chunks.
  */
 export default defineConfig({
+  // Stamped at build time so a running build can be identified from the outside —
+  // see `buildStamp.d.ts` for why that is worth a define.
+  define: {
+    BUILD_STAMP: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

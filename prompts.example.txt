@@ -5,8 +5,8 @@
 # Sections are separated by a line of three or more '=' characters. Each section
 # is:
 #
-#   STATUS: todo | completed | error   (required, first line of the section)
-#   REPO: ~/path/to/project            (optional — see below)
+#   STATUS: todo | completed | error | draft   (required, first line of the section)
+#   REPO: ~/path/to/project                    (optional — see below)
 #   <everything else is the prompt, and may span multiple lines>
 #
 # With no REPO line the prompt gets a brand-new repository of its own, created
@@ -16,6 +16,9 @@
 # The scheduler runs the first 'todo' section and rewrites its status to
 # 'completed' (exit 0) or 'error' (anything else). Re-queue a failed item by
 # editing its status back to 'todo'.
+#
+# 'draft' is never picked up — it's for a prompt you're still writing and don't
+# want run yet. Change it to 'todo' when it's ready.
 ===
 STATUS: todo
 REPO: ~/code/current/claude-usage-optimizer
@@ -25,3 +28,6 @@ Leave the changes uncommitted for review.
 STATUS: todo
 Create an HTML/JS tic tac toe game with a two-player mode and a simple AI
 opponent. No build step and no dependencies — one page that opens in a browser.
+===
+STATUS: draft
+Not ready to run yet — still figuring out the prompt wording.

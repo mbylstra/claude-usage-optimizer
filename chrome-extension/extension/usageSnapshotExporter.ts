@@ -136,23 +136,27 @@ export interface AutonomousWorkSettingsSyncResult {
 export async function syncAutonomousWorkSettings(
   settings: AutonomousWorkSettings,
 ): Promise<AutonomousWorkSettingsSyncResult> {
+  // Everything except the schedule crosses unchanged, so the settings object is
+  // spread rather than copied field by field. Naming each field here meant a new
+  // one was silently dropped until somebody remembered this file: absent is not
+  // "unchanged" on the other side, it is `parse_settings` substituting its
+  // default, while the popup goes on showing the value the user chose. The
+  // schedule is the one field whose shape differs — `{hour, minute}` here, two
+  // flat keys in the mirrored file — so it is the one field spelled out.
+  const { scheduleTime, ...directlyMirroredSettings } = settings;
+
   try {
     const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
       type: SET_SETTINGS_MESSAGE_TYPE,
-      // Every field the host mirrors has to be named here: a field left out is
-      // not "unchanged" on the other side, it is absent, and `parse_settings`
-      // falls back to its default for anything absent. That is silent — the
-      // popup keeps showing the value the user chose while the nightly job
-      // reads the default.
       settings: {
-        scheduleHour: settings.scheduleTime.hour,
-        scheduleMinute: settings.scheduleTime.minute,
-        newProjectsDirectory: settings.newProjectsDirectory,
-        model: settings.model,
-        maxPromptDurationHours: settings.maxPromptDurationHours,
-        appendToAllPrompts: settings.appendToAllPrompts,
-        paceThresholdHours: settings.paceThresholdHours,
+        ...directlyMirroredSettings,
+        scheduleHour: scheduleTime.hour,
+        scheduleMinute: scheduleTime.minute,
       },
+      // Not a setting — the host logs it and stores nothing. It answers the one
+      // question the settings themselves cannot: which build of the service
+      // worker Chrome is actually running, as opposed to which one is on disk.
+      buildStamp: BUILD_STAMP,
     });
 
     if (typeof response === 'object' && response !== null && 'ok' in response) {

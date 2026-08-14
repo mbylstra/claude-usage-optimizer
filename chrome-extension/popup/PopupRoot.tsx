@@ -320,6 +320,19 @@ export function PopupRoot() {
 
   useEffect(() => () => clearTimeout(settingsSyncTimer.current), []);
 
+  /**
+   * Push the settings to the host now, without editing anything.
+   *
+   * The debounced sync means an edit and its arrival at the host are separated
+   * by time and by a timer that can be cancelled, so a value that never lands is
+   * ambiguous between "not sent" and "sent and lost". This is the unambiguous
+   * half: one press, one message, whatever is on screen.
+   */
+  const handleSyncSettingsNow = useCallback(() => {
+    clearTimeout(settingsSyncTimer.current);
+    syncAutonomousWorkSettings(settings.autonomousWork);
+  }, [settings.autonomousWork, syncAutonomousWorkSettings]);
+
   // Before the cache read resolves we genuinely know nothing — show the loading
   // state rather than flashing "no data yet".
   const data = buildUsagePopupData(hasLoadedCache ? cacheEntry : null, now);
@@ -336,6 +349,7 @@ export function PopupRoot() {
           onTestNotification={requestTestNotification}
           autonomousWorkSettings={settings.autonomousWork}
           onAutonomousWorkSettingsChange={handleAutonomousWorkSettingsChange}
+          onSyncSettingsNow={handleSyncSettingsNow}
           autonomousWorkSettingsStatus={autonomousWorkSettingsStatus}
           autonomousWorkStatus={autonomousWorkStatus}
           onRunAutonomousWork={runAutonomousWork}

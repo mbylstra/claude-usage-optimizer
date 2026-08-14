@@ -456,17 +456,34 @@ def apply_autonomous_work_settings(message):
     job to reschedule, and the popup says so rather than implying the new time
     will be honoured.
     """
-    settings = autonomous_work_settings.parse_settings(message.get("settings"))
+    # Logged before parsing, and as raw keys: `parse_settings` substitutes a
+    # default for anything absent, so by the time it has run, "the extension
+    # never sent this field" and "the extension sent the default" look identical.
+    # Only the keys actually on the wire tell the two apart.
+    raw_settings = message.get("settings")
+    log_message(
+        "Settings message from build {} carried keys: {}".format(
+            message.get("buildStamp") or "unstamped (a build from before this was added)",
+            sorted(raw_settings.keys()) if isinstance(raw_settings, dict) else repr(raw_settings),
+        )
+    )
+
+    settings = autonomous_work_settings.parse_settings(raw_settings)
     result = autonomous_work_settings.apply_settings(settings)
 
+    # The appended text is logged as a length rather than verbatim: it is a whole
+    # paragraph, and all this line has to answer is whether it arrived. The log is
+    # the only view of what the extension actually sent, as opposed to what the
+    # popup was showing.
     log_message(
         "Settings updated: run at {}, new projects in {}, model {}, max {}h per prompt, "
-        "pace threshold {}h, ({})".format(
+        "pace threshold {}h, {} chars appended to prompts, ({})".format(
             settings.describe_schedule(),
             settings.new_projects_directory,
             settings.model,
             settings.max_prompt_duration_hours,
             settings.pace_threshold_hours,
+            len(settings.append_to_all_prompts),
             result.detail,
         )
     )

@@ -51,6 +51,14 @@ export interface SettingsPageProps {
   onTestNotification: () => void;
   autonomousWorkSettings: AutonomousWorkSettings;
   onAutonomousWorkSettingsChange: (settings: AutonomousWorkSettings) => void;
+  /**
+   * Pushes the settings as they stand to the native host, changing nothing.
+   *
+   * Every other route to the host is a side effect of an edit, which makes
+   * "did it save?" and "did I change anything?" the same question. This one
+   * separates them: press it and the host either logs a message or does not.
+   */
+  onSyncSettingsNow: () => void;
   autonomousWorkSettingsStatus: AutonomousWorkSettingsStatus;
   autonomousWorkStatus: AutonomousWorkStatus;
   onRunAutonomousWork: () => void;
@@ -68,6 +76,7 @@ export function SettingsPage({
   onTestNotification,
   autonomousWorkSettings,
   onAutonomousWorkSettingsChange,
+  onSyncSettingsNow,
   autonomousWorkSettingsStatus,
   autonomousWorkStatus,
   onRunAutonomousWork,
@@ -291,6 +300,10 @@ export function SettingsPage({
               empty, it is back on pace, or the session window runs out.
             </p>
           </div>
+
+          <Button variant="outline" size="sm" onClick={onSyncSettingsNow}>
+            Sync settings now
+          </Button>
 
           {settingsMessage !== null && (
             <p

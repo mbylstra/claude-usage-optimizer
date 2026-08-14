@@ -118,6 +118,32 @@ duration when both ends are known.
 - The build is two Vite passes: the popup, then the service worker as a single
   self-contained ES module with no shared chunks for Chrome to resolve.
 
+**An unpacked extension is only half as fresh as it looks, and every settings
+message carries a build stamp because of it.** `popup.html` and its bundle are
+re-read from disk every time the popup opens; the **service worker is replaced
+only when Chrome reloads the extension**, and the reload button has been observed
+not to take. The failure is invisible from every angle you would normally check:
+the source is right, `dist/` is right, the UI shows the new fields — and the
+worker relaying them to the native host is weeks old. It cost most of a morning
+once, spent fixing a sender that was never running.
+
+So both Vite passes `define` a `BUILD_STAMP` (declared in
+`extension/buildStamp.d.ts`), `syncAutonomousWorkSettings` sends it, and
+`usage-host.py` logs it beside the arriving key list. One line of
+`backend/usage-host.log` now answers "is Chrome running what I just built?" —
+`unstamped` means it is not. **Quit and reopen Chrome; reloading may not be
+enough.**
+
+The same log line prints the message's keys *before* they are parsed, because
+`parse_settings` substitutes a default for anything absent — after it runs, "the
+extension never sent this field" and "the extension sent the default" are
+indistinguishable, which is the shape every version-skew bug here takes.
+
+Relatedly, `syncAutonomousWorkSettings` **spreads the settings object** rather
+than naming each field. Fields were dropped twice by a hand-written payload that
+someone forgot to extend; only `scheduleTime` is spelled out, since it is the one
+field whose shape differs from the mirrored file's.
+
 ## Autonomous work scheduler
 
 `backend/` holds a launchd job that works through queued Claude Code
@@ -310,11 +336,14 @@ or pass an explicit ID as an argument.
 **Editing the queue.** `prompts.txt` at the repository root is user-editable —
 deliberately at the top level rather than in `backend/`, being the only
 file here meant for regular hand-editing. Sections split on a line of `===`;
-each has a required `STATUS: todo|completed|error`, an optional `REPO:`, and a
-multi-line prompt. The scheduler takes the first `todo`, runs it, rewrites that
-status to `completed` or `error`, and — while a pace-gated run — loops back for
-the next `todo` rather than stopping. Failed items are skipped until you edit
-them back to `todo`.
+each has a required `STATUS: todo|completed|error|draft`, an optional `REPO:`,
+and a multi-line prompt. The scheduler takes the first `todo`, runs it, rewrites
+that status to `completed` or `error`, and — while a pace-gated run — loops back
+for the next `todo` rather than stopping. Failed items are skipped until you
+edit them back to `todo`. `draft` is skipped the same way — it needs no special
+casing in `run-autonomous-work.py`, since `find_next_todo` already ignores any
+status that isn't `todo`; it exists purely so a prompt you're still drafting
+has a name other than `todo` to sit under.
 
 **`prompts.txt` is gitignored**; `prompts.example.txt` is the checked-in
 template to copy from. It is somebody's personal task list, and every run

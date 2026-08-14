@@ -9,6 +9,11 @@ import { defineConfig } from 'vite';
  * Runs with `emptyOutDir: false` so it does not wipe the popup build.
  */
 export default defineConfig({
+  // Stamped at build time so a running build can be identified from the outside —
+  // see `buildStamp.d.ts` for why that is worth a define.
+  define: {
+    BUILD_STAMP: JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('.', import.meta.url)),

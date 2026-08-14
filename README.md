@@ -358,8 +358,9 @@ Leave the changes uncommitted for review.
 ```
 
 - **`STATUS:`** is required and must be the section's first non-blank line —
-  `todo`, `completed`, or `error`. A section without one is ignored entirely,
-  which is what lets the file carry `#` comments at the top.
+  `todo`, `completed`, `error`, or `draft`. A section without one is ignored
+  entirely, which is what lets the file carry `#` comments at the top. `draft`
+  is never picked up by the scheduler; it's for a prompt you're still writing.
 - **`REPO:`** is optional and must come before the prompt body. It is the
   working directory the prompt runs in, `~` included, created if it does not
   exist. **Leave it out and the prompt gets a brand-new repository instead** —
