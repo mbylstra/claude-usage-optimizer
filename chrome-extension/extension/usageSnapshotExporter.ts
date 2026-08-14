@@ -139,12 +139,19 @@ export async function syncAutonomousWorkSettings(
   try {
     const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
       type: SET_SETTINGS_MESSAGE_TYPE,
+      // Every field the host mirrors has to be named here: a field left out is
+      // not "unchanged" on the other side, it is absent, and `parse_settings`
+      // falls back to its default for anything absent. That is silent — the
+      // popup keeps showing the value the user chose while the nightly job
+      // reads the default.
       settings: {
         scheduleHour: settings.scheduleTime.hour,
         scheduleMinute: settings.scheduleTime.minute,
         newProjectsDirectory: settings.newProjectsDirectory,
         model: settings.model,
+        maxPromptDurationHours: settings.maxPromptDurationHours,
         appendToAllPrompts: settings.appendToAllPrompts,
+        paceThresholdHours: settings.paceThresholdHours,
       },
     });
 
