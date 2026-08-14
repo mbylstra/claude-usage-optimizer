@@ -114,8 +114,16 @@ RUN_EVENT_HISTORY_LIMIT = environment_int("AUTONOMOUS_WORK_RUN_EVENT_HISTORY", 5
 NEW_PROJECTS_DIRECTORY = environment_path(
     "AUTONOMOUS_WORK_NEW_PROJECTS_DIR", autonomous_work_settings.read_settings().new_projects_path
 )
-# Negative milliseconds: how far behind an even weekly burn we must be to act.
-PACE_THRESHOLD_MS = environment_int("AUTONOMOUS_WORK_PACE_THRESHOLD_MS", 0)
+# Signed milliseconds: how far ahead of (positive) or behind (negative) an
+# even weekly burn still counts as on pace. Set in the extension's settings
+# screen in hours, mirrored to disk through the native host and converted to
+# milliseconds here; the environment variable still wins, for a one-off run —
+# same precedence as NEW_PROJECTS_DIRECTORY above.
+PACE_THRESHOLD_MS = environment_int_override("AUTONOMOUS_WORK_PACE_THRESHOLD_MS")
+if PACE_THRESHOLD_MS is None:
+    PACE_THRESHOLD_MS = round(
+        autonomous_work_settings.read_settings().pace_threshold_hours * MILLISECONDS_PER_HOUR
+    )
 # The scheduler works through the queue while behind weekly pace, but a
 # five-hour session window does not refill early — once it reports at or above
 # this percentage, waiting it out would mean sitting idle for up to five hours,

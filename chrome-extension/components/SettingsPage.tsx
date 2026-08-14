@@ -34,6 +34,10 @@ import { DEFAULT_NEW_PROJECTS_DIRECTORY, type AutonomousWorkSettings } from '@/l
 const MIN_MAX_PROMPT_DURATION_HOURS = 0.5;
 const MAX_MAX_PROMPT_DURATION_HOURS = 24;
 
+/** Clamped to a week either way — the weekly window itself bounds what a threshold could mean. */
+const MIN_PACE_THRESHOLD_HOURS = -168;
+const MAX_PACE_THRESHOLD_HOURS = 168;
+
 /**
  * The settings screen, shown inside the popup in place of the usage view.
  *
@@ -100,6 +104,24 @@ export function SettingsPage({
     });
   };
 
+  const handlePaceThresholdHoursChange = (value: string) => {
+    // A half-typed field (including a bare "-") reports ""; there is nothing
+    // to save until it parses. Unlike the duration field, 0 and negative
+    // values are valid and must not be treated as unset.
+    const parsedHours = Number.parseFloat(value);
+    if (
+      !Number.isFinite(parsedHours) ||
+      parsedHours < MIN_PACE_THRESHOLD_HOURS ||
+      parsedHours > MAX_PACE_THRESHOLD_HOURS
+    ) {
+      return;
+    }
+    onAutonomousWorkSettingsChange({
+      ...autonomousWorkSettings,
+      paceThresholdHours: parsedHours,
+    });
+  };
+
   return (
     <PopupFrame>
       <header className="flex items-center gap-1">
@@ -154,6 +176,27 @@ export function SettingsPage({
               value={formatScheduleTimeInputValue(autonomousWorkSettings.scheduleTime)}
               onChange={(event) => handleScheduleTimeChange(event.target.value)}
             />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="pace-threshold-hours" className="text-sm">
+              Pace threshold (hours)
+            </label>
+            <Input
+              id="pace-threshold-hours"
+              type="number"
+              className="w-28"
+              min={MIN_PACE_THRESHOLD_HOURS}
+              max={MAX_PACE_THRESHOLD_HOURS}
+              step={0.5}
+              value={autonomousWorkSettings.paceThresholdHours}
+              onChange={(event) => handlePaceThresholdHoursChange(event.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              How far ahead of (positive) or behind (negative) an even weekly burn still counts as
+              on pace. E.g. <code>12</code> tolerates being 12h ahead before stopping;{' '}
+              <code>-2</code> waits until you are at least 2h behind before starting.
+            </p>
           </div>
 
           <div className="flex flex-col gap-1">

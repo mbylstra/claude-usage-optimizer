@@ -344,14 +344,22 @@ _when_ unattended work runs, but scheduling it in the first place stays an
 explicit `just install-autonomous-work`.
 
 Every knob is also an environment variable rather than a code edit —
-`AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (default 0h),
 `AUTONOMOUS_WORK_FIVE_HOUR_EXHAUSTED_PERCENT` (default 100 — the utilisation
 that ends a session rather than moving on to the next `todo`),
-`AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which
-wins over the mirrored setting), and the file-path overrides used by the tests —
-including `AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST` and `AUTONOMOUS_WORK_LAUNCHCTL`,
-which are what let `just test-usage-host` exercise the rescheduling path without
-touching the job installed on the machine.
+`AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` and
+`AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (both of which win over their mirrored
+setting), and the file-path overrides used by the tests — including
+`AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST` and `AUTONOMOUS_WORK_LAUNCHCTL`, which are
+what let `just test-usage-host` exercise the rescheduling path without touching
+the job installed on the machine.
+
+**The pace threshold is set in the extension's Settings screen, in hours** —
+positive tolerates being that far ahead of an even weekly burn before the
+scheduler stops; negative requires being at least that far behind before it
+starts. It is mirrored to `backend/autonomous-work-settings.json` the same way
+as the schedule time and new-projects folder, and `run-autonomous-work.py`
+converts it to milliseconds. Default is 0h (any amount ahead skips the run,
+any amount behind allows it).
 
 **The newest snapshot is used however old it is — there is no freshness gate.**
 That is deliberate: the extension can only refresh while Chrome is running, so

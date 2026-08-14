@@ -66,6 +66,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "model": "sonnet",
                 "maxPromptDurationHours": 2.5,
                 "appendToAllPrompts": "Keep changes small.",
+                "paceThresholdHours": -2.5,
             }
         )
         self.assertEqual(result.schedule_hour, 3)
@@ -74,6 +75,7 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.model, "sonnet")
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
         self.assertEqual(result.append_to_all_prompts, "Keep changes small.")
+        self.assertEqual(result.pace_threshold_hours, -2.5)
 
     def test_out_of_range_hour_falls_back_to_default(self):
         result = settings_module.parse_settings({"scheduleHour": 24})
@@ -119,6 +121,28 @@ class ParseSettingsTests(unittest.TestCase):
         result = settings_module.parse_settings({"appendToAllPrompts": 123})
         self.assertEqual(result.append_to_all_prompts, settings_module.DEFAULT_APPEND_TO_ALL_PROMPTS)
 
+    def test_missing_pace_threshold_hours_falls_back_to_default(self):
+        result = settings_module.parse_settings({})
+        self.assertEqual(result.pace_threshold_hours, settings_module.DEFAULT_PACE_THRESHOLD_HOURS)
+
+    def test_negative_pace_threshold_hours_is_used(self):
+        # Unlike max prompt duration, negative (and zero) are meaningful here —
+        # they must not be coerced back to the default.
+        result = settings_module.parse_settings({"paceThresholdHours": -2})
+        self.assertEqual(result.pace_threshold_hours, -2)
+
+    def test_zero_pace_threshold_hours_is_used(self):
+        result = settings_module.parse_settings({"paceThresholdHours": 0})
+        self.assertEqual(result.pace_threshold_hours, 0)
+
+    def test_non_numeric_pace_threshold_hours_falls_back_to_default(self):
+        result = settings_module.parse_settings({"paceThresholdHours": "a lot"})
+        self.assertEqual(result.pace_threshold_hours, settings_module.DEFAULT_PACE_THRESHOLD_HOURS)
+
+    def test_bool_is_not_treated_as_a_valid_pace_threshold(self):
+        result = settings_module.parse_settings({"paceThresholdHours": True})
+        self.assertEqual(result.pace_threshold_hours, settings_module.DEFAULT_PACE_THRESHOLD_HOURS)
+
 
 class AutonomousWorkSettingsTests(unittest.TestCase):
     def test_new_projects_path_expands_user(self):
@@ -159,6 +183,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             model="haiku",
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",
+            pace_threshold_hours=-3.5,
         )
         settings_module.write_settings(settings)
         self.assertEqual(settings_module.read_settings(), settings)

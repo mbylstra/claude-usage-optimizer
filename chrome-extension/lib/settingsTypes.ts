@@ -31,6 +31,14 @@ export interface AutonomousWorkSettings {
    * what names a new project's directory.
    */
   appendToAllPrompts: string;
+  /**
+   * How far ahead of (positive) or behind (negative) an even weekly burn is
+   * still "on pace" — below this, the scheduler runs. E.g. `12` tolerates
+   * being 12h ahead before stopping; `-2` requires being at least 2h behind
+   * before starting. Hours, not milliseconds: `run-autonomous-work.py` is the
+   * one place that converts.
+   */
+  paceThresholdHours: number;
 }
 
 export interface ExtensionSettings {
@@ -47,6 +55,7 @@ export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
 export const DEFAULT_MODEL = 'opus';
 export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
 export const DEFAULT_APPEND_TO_ALL_PROMPTS = '';
+export const DEFAULT_PACE_THRESHOLD_HOURS = 0;
 
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
@@ -54,6 +63,7 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   model: DEFAULT_MODEL,
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
   appendToAllPrompts: DEFAULT_APPEND_TO_ALL_PROMPTS,
+  paceThresholdHours: DEFAULT_PACE_THRESHOLD_HOURS,
 };
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -84,6 +94,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     model?: unknown;
     maxPromptDurationHours?: unknown;
     appendToAllPrompts?: unknown;
+    paceThresholdHours?: unknown;
   };
 
   const newProjectsDirectory =
@@ -108,6 +119,14 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       ? autonomousWorkValue.appendToAllPrompts
       : DEFAULT_APPEND_TO_ALL_PROMPTS;
 
+  // Signed — 0 and negative values are both meaningful — so only non-finite
+  // values (missing, wrong type, NaN) fall back to the default.
+  const paceThresholdHours =
+    typeof autonomousWorkValue.paceThresholdHours === 'number' &&
+    Number.isFinite(autonomousWorkValue.paceThresholdHours)
+      ? autonomousWorkValue.paceThresholdHours
+      : DEFAULT_PACE_THRESHOLD_HOURS;
+
   return {
     notificationsEnabled:
       typeof notificationsEnabled === 'boolean'
@@ -119,6 +138,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       model,
       maxPromptDurationHours,
       appendToAllPrompts,
+      paceThresholdHours,
     },
   };
 }

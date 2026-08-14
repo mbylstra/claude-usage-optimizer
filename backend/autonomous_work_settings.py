@@ -58,6 +58,10 @@ DEFAULT_MAX_PROMPT_DURATION_HOURS = 5.0
 # Appended to every queued prompt before it is sent to `claude -p`. Empty by
 # default -- most installs run the queue's prompts unmodified.
 DEFAULT_APPEND_TO_ALL_PROMPTS = ""
+# Hours, signed: how far ahead of (positive) or behind (negative) an even
+# weekly burn still counts as on pace. `run-autonomous-work.py` is the one
+# place that converts to milliseconds.
+DEFAULT_PACE_THRESHOLD_HOURS = 0.0
 
 
 def _environment_path(name: str, default: Path) -> Path:
@@ -95,6 +99,7 @@ class AutonomousWorkSettings:
     model: str = DEFAULT_MODEL
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
     append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
+    pace_threshold_hours: float = DEFAULT_PACE_THRESHOLD_HOURS
 
     @property
     def new_projects_path(self) -> Path:
@@ -132,6 +137,18 @@ def _coerce_positive_hours(value: object, default: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return default
     if value <= 0:
+        return default
+    return float(value)
+
+
+def _coerce_signed_hours(value: object, default: float) -> float:
+    """Like `_coerce_positive_hours`, but for a value where negative and zero are meaningful.
+
+    Used for the pace threshold: negative means "must be behind by at least
+    this much," positive means "still on pace even this far ahead." Only a
+    wrong type is implausible enough to fall back — any signed value is real.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return default
     return float(value)
 
@@ -175,6 +192,9 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
             settings_data.get("maxPromptDurationHours"), DEFAULT_MAX_PROMPT_DURATION_HOURS
         ),
         append_to_all_prompts=append_to_all_prompts,
+        pace_threshold_hours=_coerce_signed_hours(
+            settings_data.get("paceThresholdHours"), DEFAULT_PACE_THRESHOLD_HOURS
+        ),
     )
 
 
@@ -199,6 +219,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "model": settings.model,
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
         "appendToAllPrompts": settings.append_to_all_prompts,
+        "paceThresholdHours": settings.pace_threshold_hours,
     }
 
     temporary_path = None
@@ -357,6 +378,7 @@ def main() -> int:
     print("Model for runs:     {}".format(settings.model))
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
+    print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))
     print("Settings file:      {}".format(SETTINGS_FILE))
     print(
         "Launch agent:       {}".format(
