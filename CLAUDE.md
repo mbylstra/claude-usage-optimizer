@@ -17,11 +17,15 @@ backend/             the native-messaging host + autonomous-work scheduler —
 findings/            postmortems
 marketing/           the Chrome Web Store listing assets
 plans/               design docs
+summaries/           what each night's run actually did, one file per day.
+                     Written by the scheduler, gitignored, for a person to read.
 ```
 
 `justfile` and `CLAUDE.md` stay at the repository root, as does `prompts.txt`
 (explained below) — everything else that is specific to one side lives inside
-its directory.
+its directory. `summaries/` is at the top level for the same reason
+`prompts.txt` is: the queue and the report on it are the two files here meant to
+be read and edited by hand, so neither is buried in `backend/`.
 
 ## Architecture — the rule that matters
 
@@ -198,6 +202,7 @@ just autonomous-status           # is it scheduled?
 just test-launchd-run            # run the queue through launchd, as the nightly job does
 
 just autonomous-log              # follow the run live
+just autonomous-summary          # what last night's session did (or a given day's)
 just autonomous-log-raw          # follow the raw stream-json events
 just autonomous-running          # is a run in flight?
 just cancel-autonomous-work      # stop an in-flight run
@@ -234,6 +239,34 @@ would happen must not disturb the record of what did.
 Two details that cost time to rediscover: `stdin` must be `DEVNULL` or `claude`
 spends three seconds waiting on an inherited stdin and warns about it; and
 `stderr` is merged into `stdout` because a second unread pipe can deadlock.
+
+**The morning-after summary — `summaries/YYYY-MM-DD.md`.** None of the three log
+files above answers the question you actually have over breakfast: which queued
+prompts ran, how each went, and why the session stopped when it did. So a
+session that ran at least one prompt appends its own section to the day's
+summary file, rendered by `autonomous_work_summary.py` (underscores, because
+`run-autonomous-work.py` imports it — the same constraint as
+`autonomous_work_settings.py`). `just autonomous-summary` prints the latest.
+
+Four things about it are deliberate:
+
+- **One file per day, appended to, not one per session.** A day holds the 2 AM
+  run and any number of "Run now" presses, and they belong together. The date is
+  the day the session _started_, so a run that crosses midnight stays in the
+  file you would look in.
+- **A session that ran nothing writes nothing.** The pace gate's decision is
+  already in the log, and a file every night saying "on pace, nothing to do"
+  would bury the ones describing real work.
+- **The per-prompt account is Claude's own closing message**, taken from the
+  `result` event. A prompt that timed out, wedged or was cancelled never emits
+  one, so the last assistant message is kept as it streams by and used instead —
+  "how far did it get" is the whole question in exactly those cases.
+- **A cancelled session still writes its summary**, from the SIGTERM handler,
+  before `os._exit`. Its entry is recorded with the status the cancel really
+  leaves behind (`todo`), and excluded from the "not attempted" list so it is
+  not counted twice.
+
+A dry run writes no summary, for the same reason it writes no run events.
 
 **Cancelling** needs `just cancel-autonomous-work` rather than a plain kill.
 The host starts the scheduler in its own session so the run survives Chrome

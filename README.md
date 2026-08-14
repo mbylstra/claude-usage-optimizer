@@ -414,6 +414,7 @@ just autonomous-dry-run          # what would run next, without running it
 just trigger-autonomous-work     # run now if behind pace (--force to ignore pace)
 just autonomous-run-and-watch    # run now and follow the log in one go
 just autonomous-log              # follow the run live
+just autonomous-summary          # what last night's session did (or a given day's)
 just autonomous-log-raw          # follow the raw stream-json events
 just autonomous-running          # is a run in flight?
 just cancel-autonomous-work      # stop an in-flight run
@@ -451,7 +452,27 @@ usage that ends a session instead of moving on to the next `todo`),
 `AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS` (default 5 hours, per prompt —
 also settable in hours from the extension's settings screen),
 `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` (which wins over the Settings screen, for a
-one-off run), and file-path overrides for the queue, log, snapshot and settings.
+one-off run), and file-path overrides for the queue, log, snapshot, settings and
+summaries folder.
+
+### The morning after
+
+Following a run live is the wrong tool at breakfast, so each session that ran at
+least one prompt writes up what it did in `summaries/YYYY-MM-DD.md`:
+
+```sh
+just autonomous-summary            # the most recent day
+just autonomous-summary 2026-08-15 # a particular one
+```
+
+Each day's file lists, per session, which queued prompts completed, which
+failed, which were left untouched, and why the session stopped — out of `todo`
+entries, back on pace, or the 5-hour window exhausted. Every prompt gets
+Claude's own closing message; a prompt that timed out or was cancelled never
+produces one, so its last message before it stopped is shown instead. A day
+holds one file however many times work ran, and a night that ran nothing writes
+nothing at all — the log already says why it declined. The folder is gitignored,
+like `prompts.txt`, since it describes your own task list.
 
 ### One deliberate rough edge
 

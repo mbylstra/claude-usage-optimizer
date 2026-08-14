@@ -199,6 +199,28 @@ autonomous-log lines="40":
     @touch backend/autonomous-work.log
     @tail -n {{ lines }} -f backend/autonomous-work.log
 
+# The morning-after digest for a day (default: the most recent one written)
+[no-exit-message]
+autonomous-summary day="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    summaries_directory="{{ justfile_directory() }}/summaries"
+    if [ -n "{{ day }}" ]; then
+      summary_file="$summaries_directory/{{ day }}.md"
+    else
+      # `|| true` because pipefail would otherwise make an empty (or absent)
+      # summaries folder exit the recipe silently, before the message below.
+      summary_file="$(ls -1 "$summaries_directory"/*.md 2>/dev/null | tail -n 1 || true)"
+    fi
+    if [ -z "${summary_file:-}" ] || [ ! -f "$summary_file" ]; then
+      echo "No summary to show. One is written whenever a session runs at least"
+      echo "one prompt — 'ls summaries/' for the days that have one."
+      exit 0
+    fi
+    echo "$summary_file"
+    echo
+    cat "$summary_file"
+
 # Follow the raw stream-json events, for when a summary line is not enough
 [no-exit-message]
 autonomous-log-raw lines="10":

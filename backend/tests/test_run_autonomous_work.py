@@ -38,6 +38,7 @@ os.environ.update(
         "AUTONOMOUS_WORK_LOG_FILE": str(_TEMP_PATH / "autonomous-work.log"),
         "AUTONOMOUS_WORK_EVENT_FILE": str(_TEMP_PATH / "autonomous-work.jsonl"),
         "AUTONOMOUS_WORK_RUN_EVENT_FILE": str(_TEMP_PATH / "autonomous-run-events.jsonl"),
+        "AUTONOMOUS_WORK_SUMMARIES_DIR": str(_TEMP_PATH / "summaries"),
         "AUTONOMOUS_WORK_NEW_PROJECTS_DIR": str(_TEMP_PATH / "projects"),
         "AUTONOMOUS_WORK_SETTINGS_FILE": str(_TEMP_PATH / "autonomous-work-settings.json"),
         "AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS": "5",
@@ -484,6 +485,102 @@ class DetermineOutcomeTests(unittest.TestCase):
 
     def test_background_task_timeout_with_nonzero_exit_stays_error(self):
         self.assertEqual(work.determine_outcome(1, False, True), (1, "error"))
+
+
+class ClaudeOutputCollectorTests(unittest.TestCase):
+    """What the day's summary is able to say about a prompt, given its stream."""
+
+    def test_prefers_the_result_events_text(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking out loud"}]}}
+        )
+        collector.observe({"type": "result", "result": "Done — shipped it.", "num_turns": 9})
+
+        self.assertEqual(collector.closing_text, "Done — shipped it.")
+
+    def test_falls_back_to_the_last_assistant_message_when_no_result_arrives(self):
+        # A timed-out, wedged or cancelled prompt never emits a result event, and
+        # "how far did it get" is exactly what the summary must answer then.
+        collector = work.ClaudeOutputCollector()
+        collector.observe({"type": "assistant", "message": {"content": [{"type": "text", "text": "first"}]}})
+        collector.observe({"type": "assistant", "message": {"content": [{"type": "text", "text": "second"}]}})
+
+        self.assertEqual(collector.closing_text, "second")
+
+    def test_tool_use_blocks_do_not_count_as_a_closing_message(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe({"type": "assistant", "message": {"content": [{"type": "text", "text": "on it"}]}})
+        collector.observe(
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]}}
+        )
+
+        self.assertEqual(collector.closing_text, "on it")
+
+    def test_collects_turns_and_cost(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe({"type": "result", "result": "done", "num_turns": 25, "total_cost_usd": 1.056})
+
+        self.assertEqual(collector.turns, 25)
+        self.assertAlmostEqual(collector.cost_usd, 1.056)
+
+    def test_missing_fields_stay_none(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe({"type": "result", "subtype": "error"})
+
+        self.assertIsNone(collector.closing_text)
+        self.assertIsNone(collector.turns)
+        self.assertIsNone(collector.cost_usd)
+
+    def test_ignores_unrelated_events(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe({"type": "system", "subtype": "init", "model": "claude-opus-5"})
+
+        self.assertIsNone(collector.closing_text)
+
+
+class RemainingTodoPromptsTests(unittest.TestCase):
+    def setUp(self):
+        work.QUEUE_FILE.write_text(
+            "\n".join(
+                [
+                    "STATUS: completed",
+                    "Already done",
+                    "===",
+                    "STATUS: todo",
+                    "Cancelled part way",
+                    "===",
+                    "STATUS: todo",
+                    "Never reached",
+                    "===",
+                    "STATUS: draft",
+                    "Still being written",
+                    "===",
+                    "STATUS: error",
+                    "Failed earlier",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        work.QUEUE_FILE.unlink(missing_ok=True)
+
+    def test_lists_todo_entries_in_queue_order(self):
+        self.assertEqual(
+            work.remaining_todo_prompts([]), ["Cancelled part way", "Never reached"]
+        )
+
+    def test_excludes_prompts_this_session_already_attempted(self):
+        # A cancelled prompt is deliberately left as `todo`; it belongs in the
+        # summary as the one that was cut short, not again as one never reached.
+        self.assertEqual(
+            work.remaining_todo_prompts(["Cancelled part way"]), ["Never reached"]
+        )
+
+    def test_missing_queue_file_is_not_an_error(self):
+        work.QUEUE_FILE.unlink(missing_ok=True)
+        self.assertEqual(work.remaining_todo_prompts([]), [])
 
 
 class QueueStatusForOutcomeTests(unittest.TestCase):
