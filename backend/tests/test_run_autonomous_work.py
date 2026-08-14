@@ -238,6 +238,13 @@ class ParseQueueTests(unittest.TestCase):
         self.assertEqual(entries[1].repository_path, Path(os.path.expanduser("~/code/foo")))
         self.assertEqual(entries[1].prompt, "Already done.")
 
+    def test_draft_status_is_parsed_like_any_other(self):
+        text = "\n".join(["===", "STATUS: Draft", "Not ready yet."])
+        entries = work.parse_queue(text.split("\n"))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].status, work.STATUS_DRAFT)
+        self.assertEqual(entries[0].prompt, "Not ready yet.")
+
     def test_section_without_status_is_ignored(self):
         text = "\n".join(["===", "Just some notes, no STATUS line."])
         entries = work.parse_queue(text.split("\n"))
@@ -271,6 +278,23 @@ class FindNextTodoTests(unittest.TestCase):
     def test_none_when_no_todo(self):
         entries = [
             work.QueueEntry(status="completed", status_line_index=0, repository_path=None, prompt="done"),
+        ]
+        self.assertIsNone(work.find_next_todo(entries))
+
+    def test_draft_is_skipped_in_favour_of_a_later_todo(self):
+        entries = [
+            work.QueueEntry(
+                status=work.STATUS_DRAFT, status_line_index=0, repository_path=None, prompt="still writing"
+            ),
+            work.QueueEntry(status="todo", status_line_index=1, repository_path=None, prompt="do this"),
+        ]
+        self.assertIs(work.find_next_todo(entries), entries[1])
+
+    def test_none_when_only_drafts_remain(self):
+        entries = [
+            work.QueueEntry(
+                status=work.STATUS_DRAFT, status_line_index=0, repository_path=None, prompt="still writing"
+            ),
         ]
         self.assertIsNone(work.find_next_todo(entries))
 

@@ -42,6 +42,10 @@ MILLISECONDS_PER_HOUR = 3_600_000
 STATUS_TODO = "todo"
 STATUS_COMPLETED = "completed"
 STATUS_ERROR = "error"
+# A prompt still being written, so not ready to run. Skipped without any special
+# casing — `find_next_todo` picks up `todo` and nothing else — and named here
+# only so the queue's vocabulary is stated in one place.
+STATUS_DRAFT = "draft"
 
 SECTION_SEPARATOR_PREFIX = "==="
 STATUS_FIELD_PREFIX = "STATUS:"
@@ -980,7 +984,7 @@ def main() -> int:
 
         next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
-            log_message("No todo prompts in queue (all completed, errored or empty)")
+            log_message("No todo prompts in queue (all completed, errored, draft or empty)")
             return 0
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
@@ -1015,8 +1019,8 @@ def main() -> int:
 
         next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
-            log_message("No todo prompts in queue (all completed, errored or empty)")
-            events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored or empty)")
+            log_message("No todo prompts in queue (all completed, errored, draft or empty)")
+            events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored, draft or empty)")
             break
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
