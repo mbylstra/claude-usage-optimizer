@@ -31,11 +31,13 @@ from pathlib import Path
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIRECTORY.parent
 
-# Sibling module, importable because Python puts this script's directory on
-# sys.path. It owns the settings the Chrome extension mirrors to disk.
+# Sibling modules, importable because Python puts this script's directory on
+# sys.path. One owns the settings the Chrome extension mirrors to disk, the
+# other the morning-after digest this script writes when a session ends.
 sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
 import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
+import autonomous_work_summary  # noqa: E402  (same)
 
 MILLISECONDS_PER_HOUR = 3_600_000
 
@@ -107,6 +109,12 @@ RAW_EVENT_FILE = environment_path(
 # or working directory a run used.
 RUN_EVENT_FILE = environment_path(
     "AUTONOMOUS_WORK_RUN_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-run-events.jsonl"
+)
+# The morning-after digest: one file per day, one section per session. At the
+# repository root rather than beside this script, for the same reason
+# `prompts.txt` is — it is written for a person to read, not for the machinery.
+SUMMARIES_DIRECTORY = environment_path(
+    "AUTONOMOUS_WORK_SUMMARIES_DIR", PROJECT_ROOT / "summaries"
 )
 # How many runs the file keeps. Trimmed on each start rather than by a separate
 # rotation job, since a run start is the only moment the boundaries are known to
@@ -819,19 +827,95 @@ def queue_status_for_outcome(outcome: str) -> str:
     return STATUS_COMPLETED if outcome == "completed" else STATUS_ERROR
 
 
+class ClaudeOutputCollector:
+    """What the day's summary needs out of the stream, gathered as it goes by.
+
+    The last assistant message is tracked as well as the `result` event, because
+    a prompt that timed out, wedged or was cancelled never emits a result — and
+    "how far did it get before it stopped" is exactly what the summary has to
+    answer in that case. Pure: it only ever looks at events handed to it, so the
+    extraction can be unit-tested against recorded stream-json.
+    """
+
+    def __init__(self) -> None:
+        self.result_text: str | None = None
+        self.latest_assistant_text: str | None = None
+        self.turns: int | None = None
+        self.cost_usd: float | None = None
+
+    def observe(self, event: dict) -> None:
+        event_type = event.get("type")
+
+        if event_type == "assistant":
+            content = event.get("message", {}).get("content", [])
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = str(block.get("text", "")).strip()
+                    if text:
+                        self.latest_assistant_text = text
+
+        elif event_type == "result":
+            result_text = event.get("result")
+            if isinstance(result_text, str) and result_text.strip():
+                self.result_text = result_text.strip()
+            turns = event.get("num_turns")
+            if isinstance(turns, int):
+                self.turns = turns
+            cost = event.get("total_cost_usd")
+            if isinstance(cost, (int, float)):
+                self.cost_usd = float(cost)
+
+    @property
+    def closing_text(self) -> str | None:
+        return self.result_text or self.latest_assistant_text
+
+
+@dataclass(frozen=True)
+class PromptRunResult:
+    """One prompt's outcome, plus what the day's summary reports about it.
+
+    It carries its own start and end times rather than leaving the caller to
+    take them: only `run_claude` knows when the prompt actually began, and a
+    second clock reading in `main` would drift from it for no reason.
+    """
+
+    exit_code: int
+    outcome: str
+    started_at: datetime
+    finished_at: datetime
+    result_text: str | None = None
+    turns: int | None = None
+    cost_usd: float | None = None
+
+
 def run_claude(
     entry: QueueEntry,
     working_directory: Path,
     is_new_project: bool,
     events: RunEventStream,
     forced: bool,
-) -> tuple[int, str]:
-    """Execute one queued prompt. Returns its exit code and the outcome to record."""
+    session: autonomous_work_summary.SessionSummary,
+) -> PromptRunResult:
+    """Execute one queued prompt, and report how it went."""
     prompt_text = build_prompt(entry.prompt)
     events.started(working_directory, is_new_project, prompt_text, forced)
+    started_at = datetime.now()
+    output = ClaudeOutputCollector()
+
+    def run_result(
+        exit_code: int,
+        outcome: str,
+        result_text: str | None = None,
+        turns: int | None = None,
+        cost_usd: float | None = None,
+    ) -> PromptRunResult:
+        """This prompt's result, stamped with the times only this function knows."""
+        return PromptRunResult(
+            exit_code, outcome, started_at, datetime.now(), result_text, turns, cost_usd
+        )
 
     if not prepare_working_directory(working_directory, is_new_project):
-        return 1, "error"
+        return run_result(1, "error", result_text=f"Could not prepare {working_directory}")
 
     log_message(
         f"Running queued prompt in {working_directory}"
@@ -846,6 +930,25 @@ def run_claude(
     def record_cancellation(signal_number: int, _frame: object) -> None:
         events.finished("cancelled", -signal_number)
         log_message("Cancelled (SIGTERM) — the queue entry is left as todo")
+        # A cancelled night is one of the nights you most want a record of, so
+        # the summary is written from here too — with the entry's real status,
+        # `todo`, rather than the one a completed run would have left.
+        session.record_attempt(
+            autonomous_work_summary.PromptAttempt(
+                prompt=entry.prompt,
+                working_directory=str(working_directory),
+                is_new_project=is_new_project,
+                outcome=autonomous_work_summary.OUTCOME_CANCELLED,
+                queue_status=STATUS_TODO,
+                result_text=output.closing_text,
+                started_at=started_at,
+                finished_at=datetime.now(),
+                turns=output.turns,
+                cost_usd=output.cost_usd,
+            )
+        )
+        session.stop(autonomous_work_summary.OUTCOME_CANCELLED)
+        finish_session(session)
         os._exit(143)
 
     previous_termination_handler = signal.signal(signal.SIGTERM, record_cancellation)
@@ -873,7 +976,7 @@ def run_claude(
             message = "`claude` not found on PATH — check the launchd PATH setting"
             log_message(message)
             events.claude_output(message)
-            return 1, "error"
+            return run_result(1, "error", result_text=message)
 
         # System sleep freezes the network connection carrying claude's response
         # with no error on either side — the CLI's own background-task wait
@@ -927,6 +1030,7 @@ def run_claude(
 
                     if isinstance(event, dict):
                         events.claude_event(event)
+                        output.observe(event)
                         for summary in summarise_stream_event(event):
                             log_message(summary)
 
@@ -950,9 +1054,60 @@ def run_claude(
         else:
             log_message(f"Prompt finished with exit code {exit_code}")
 
-        return result_exit_code, outcome
+        return run_result(
+            result_exit_code,
+            outcome,
+            result_text=output.closing_text,
+            turns=output.turns,
+            cost_usd=output.cost_usd,
+        )
     finally:
         signal.signal(signal.SIGTERM, previous_termination_handler)
+
+
+# --------------------------------------------------------------------------- #
+# Session summary
+# --------------------------------------------------------------------------- #
+
+
+def remaining_todo_prompts(already_attempted: list[str]) -> list[str]:
+    """Queue entries still marked `todo`, in the order they would be picked up.
+
+    `already_attempted` is excluded because a cancelled prompt is deliberately
+    left as `todo` — it belongs in the summary as the prompt that was cut short,
+    not a second time as one that was never reached.
+    """
+    queue_lines = read_queue_lines()
+    if queue_lines is None:
+        return []
+    return [
+        entry.prompt
+        for entry in parse_queue(queue_lines)
+        if entry.status == STATUS_TODO and entry.prompt and entry.prompt not in already_attempted
+    ]
+
+
+def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
+    """Close the session record off and append it to the day's summary file.
+
+    Called from the end of `main` and from the cancellation handler, which are
+    the only two ways a session ends. A session that ran nothing writes no file:
+    the gate's decision is already in the log, and a summary every night saying
+    "nothing to do" would bury the ones that describe actual work.
+    """
+    session.finished_at = datetime.now()
+    session.not_attempted = remaining_todo_prompts(
+        [attempt.prompt for attempt in session.attempts]
+    )
+
+    if not session.attempts:
+        return
+
+    summary_path = autonomous_work_summary.write_session_summary(SUMMARIES_DIRECTORY, session)
+    if summary_path is None:
+        log_message(f"Could not write the session summary under {SUMMARIES_DIRECTORY}")
+    else:
+        log_message(f"Session summary written to {summary_path}")
 
 
 def main() -> int:
@@ -999,6 +1154,11 @@ def main() -> int:
     # stops rather than draining the queue unattended.
     prompts_run = 0
     final_exit_code = 0
+    # Accumulated across every prompt in the session, and written out once at the
+    # end as the day's summary — see `finish_session`.
+    session = autonomous_work_summary.SessionSummary(
+        started_at=datetime.now(), forced=arguments.force
+    )
 
     while True:
         gate = check_pace_gate(arguments.force)
@@ -1010,37 +1170,58 @@ def main() -> int:
 
         if not gate.ok:
             events.skipped(gate.reason, gate.detail)
+            session.stop(gate.reason, gate.detail)
             break
 
         queue_lines = read_queue_lines()
         if queue_lines is None:
             events.skipped("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
+            session.stop("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
             break
 
         next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
             log_message("No todo prompts in queue (all completed, errored, draft or empty)")
             events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored, draft or empty)")
+            session.stop("emptyQueue")
             break
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
-        exit_code, outcome = run_claude(
-            next_entry, working_directory, is_new_project, events, arguments.force
+        prompt_result = run_claude(
+            next_entry, working_directory, is_new_project, events, arguments.force, session
         )
-        queue_status = queue_status_for_outcome(outcome)
+        queue_status = queue_status_for_outcome(prompt_result.outcome)
         write_queue_status(next_entry.status_line_index, queue_status)
         # Last, so the terminal event is only written once the queue reflects the
         # outcome the viewer is about to show.
-        events.finished(outcome, exit_code, queue_status)
+        events.finished(prompt_result.outcome, prompt_result.exit_code, queue_status)
+
+        session.record_attempt(
+            autonomous_work_summary.PromptAttempt(
+                prompt=next_entry.prompt,
+                working_directory=str(working_directory),
+                is_new_project=is_new_project,
+                outcome=prompt_result.outcome,
+                queue_status=queue_status,
+                result_text=prompt_result.result_text,
+                started_at=prompt_result.started_at,
+                finished_at=prompt_result.finished_at,
+                turns=prompt_result.turns,
+                cost_usd=prompt_result.cost_usd,
+            )
+        )
 
         prompts_run += 1
-        final_exit_code = exit_code
+        final_exit_code = prompt_result.exit_code
 
         if arguments.force:
+            session.stop("forcedSingleRun")
             break
 
     if prompts_run > 1:
         log_message(f"Autonomous work session finished after {prompts_run} prompts")
+
+    finish_session(session)
 
     return final_exit_code
 

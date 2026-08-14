@@ -10,6 +10,10 @@ dist-storybook/
 # run rewrote a STATUS line. Start from prompts.example.txt.
 prompts.txt
 
+# The morning-after digests, one per day. Untracked for the same reasons as the
+# queue they describe: personal task content, rewritten by every run.
+summaries/
+
 # The native host imports a sibling module, so Chrome leaves bytecode here
 backend/__pycache__/
 backend/tests/__pycache__/
