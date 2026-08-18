@@ -35,6 +35,9 @@ OUTCOME_COMPLETED = "completed"
 OUTCOME_ERROR = "error"
 OUTCOME_TIMEOUT = "timeout"
 OUTCOME_CANCELLED = "cancelled"
+# The prompt was refused by a subscription limit before it did anything, so the
+# queue entry stays `todo`. Not a failure, and counted separately from one.
+OUTCOME_SESSION_LIMIT = "sessionLimit"
 
 # Why the session stopped. The first four are the pace gate's own reason codes,
 # passed straight through, so the prose here stays in step with the gate rather
@@ -51,6 +54,11 @@ STOP_REASON_DESCRIPTIONS = {
     ),
     "forcedSingleRun": "A forced run (`--force`), which runs exactly one prompt and stops.",
     "cancelled": "Cancelled while a prompt was still running.",
+    OUTCOME_SESSION_LIMIT: (
+        "A subscription limit was reached. It does not lift for hours, so the run ended rather "
+        "than offering the rest of the queue up to be refused one prompt at a time. Nothing was "
+        "spent and the entry is still `todo`."
+    ),
 }
 
 OUTCOME_LABELS = {
@@ -58,7 +66,17 @@ OUTCOME_LABELS = {
     OUTCOME_ERROR: "Failed",
     OUTCOME_TIMEOUT: "Failed (ran past its time limit and was killed)",
     OUTCOME_CANCELLED: "Cancelled part-way through",
+    OUTCOME_SESSION_LIMIT: "Not run (subscription limit reached — still queued)",
 }
+
+# The heading over Claude's closing message. A prompt that ran has something to
+# report; one that was cut short has only got as far as it got; one refused by a
+# limit never spoke at all, and the text is the CLI's notice.
+RESULT_TEXT_HEADINGS = {
+    OUTCOME_COMPLETED: "**What it reported**",
+    OUTCOME_SESSION_LIMIT: "**What the CLI reported**",
+}
+DEFAULT_RESULT_TEXT_HEADING = "**Where it got to** (its last message before the run ended)"
 
 
 @dataclass
@@ -177,11 +195,7 @@ def render_attempt(attempt: PromptAttempt) -> list[str]:
     lines.extend(["", "**Prompt**", "", f"> {prompt_excerpt}", ""])
 
     if attempt.result_text:
-        heading = (
-            "**What it reported**"
-            if attempt.succeeded
-            else "**Where it got to** (its last message before the run ended)"
-        )
+        heading = RESULT_TEXT_HEADINGS.get(attempt.outcome, DEFAULT_RESULT_TEXT_HEADING)
         lines.extend([heading, "", truncate(attempt.result_text, RESULT_TEXT_CHARACTER_LIMIT), ""])
     else:
         lines.extend(
@@ -197,11 +211,18 @@ def render_counts(summary: SessionSummary) -> str:
     cancelled_count = sum(
         1 for attempt in summary.attempts if attempt.outcome == OUTCOME_CANCELLED
     )
-    failed_count = len(summary.attempts) - completed_count - cancelled_count
+    # Counted apart from the failures, and subtracted from them: a prompt the
+    # subscription limit refused did nothing wrong and is still queued.
+    limited_count = sum(
+        1 for attempt in summary.attempts if attempt.outcome == OUTCOME_SESSION_LIMIT
+    )
+    failed_count = len(summary.attempts) - completed_count - cancelled_count - limited_count
 
     breakdown = [f"{completed_count} completed", f"{failed_count} failed"]
     if cancelled_count:
         breakdown.append(f"{cancelled_count} cancelled")
+    if limited_count:
+        breakdown.append(f"{limited_count} stopped by the subscription limit")
 
     attempted = f"{len(summary.attempts)} prompt{'' if len(summary.attempts) == 1 else 's'} attempted"
     queued = (

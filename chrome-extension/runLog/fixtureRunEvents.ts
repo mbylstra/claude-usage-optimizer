@@ -157,6 +157,46 @@ export const CANCELLED_RUN_EVENTS: AutonomousRunEvent[] = [
   },
 ];
 
+/**
+ * A prompt refused by a subscription limit: the CLI answers with one synthetic
+ * assistant message and exits, so there is nothing else to show. The queue entry
+ * stays `todo`, which is why this must not read as a failure.
+ */
+export const SESSION_LIMIT_RUN_EVENTS: AutonomousRunEvent[] = [
+  RUN_START,
+  claudeEvent(3, {
+    type: 'system',
+    subtype: 'init',
+    session_id: SESSION_ID,
+    model: 'claude-opus-5',
+    permissionMode: 'auto',
+  }),
+  claudeEvent(4, {
+    type: 'assistant',
+    session_id: SESSION_ID,
+    message: {
+      role: 'assistant',
+      model: '<synthetic>',
+      content: [
+        {
+          type: 'text',
+          text: "You've hit your session limit · resets 3:50am (Australia/Melbourne)",
+        },
+      ],
+    },
+    error: 'rate_limit',
+    is_api_error_message: true,
+  }),
+  {
+    type: 'runFinished',
+    runId: RUN_ID,
+    at: at(5),
+    outcome: 'sessionLimit',
+    exitCode: 0,
+    queueStatus: 'todo',
+  },
+];
+
 /** What the nightly job leaves behind on a night the week is already on pace. */
 export const SKIPPED_RUN_EVENTS: AutonomousRunEvent[] = [
   {

@@ -46,6 +46,7 @@ const STATUS_DOT_CLASSES: Record<AutonomousRunStatus, string> = {
   error: 'bg-destructive',
   timeout: 'bg-pace-ahead-severe',
   cancelled: 'bg-muted-foreground',
+  sessionLimit: 'bg-muted-foreground',
   skipped: 'bg-muted-foreground',
 };
 
