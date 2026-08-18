@@ -178,6 +178,30 @@ class RenderSessionSummaryTests(unittest.TestCase):
         self.assertIn("Where it got to", rendered)
         self.assertIn("Half way through the refactor.", rendered)
 
+    def test_session_limit_is_not_counted_as_a_failure(self):
+        session = build_session()
+        session.record_attempt(
+            build_attempt(
+                prompt="Ship the thing",
+                outcome=summary_module.OUTCOME_SESSION_LIMIT,
+                queue_status="todo",
+                result_text="You've hit your session limit · resets 3:50am (Australia/Melbourne)",
+            )
+        )
+        session.stop(summary_module.OUTCOME_SESSION_LIMIT)
+
+        rendered = summary_module.render_session_summary(session)
+
+        self.assertIn("### Not run (subscription limit reached — still queued)", rendered)
+        self.assertIn("Queue entry left as `todo`", rendered)
+        # Nothing failed here — the prompt was refused before it ran.
+        self.assertIn(
+            "1 prompt attempted: 0 completed, 0 failed, 1 stopped by the subscription limit.",
+            rendered,
+        )
+        self.assertIn("What the CLI reported", rendered)
+        self.assertIn("A subscription limit was reached", rendered)
+
     def test_empty_not_attempted_list_says_so(self):
         session = build_session()
         session.record_attempt(build_attempt())

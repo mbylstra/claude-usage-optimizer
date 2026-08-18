@@ -158,12 +158,31 @@ rationale in `plans/autonomous-credit-utilization.md`.
 
 It does not stop after one prompt: `run-autonomous-work.py` re-checks pace
 before every queued item and keeps going as long as it is still behind. A
-session ends when it runs out of `todo` entries, catches back up to pace, or
-the 5-hour session window itself reports exhausted — and that last case ends
-the run rather than sitting idle for up to five hours waiting for the window to
-reset, since it does not refill early. `--force` (used by "Run now" and by the
-test recipes) is the one path that stays single-shot: it bypasses the pace
-check it exists to keep re-evaluating, so it runs exactly one prompt.
+session ends when it runs out of `todo` entries, catches back up to pace, the
+5-hour session window itself reports exhausted, or the CLI refuses a prompt
+because a subscription limit has been reached — and those last two end the run
+rather than sitting idle for up to five hours waiting for the window to reset,
+since it does not refill early. `--force` (used by "Run now" and by the test
+recipes) is the one path that stays single-shot: it bypasses the pace check it
+exists to keep re-evaluating, so it runs exactly one prompt.
+
+**A prompt refused by a subscription limit is left `todo`, not marked as an
+error.** It never ran, so failing it would skip it until somebody edited
+`prompts.txt` by hand — the one outcome that costs work rather than just time.
+The snapshot's own exhaustion figure cannot cover this: it can be hours stale,
+it says nothing about the weekly or Opus-specific limits, and the limit can be
+reached part-way through a session that started with headroom. So the CLI's
+refusal is read out of the stream instead, by `session_limit_message` —
+a synthetic assistant message carrying `error: "rate_limit"`, after which the
+process **exits 1, indistinguishable from a prompt that genuinely failed**,
+which is exactly why `determine_outcome` has to be told about it and reports
+exit code 0. The structured field is trusted on its own; the wording is matched
+only as a fallback, and only on a message the CLI has already flagged as an API
+error or a failed result — matching it against ordinary assistant prose would
+make any prompt that discusses rate limits (this section, for instance) look
+like it hit one. The rest of the queue is not offered up afterwards: the limit
+does not lift for hours, so every remaining entry would be picked up only to be
+refused a second later.
 
 The extension is the data source. After each successful refresh
 `exportUsageSnapshot` hands the figures to a **native-messaging host**,
@@ -373,7 +392,9 @@ each has a required `STATUS: todo|completed|error|draft`, an optional `REPO:`,
 and a multi-line prompt. The scheduler takes the first `todo`, runs it, rewrites
 that status to `completed` or `error`, and — while a pace-gated run — loops back
 for the next `todo` rather than stopping. Failed items are skipped until you
-edit them back to `todo`. `draft` is skipped the same way — it needs no special
+edit them back to `todo`. Only two outcomes leave the status alone: a cancelled
+prompt and one a subscription limit refused, both of which are picked up again
+by the next run. `draft` is skipped the same way — it needs no special
 casing in `run-autonomous-work.py`, since `find_next_todo` already ignores any
 status that isn't `todo`; it exists purely so a prompt you're still drafting
 has a name other than `todo` to sit under.

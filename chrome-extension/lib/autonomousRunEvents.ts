@@ -10,7 +10,11 @@
  * one event grew a field would be worse than useless.
  */
 
-export type RunOutcome = 'completed' | 'error' | 'timeout' | 'cancelled';
+/**
+ * `sessionLimit` is not a failure: the subscription limit refused the prompt
+ * before it did anything, and the scheduler leaves the queue entry `todo`.
+ */
+export type RunOutcome = 'completed' | 'error' | 'timeout' | 'cancelled' | 'sessionLimit';
 
 export type RunSkipReason = 'onPace' | 'emptyQueue' | 'noSnapshot';
 
@@ -68,7 +72,13 @@ export type AutonomousRunEvent =
 /** The events that begin a run. The viewer shows the events after the last one. */
 export type RunBoundaryEvent = RunStartedEvent | RunSkippedEvent;
 
-const RUN_OUTCOMES: readonly string[] = ['completed', 'error', 'timeout', 'cancelled'];
+const RUN_OUTCOMES: readonly string[] = [
+  'completed',
+  'error',
+  'timeout',
+  'cancelled',
+  'sessionLimit',
+];
 const RUN_SKIP_REASONS: readonly string[] = ['onPace', 'emptyQueue', 'noSnapshot'];
 
 function readString(source: Record<string, unknown>, field: string, fallback = ''): string {

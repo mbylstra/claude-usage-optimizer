@@ -486,6 +486,94 @@ class DetermineOutcomeTests(unittest.TestCase):
     def test_background_task_timeout_with_nonzero_exit_stays_error(self):
         self.assertEqual(work.determine_outcome(1, False, True), (1, "error"))
 
+    def test_session_limit_overrides_the_nonzero_exit_it_arrives_with(self):
+        # The CLI exits 1 on a subscription limit, which is indistinguishable
+        # from a genuine failure without the stream.
+        self.assertEqual(
+            work.determine_outcome(1, False, False, True), (0, work.OUTCOME_SESSION_LIMIT)
+        )
+
+    def test_session_limit_outranks_the_watchdog(self):
+        self.assertEqual(
+            work.determine_outcome(1, True, True, True), (0, work.OUTCOME_SESSION_LIMIT)
+        )
+
+    def test_no_session_limit_keeps_the_previous_behaviour(self):
+        self.assertEqual(work.determine_outcome(0, False, False, False), (0, "completed"))
+
+
+class SessionLimitMessageTests(unittest.TestCase):
+    """Recognising the CLI's limit notice — the only signal there is."""
+
+    # Recorded verbatim from a real 2026-08-17 run that was wrongly marked as an
+    # error; the fields it carries are what the detection keys off.
+    REAL_NOTICE = {
+        "type": "assistant",
+        "message": {
+            "model": "<synthetic>",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "You've hit your session limit · resets 3:50am (Australia/Melbourne)",
+                }
+            ],
+        },
+        "error": "rate_limit",
+        "is_api_error_message": True,
+    }
+
+    def test_recognises_a_real_rate_limited_assistant_event(self):
+        self.assertEqual(
+            work.session_limit_message(self.REAL_NOTICE),
+            "You've hit your session limit · resets 3:50am (Australia/Melbourne)",
+        )
+
+    def test_error_code_alone_is_enough_even_with_unfamiliar_wording(self):
+        # The wording is the CLI's and changes; the field is structured.
+        event = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Try again later."}]},
+            "error": "rate_limit",
+        }
+        self.assertEqual(work.session_limit_message(event), "Try again later.")
+
+    def test_api_error_message_without_the_code_still_matches_on_wording(self):
+        event = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Claude usage limit reached."}]},
+            "is_api_error_message": True,
+        }
+        self.assertEqual(work.session_limit_message(event), "Claude usage limit reached.")
+
+    def test_failed_result_event_carrying_the_notice_matches(self):
+        event = {"type": "result", "is_error": True, "result": "You've hit your weekly limit"}
+        self.assertEqual(work.session_limit_message(event), "You've hit your weekly limit")
+
+    def test_ordinary_prose_about_limits_is_not_a_limit(self):
+        # A prompt about this very feature must not look like it hit one.
+        event = {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "I changed how the session limit is handled."}]
+            },
+        }
+        self.assertIsNone(work.session_limit_message(event))
+
+    def test_an_unrelated_api_error_is_not_a_limit(self):
+        event = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "API Error: 500 internal"}]},
+            "is_api_error_message": True,
+        }
+        self.assertIsNone(work.session_limit_message(event))
+
+    def test_a_successful_result_mentioning_limits_is_not_a_limit(self):
+        event = {"type": "result", "is_error": False, "result": "Documented the usage limit."}
+        self.assertIsNone(work.session_limit_message(event))
+
+    def test_unrelated_event_types_are_ignored(self):
+        self.assertIsNone(work.session_limit_message({"type": "system", "subtype": "init"}))
+
 
 class ClaudeOutputCollectorTests(unittest.TestCase):
     """What the day's summary is able to say about a prompt, given its stream."""
@@ -537,6 +625,20 @@ class ClaudeOutputCollectorTests(unittest.TestCase):
         collector.observe({"type": "system", "subtype": "init", "model": "claude-opus-5"})
 
         self.assertIsNone(collector.closing_text)
+
+    def test_notices_a_session_limit_and_keeps_its_wording(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe(SessionLimitMessageTests.REAL_NOTICE)
+
+        self.assertTrue(collector.hit_session_limit)
+        self.assertIn("session limit", collector.session_limit_notice)
+
+    def test_a_run_that_never_hit_a_limit_says_so(self):
+        collector = work.ClaudeOutputCollector()
+        collector.observe({"type": "result", "result": "Done.", "num_turns": 3})
+
+        self.assertFalse(collector.hit_session_limit)
+        self.assertIsNone(collector.session_limit_notice)
 
 
 class RemainingTodoPromptsTests(unittest.TestCase):
@@ -592,6 +694,13 @@ class QueueStatusForOutcomeTests(unittest.TestCase):
 
     def test_timeout_maps_to_error_status(self):
         self.assertEqual(work.queue_status_for_outcome("timeout"), work.STATUS_ERROR)
+
+    def test_session_limit_leaves_the_entry_todo(self):
+        # The whole point: a prompt the subscription limit refused never ran, so
+        # it must stay queued rather than be skipped for good as an error.
+        self.assertEqual(
+            work.queue_status_for_outcome(work.OUTCOME_SESSION_LIMIT), work.STATUS_TODO
+        )
 
     def test_zero_exit_code_error_outcome_is_not_marked_completed(self):
         # The exact bug findings/song-ratings-vinyl-prompt-stall.md describes:

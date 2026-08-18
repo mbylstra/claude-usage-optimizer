@@ -49,6 +49,10 @@ STATUS_ERROR = "error"
 # only so the queue's vocabulary is stated in one place.
 STATUS_DRAFT = "draft"
 
+# Aliased from the summary module rather than spelled again, so the run-event
+# stream the viewer reads and the day's summary can never disagree about it.
+OUTCOME_SESSION_LIMIT = autonomous_work_summary.OUTCOME_SESSION_LIMIT
+
 SECTION_SEPARATOR_PREFIX = "==="
 STATUS_FIELD_PREFIX = "STATUS:"
 REPOSITORY_FIELD_PREFIX = "REPO:"
@@ -59,6 +63,24 @@ REPOSITORY_FIELD_PREFIX = "REPO:"
 # exits 0 — see findings/song-ratings-vinyl-prompt-stall.md. Matched as a
 # substring so a differently-configured ceiling value doesn't break the check.
 BACKGROUND_TASK_TIMEOUT_MARKER = "Background tasks still running after"
+
+# The CLI's own account of hitting a subscription limit, e.g. "You've hit your
+# session limit · resets 3:50am (Australia/Melbourne)". It arrives as a
+# synthetic assistant message carrying `error: "rate_limit"`, and the process
+# then exits 1 having done nothing at all — which is why it must not be recorded
+# as a failed prompt. See `session_limit_message`.
+SESSION_LIMIT_ERROR_CODE = "rate_limit"
+# Matched only against messages the CLI has already flagged as an API error or a
+# failed result, never against ordinary prose — otherwise a prompt about this
+# very feature would look like a rate limit. Substrings, because the exact
+# wording differs between the session, weekly and Opus-specific limits.
+SESSION_LIMIT_TEXT_MARKERS = (
+    "session limit",
+    "usage limit",
+    "weekly limit",
+    "rate limit",
+    "limit reached",
+)
 
 
 def environment_path(name: str, default: Path) -> Path:
@@ -707,6 +729,55 @@ def summarise_stream_event(event: dict) -> list[str]:
     return []
 
 
+def assistant_message_text(event: dict) -> str:
+    """Every text block of an assistant event, joined — "" if it carries none."""
+    content = event.get("message", {}).get("content", [])
+    texts = [
+        str(block.get("text", "")).strip()
+        for block in (content if isinstance(content, list) else [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    return " ".join(text for text in texts if text)
+
+
+def session_limit_message(event: dict) -> str | None:
+    """The CLI's "you've hit your limit" notice, if this event is one.
+
+    Hitting a subscription limit ends the turn immediately having done no work,
+    so the queue entry must be left `todo` rather than marked as an error — it
+    was never really attempted. Recognising that from the stream is the only
+    option available: the process just exits 1, indistinguishable from a prompt
+    that genuinely failed.
+
+    The structured `error: "rate_limit"` field is the reliable signal and is
+    trusted on its own. The text markers are a fallback for a CLI that stops
+    setting it, and are only ever consulted for a message the CLI has *already*
+    flagged as an API error or a failed result — matching them against ordinary
+    assistant prose would make any prompt that discusses rate limits (this one,
+    for instance) look like it hit one.
+    """
+    event_type = event.get("type")
+
+    if event_type == "assistant":
+        text = assistant_message_text(event)
+        if event.get("error") == SESSION_LIMIT_ERROR_CODE:
+            return text or f"The CLI reported {SESSION_LIMIT_ERROR_CODE}"
+        if not event.get("is_api_error_message"):
+            return None
+    elif event_type == "result":
+        if not event.get("is_error"):
+            return None
+        result_text = event.get("result")
+        text = result_text.strip() if isinstance(result_text, str) else ""
+    else:
+        return None
+
+    lowered = text.lower()
+    if any(marker in lowered for marker in SESSION_LIMIT_TEXT_MARKERS):
+        return text
+    return None
+
+
 def build_prompt(entry_prompt: str) -> str:
     """The text actually sent to `claude -p`: the queue entry's prompt, plus the
     user's "append to all prompts" setting if one is configured.
@@ -800,15 +871,31 @@ def prepare_working_directory(working_directory: Path, is_new_project: bool) -> 
     return True
 
 
-def determine_outcome(exit_code: int, ran_too_long: bool, background_task_timed_out: bool) -> tuple[int, str]:
+def determine_outcome(
+    exit_code: int,
+    ran_too_long: bool,
+    background_task_timed_out: bool,
+    hit_session_limit: bool = False,
+) -> tuple[int, str]:
     """The exit code alone is not trustworthy — decide what actually happened.
 
-    Two things can make the process exit 0 without the prompt having finished:
-    the CLI's own background-task wait ceiling (BACKGROUND_TASK_TIMEOUT_MARKER)
-    and this script's own max-duration watchdog. Split out from `run_claude` so
-    the decision can be unit-tested against the four exit_code/ran_too_long/
-    background_task_timed_out combinations without spawning a real subprocess.
+    Three things make it lie. Two make the process exit 0 without the prompt
+    having finished: the CLI's own background-task wait ceiling
+    (BACKGROUND_TASK_TIMEOUT_MARKER) and this script's own max-duration
+    watchdog. The third makes it exit 1 without the prompt having *started* —
+    hitting a subscription limit, which is no more a failure than an empty
+    queue is, and so reports exit code 0 alongside its own outcome. Split out
+    from `run_claude` so the decision can be unit-tested against every
+    combination without spawning a real subprocess.
+
+    A session limit outranks the watchdog because the two answer different
+    questions and only one of them decides the queue entry's fate: a
+    rate-limited turn did no work whatever else happened around it, and an
+    entry left `todo` can simply run again, where one marked `error` is skipped
+    until somebody edits the file by hand.
     """
+    if hit_session_limit:
+        return 0, OUTCOME_SESSION_LIMIT
     if ran_too_long:
         return 1, "timeout"
     if exit_code == 0 and background_task_timed_out:
@@ -821,9 +908,12 @@ def queue_status_for_outcome(outcome: str) -> str:
 
     Keyed off `outcome`, never off the exit code directly: `determine_outcome`
     can report "error" for an exit code of 0 (a background task that timed
-    out, or a watchdog kill), and a queue status derived from the exit code
-    alone would silently undo that — see findings/song-ratings-vinyl-prompt-stall.md.
+    out, or a watchdog kill) and 0 for a session limit that exited 1, and a
+    queue status derived from the exit code alone would silently undo both —
+    see findings/song-ratings-vinyl-prompt-stall.md.
     """
+    if outcome == OUTCOME_SESSION_LIMIT:
+        return STATUS_TODO
     return STATUS_COMPLETED if outcome == "completed" else STATUS_ERROR
 
 
@@ -842,9 +932,15 @@ class ClaudeOutputCollector:
         self.latest_assistant_text: str | None = None
         self.turns: int | None = None
         self.cost_usd: float | None = None
+        """The CLI's limit notice, if one arrived — see `session_limit_message`."""
+        self.session_limit_notice: str | None = None
 
     def observe(self, event: dict) -> None:
         event_type = event.get("type")
+
+        # Checked before the branches below, since the notice arrives as an
+        # ordinary-looking assistant message and as the result's text.
+        self.session_limit_notice = self.session_limit_notice or session_limit_message(event)
 
         if event_type == "assistant":
             content = event.get("message", {}).get("content", [])
@@ -868,6 +964,10 @@ class ClaudeOutputCollector:
     @property
     def closing_text(self) -> str | None:
         return self.result_text or self.latest_assistant_text
+
+    @property
+    def hit_session_limit(self) -> bool:
+        return self.session_limit_notice is not None
 
 
 @dataclass(frozen=True)
@@ -1038,9 +1138,16 @@ def run_claude(
         finally:
             watchdog.cancel()
 
-        result_exit_code, outcome = determine_outcome(exit_code, ran_too_long, background_task_timed_out)
+        result_exit_code, outcome = determine_outcome(
+            exit_code, ran_too_long, background_task_timed_out, output.hit_session_limit
+        )
 
-        if ran_too_long:
+        if output.hit_session_limit:
+            log_message(
+                f"Subscription limit reached ({shorten(output.session_limit_notice or '')}) "
+                "— the queue entry is left as todo"
+            )
+        elif ran_too_long:
             log_message(f"Prompt exceeded the {CLAUDE_MAX_PROMPT_DURATION_SECONDS}s max run time and was killed")
         elif exit_code == 0 and background_task_timed_out:
             # The CLI ends the turn (and so the process, with exit code 0) the
@@ -1057,7 +1164,11 @@ def run_claude(
         return run_result(
             result_exit_code,
             outcome,
-            result_text=output.closing_text,
+            # The limit notice wins over the closing message where there is
+            # one: it names which limit was hit and when it lifts, where the
+            # result event of a refused turn carries only the CLI's own generic
+            # error. That notice is the entire account of a prompt that never ran.
+            result_text=output.session_limit_notice or output.closing_text,
             turns=output.turns,
             cost_usd=output.cost_usd,
         )
@@ -1073,9 +1184,10 @@ def run_claude(
 def remaining_todo_prompts(already_attempted: list[str]) -> list[str]:
     """Queue entries still marked `todo`, in the order they would be picked up.
 
-    `already_attempted` is excluded because a cancelled prompt is deliberately
-    left as `todo` — it belongs in the summary as the prompt that was cut short,
-    not a second time as one that was never reached.
+    `already_attempted` is excluded because two outcomes deliberately leave an
+    entry as `todo`: a cancelled prompt and one that hit a subscription limit.
+    Each belongs in the summary as the prompt that was cut short, not a second
+    time as one that was never reached.
     """
     queue_lines = read_queue_lines()
     if queue_lines is None:
@@ -1213,6 +1325,14 @@ def main() -> int:
 
         prompts_run += 1
         final_exit_code = prompt_result.exit_code
+
+        if prompt_result.outcome == OUTCOME_SESSION_LIMIT:
+            # For the same reason `fiveHourExhausted` ends a session: the limit
+            # does not lift for hours, so every remaining `todo` would be picked
+            # up only to be refused in a second or two, burning through the
+            # queue without running any of it.
+            session.stop(OUTCOME_SESSION_LIMIT, prompt_result.result_text)
+            break
 
         if arguments.force:
             session.stop("forcedSingleRun")

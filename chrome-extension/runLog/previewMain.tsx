@@ -9,6 +9,7 @@ import {
   CANCELLED_RUN_EVENTS,
   COMPLETED_RUN_EVENTS,
   RUNNING_RUN_EVENTS,
+  SESSION_LIMIT_RUN_EVENTS,
   SKIPPED_RUN_EVENTS,
 } from './fixtureRunEvents';
 import '@/index.css';
@@ -86,6 +87,7 @@ function Column({ dark }: { dark: boolean }) {
         events={CANCELLED_RUN_EVENTS}
         cancelStatus={{ kind: 'stopped', detail: 'Stopped 40122  claude -p …' }}
       />
+      <Panel label="refused by the subscription limit" events={SESSION_LIMIT_RUN_EVENTS} />
       <Panel label="skipped by the pace gate" events={SKIPPED_RUN_EVENTS} />
       <Panel
         label="no runs recorded, helper missing"

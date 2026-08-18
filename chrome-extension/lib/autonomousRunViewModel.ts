@@ -16,7 +16,7 @@ import {
  */
 
 export type AutonomousRunStatus =
-  'idle' | 'running' | 'completed' | 'error' | 'timeout' | 'cancelled' | 'skipped';
+  'idle' | 'running' | 'completed' | 'error' | 'timeout' | 'cancelled' | 'sessionLimit' | 'skipped';
 
 export type RunTimelineKind =
   | 'runStarted'
@@ -340,6 +340,20 @@ const FINISHED_LABELS: Record<RunOutcome, string> = {
   error: 'Run failed',
   timeout: 'Run timed out and was killed',
   cancelled: 'Run cancelled',
+  sessionLimit: 'Subscription limit reached — the prompt is still queued',
+};
+
+/**
+ * Only a run that failed should read as one. A cancel and a subscription limit
+ * both end a run without anything having gone wrong, and neither leaves the
+ * queue entry marked as an error.
+ */
+const FINISHED_TONES: Record<RunOutcome, RunTimelineTone> = {
+  completed: 'success',
+  error: 'error',
+  timeout: 'error',
+  cancelled: 'muted',
+  sessionLimit: 'muted',
 };
 
 const SKIP_LABELS = {
@@ -383,7 +397,7 @@ function buildTimeline(events: readonly AutonomousRunEvent[]): RunTimelineEntry[
           'finished',
           FINISHED_LABELS[event.outcome],
           event.queueStatus === null ? null : `queue entry marked ${event.queueStatus}`,
-          event.outcome === 'completed' ? 'success' : 'error',
+          FINISHED_TONES[event.outcome],
         );
         break;
 
@@ -499,6 +513,8 @@ export function describeRunStatus(status: AutonomousRunStatus): string {
       return 'timed out';
     case 'cancelled':
       return 'cancelled';
+    case 'sessionLimit':
+      return 'stopped by the subscription limit';
     case 'skipped':
       return 'skipped';
   }
