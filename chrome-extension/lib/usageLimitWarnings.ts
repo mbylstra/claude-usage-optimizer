@@ -34,6 +34,12 @@ export interface UsageLimitWarning {
  * afterwards so the same threshold does not fire again until its window
  * resets.
  *
+ * **At most one warning per window.** A refresh can cross several thresholds at
+ * once — five minutes is long enough to go from 89% to 98% — and warning three
+ * times about one window says nothing the highest of the three does not. So the
+ * lower ones are recorded as notified without being reported, which also stops
+ * them firing individually on the next refresh.
+ *
  * A stale `resetsAt` in the previous state (the window has moved on to a new
  * generation since the last check) is treated the same as no prior state at
  * all — a window that spent last cycle at 98% and has since reset to 0% can
@@ -55,8 +61,9 @@ export function deriveNewUsageLimitWarnings(
       (threshold) => window.utilizationPercent >= threshold && !alreadyNotified.includes(threshold),
     );
 
-    for (const threshold of newlyCrossed) {
-      warnings.push({ kind: window.kind, threshold });
+    const highestNewlyCrossed = newlyCrossed[newlyCrossed.length - 1];
+    if (highestNewlyCrossed !== undefined) {
+      warnings.push({ kind: window.kind, threshold: highestNewlyCrossed });
     }
 
     state[window.kind] = {

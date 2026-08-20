@@ -9,6 +9,7 @@ import {
   usageLimitWarningTitle,
   type UsageLimitWarning,
 } from '@/lib/usageLimitWarnings';
+import { isRepeatOfLastNotification, type ShownNotification } from '@/lib/notificationSuppression';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
   isOpenRunLogMessage,
@@ -39,6 +40,8 @@ import {
   writeSuggestedModel,
   readUsageLimitWarningState,
   writeUsageLimitWarningState,
+  readLastShownNotification,
+  writeLastShownNotification,
   type UsageCacheEntry,
 } from './usageStorage';
 import { readExtensionSettings } from './settingsStorage';
@@ -61,6 +64,47 @@ async function applyToolbarTitle(snapshot: UsageSnapshot | null): Promise<void> 
   });
 }
 
+/**
+ * The one place a notification is shown, and so the one place a duplicate can
+ * be caught.
+ *
+ * Anything identical to the last notification shown is dropped — see
+ * `isRepeatOfLastNotification` for why. The record is written only after the
+ * notification actually appears, so a failed show does not silently suppress
+ * its own retry.
+ *
+ * The test notification deliberately does not come through here: proving that
+ * notifications work means firing every single time the button is pressed.
+ */
+async function showNotificationUnlessRepeated(
+  notification: ShownNotification,
+  tagPrefix: string,
+): Promise<void> {
+  if (Notification.permission !== 'granted') {
+    console.warn('Notification permission not granted');
+    return;
+  }
+
+  const lastShown = await readLastShownNotification();
+  if (isRepeatOfLastNotification(lastShown, notification)) {
+    console.log('Skipped a notification identical to the last one:', notification.title);
+    return;
+  }
+
+  try {
+    const timestamp = Date.now();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (self as any).registration.showNotification(notification.title, {
+      icon: chrome.runtime.getURL('icons/icon-128.png'),
+      body: notification.body,
+      tag: `${tagPrefix}-${timestamp}`,
+    });
+    await writeLastShownNotification(notification);
+  } catch (error) {
+    console.error('Failed to show notification:', error);
+  }
+}
+
 async function notifyModelChange(
   previousModel: string | null,
   newModel: SuggestedModel,
@@ -69,40 +113,29 @@ async function notifyModelChange(
   const settings = await readExtensionSettings();
   if (!settings.notificationsEnabled) return;
 
-  const reason = deriveModelChangeReason(previousModel, newModel, windows);
   const modelLabels: Record<string, string> = {
     opus: 'Opus',
     sonnet: 'Sonnet',
     haiku: 'Haiku',
   };
 
-  try {
-    if (Notification.permission !== 'granted') {
-      console.warn('Notification permission not granted');
-      return;
-    }
-
-    const timestamp = Date.now();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (self as any).registration.showNotification(
-      `Recommended model: ${modelLabels[newModel] || newModel}`,
-      {
-        icon: chrome.runtime.getURL('icons/icon-128.png'),
-        body: reason,
-        tag: `model-recommendation-${timestamp}`,
-      },
-    );
-  } catch (error) {
-    console.error('Failed to send model change notification:', error);
-  }
+  await showNotificationUnlessRepeated(
+    {
+      title: `Recommended model: ${modelLabels[newModel] || newModel}`,
+      body: deriveModelChangeReason(previousModel, newModel, windows),
+    },
+    'model-recommendation',
+  );
 }
 
 /**
- * Fires once per newly crossed threshold. There is usually at most one —
- * `deriveNewUsageLimitWarnings` only reports thresholds not already claimed
- * for the window's current generation — but a slow refresh cadence can jump
- * two at once (e.g. 89% straight to 96%), so each gets its own notification
- * rather than only the highest.
+ * Fires once per window that newly crossed a threshold — never once per
+ * threshold. `deriveNewUsageLimitWarnings` reports only the highest of the
+ * thresholds a refresh crossed, so a jump from 89% straight past all three
+ * says "nearly at limit" once rather than stacking three banners.
+ *
+ * Two different windows crossing at the same time is still two notifications:
+ * they name different windows, so neither is redundant.
  */
 async function notifyUsageLimitWarnings(warnings: UsageLimitWarning[]): Promise<void> {
   if (warnings.length === 0) return;
@@ -110,26 +143,14 @@ async function notifyUsageLimitWarnings(warnings: UsageLimitWarning[]): Promise<
   const settings = await readExtensionSettings();
   if (!settings.notificationsEnabled) return;
 
-  if (Notification.permission !== 'granted') {
-    console.warn('Notification permission not granted');
-    return;
-  }
-
   for (const warning of warnings) {
-    try {
-      const timestamp = Date.now();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (self as any).registration.showNotification(
-        usageLimitWarningTitle(warning.kind, warning.threshold),
-        {
-          icon: chrome.runtime.getURL('icons/icon-128.png'),
-          body: usageLimitWarningBody(warning.threshold),
-          tag: `usage-limit-${warning.kind}-${warning.threshold}-${timestamp}`,
-        },
-      );
-    } catch (error) {
-      console.error('Failed to send usage limit warning notification:', error);
-    }
+    await showNotificationUnlessRepeated(
+      {
+        title: usageLimitWarningTitle(warning.kind, warning.threshold),
+        body: usageLimitWarningBody(warning.threshold),
+      },
+      `usage-limit-${warning.kind}-${warning.threshold}`,
+    );
   }
 }
 
