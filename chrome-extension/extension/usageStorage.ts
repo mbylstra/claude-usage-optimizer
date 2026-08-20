@@ -5,6 +5,7 @@ import type {
   UsageWindowSnapshot,
 } from '@/lib/usageTypes';
 import type { UsageLimitWarningStateByWindow } from '@/lib/usageLimitWarnings';
+import type { ShownNotification } from '@/lib/notificationSuppression';
 import type { OrganizationIdCache } from './claudeUsageClient';
 
 export type { UsageCacheEntry };
@@ -21,6 +22,7 @@ const USAGE_CACHE_STORAGE_KEY = 'usageCache';
 const USAGE_HISTORY_STORAGE_KEY = 'usageHistory';
 const SUGGESTED_MODEL_STORAGE_KEY = 'suggestedModel';
 const USAGE_LIMIT_WARNING_STATE_STORAGE_KEY = 'usageLimitWarningState';
+const LAST_SHOWN_NOTIFICATION_STORAGE_KEY = 'lastShownNotification';
 
 const ORGANIZATION_ID_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -166,4 +168,18 @@ export async function writeUsageLimitWarningState(
   state: UsageLimitWarningStateByWindow,
 ): Promise<void> {
   await chrome.storage.local.set({ [USAGE_LIMIT_WARNING_STATE_STORAGE_KEY]: state });
+}
+
+/**
+ * The last notification the user was actually shown, used to suppress an
+ * identical repeat. Kept in `local` rather than `session` storage because the
+ * state it describes — a window at 95%, a recommended model — outlives a
+ * browser restart, and so would the duplicate.
+ */
+export async function readLastShownNotification(): Promise<ShownNotification | null> {
+  return readStorageValue<ShownNotification>(LAST_SHOWN_NOTIFICATION_STORAGE_KEY);
+}
+
+export async function writeLastShownNotification(notification: ShownNotification): Promise<void> {
+  await chrome.storage.local.set({ [LAST_SHOWN_NOTIFICATION_STORAGE_KEY]: notification });
 }
