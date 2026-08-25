@@ -18,8 +18,26 @@ export interface UsageSnapshotExport {
   weeklyPaceDeltaMs: number | null;
   weeklyPaceStatus: PaceStatus | null;
   fiveHourPercent: number | null;
+  /**
+   * ISO 8601, or null when the API did not report a current session window.
+   *
+   * Read by `run-autonomous-work.py` to decide when to schedule a resume after
+   * a session runs into the 5-hour window — see
+   * `plans/resume-after-five-hour-reset.md`. An older extension that predates
+   * this field must keep working, so the Python side treats its absence as
+   * "unknown" and falls back to `now + 5h`.
+   */
+  fiveHourResetsAt: string | null;
   sevenDayPercent: number | null;
   sevenDayOpusPercent: number | null;
+}
+
+function resetsAtFor(
+  windowStatuses: ReturnType<typeof deriveUsageStatuses>,
+  kind: UsageWindowKind,
+): string | null {
+  const status = findWindowStatus(windowStatuses, kind);
+  return status?.isActive ? status.windowResetsAt.toISOString() : null;
 }
 
 function percentUsedFor(
@@ -48,6 +66,7 @@ export function buildUsageSnapshotExport(
     weeklyPaceDeltaMs: weeklyStatus?.isActive ? weeklyStatus.paceDeltaMs : null,
     weeklyPaceStatus: weeklyStatus?.isActive ? weeklyStatus.paceStatus : null,
     fiveHourPercent: percentUsedFor(windowStatuses, 'fiveHour'),
+    fiveHourResetsAt: resetsAtFor(windowStatuses, 'fiveHour'),
     sevenDayPercent: percentUsedFor(windowStatuses, 'sevenDay'),
     sevenDayOpusPercent: percentUsedFor(windowStatuses, 'sevenDayOpus'),
   };

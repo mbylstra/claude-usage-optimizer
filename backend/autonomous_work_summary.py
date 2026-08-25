@@ -46,8 +46,8 @@ STOP_REASON_DESCRIPTIONS = {
     "emptyQueue": "Ran out of queued work — nothing left marked `todo`.",
     "onPace": "Caught back up to pace — running more would have spent above an even weekly burn.",
     "fiveHourExhausted": (
-        "The 5-hour session window was exhausted. It does not refill early, so the run ended "
-        "rather than sitting idle waiting for the reset."
+        "The 5-hour session window was exhausted. It does not refill early, so the run stopped "
+        "there rather than sitting idle waiting for the reset."
     ),
     "noSnapshot": (
         "No usable pace snapshot, so there was no way to tell whether the week was behind pace."
@@ -55,9 +55,9 @@ STOP_REASON_DESCRIPTIONS = {
     "forcedSingleRun": "A forced run (`--force`), which runs exactly one prompt and stops.",
     "cancelled": "Cancelled while a prompt was still running.",
     OUTCOME_SESSION_LIMIT: (
-        "A subscription limit was reached. It does not lift for hours, so the run ended rather "
-        "than offering the rest of the queue up to be refused one prompt at a time. Nothing was "
-        "spent and the entry is still `todo`."
+        "A subscription limit was reached. It does not lift for hours, so the run stopped there "
+        "rather than offering the rest of the queue up to be refused one prompt at a time. "
+        "Nothing was spent and the entry is still `todo`."
     ),
 }
 
@@ -113,6 +113,15 @@ class SessionSummary:
     stop_reason: str | None = None
     stop_detail: str | None = None
     finished_at: datetime | None = None
+    """When launchd will start the queue again, if this session scheduled a resume.
+
+    Carried on the session rather than read back out of
+    `backend/autonomous-work-resume.json` here, because of the ordering: the
+    resume is scheduled inside the run loop and this file is rendered
+    afterwards, so by then the state file is the right answer only by accident.
+    Passing it makes the dependency explicit and keeps rendering pure.
+    """
+    resume_scheduled_for: datetime | None = None
 
     def record_attempt(self, attempt: PromptAttempt) -> None:
         self.attempts.append(attempt)
@@ -246,6 +255,18 @@ def render_session_summary(summary: SessionSummary) -> str:
         f"**Why it stopped:** {describe_stop_reason(summary.stop_reason, summary.stop_detail)}",
         "",
     ]
+
+    if summary.resume_scheduled_for is not None:
+        # Directly under "why it stopped", because it is the other half of that
+        # answer: a job starting at 6 AM for no visible reason is worse than one
+        # that stopped for no visible reason.
+        lines.extend(
+            [
+                f"**Resuming:** {summary.resume_scheduled_for:%H:%M}, "
+                "when the 5-hour session window resets.",
+                "",
+            ]
+        )
 
     for attempt in summary.attempts:
         lines.extend(render_attempt(attempt))

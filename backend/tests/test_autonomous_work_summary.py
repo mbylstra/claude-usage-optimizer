@@ -120,6 +120,31 @@ class DescribeStopReasonTests(unittest.TestCase):
 
 
 class RenderSessionSummaryTests(unittest.TestCase):
+    def test_a_scheduled_resume_is_stated_under_why_it_stopped(self):
+        # Otherwise the queue starts again hours later with nothing in the
+        # morning's file to say why.
+        session = build_session()
+        session.record_attempt(
+            build_attempt(
+                prompt="Refused by the limit",
+                outcome=summary_module.OUTCOME_SESSION_LIMIT,
+                queue_status="todo",
+            )
+        )
+        session.stop(summary_module.OUTCOME_SESSION_LIMIT)
+        session.resume_scheduled_for = datetime(2026, 8, 15, 6, 17)
+
+        rendered = summary_module.render_session_summary(session)
+
+        self.assertIn("**Resuming:** 06:17", rendered)
+        self.assertIn("5-hour session window resets", rendered)
+
+    def test_no_resume_line_when_none_was_scheduled(self):
+        session = build_session()
+        session.record_attempt(build_attempt())
+        session.stop("emptyQueue")
+        self.assertNotIn("**Resuming:**", summary_module.render_session_summary(session))
+
     def test_reports_each_outcome_category(self):
         session = build_session()
         session.record_attempt(build_attempt(prompt="Ship the thing"))

@@ -24,18 +24,20 @@ import subprocess
 import sys
 import tempfile
 import threading
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIRECTORY.parent
 
 # Sibling modules, importable because Python puts this script's directory on
-# sys.path. One owns the settings the Chrome extension mirrors to disk, the
-# other the morning-after digest this script writes when a session ends.
+# sys.path. One owns the settings the Chrome extension mirrors to disk, one the
+# morning-after digest this script writes when a session ends, and one the
+# one-shot launch agent that picks the queue back up after a 5-hour reset.
 sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
+import autonomous_work_resume  # noqa: E402  (same)
 import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
 import autonomous_work_summary  # noqa: E402  (same)
 
@@ -348,6 +350,19 @@ class RunEventStream:
     def skipped(self, reason: str, detail: str) -> None:
         self.emit("runSkipped", reason=reason, detail=detail)
 
+    def resume_scheduled(self, pending: autonomous_work_resume.PendingResume) -> None:
+        """A one-shot agent is now holding the queue's next attempt.
+
+        Emitted after the run's terminal event, so the viewer's footer can end
+        on "Resuming at 6:17am" rather than on the run simply stopping.
+        """
+        self.emit(
+            "resumeScheduled",
+            scheduledFor=pending.scheduled_for.astimezone().isoformat(),
+            reason=pending.reason,
+            source=pending.source,
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Pace snapshot
@@ -362,18 +377,38 @@ class PaceSnapshot:
     five_hour_percent: float | None
     """How old the figures are. Reported, never enforced — see `read_pace_snapshot`."""
     age_seconds: float | None
+    """When the 5-hour window next refills, if the extension reported it.
+
+    Optional with a default because an extension built before this field
+    existed writes a snapshot without it, and a scheduler that refused to read
+    that file would stop working until Chrome was rebuilt and restarted. Absent
+    means "unknown", which `choose_resume_time` handles by falling through to
+    its last source.
+    """
+    five_hour_resets_at: datetime | None = None
+
+
+def parse_iso_timestamp(value: object) -> datetime | None:
+    """An aware `datetime` from an ISO 8601 string the extension wrote, or None.
+
+    The extension writes `Z`-suffixed UTC, which `fromisoformat` did not accept
+    before 3.11. A naive reading is assumed UTC for the same reason: everything
+    on the extension's side of this contract is `Date.toISOString()`.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def snapshot_age_seconds(fetched_at_value: object) -> float | None:
     """How long ago the snapshot was taken, or None if it does not say."""
-    if not isinstance(fetched_at_value, str):
+    fetched_at = parse_iso_timestamp(fetched_at_value)
+    if fetched_at is None:
         return None
-    try:
-        fetched_at = datetime.fromisoformat(fetched_at_value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if fetched_at.tzinfo is None:
-        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - fetched_at).total_seconds()
 
 
@@ -429,6 +464,7 @@ def read_pace_snapshot() -> PaceSnapshot | None:
             float(five_hour_percent) if isinstance(five_hour_percent, (int, float)) else None
         ),
         age_seconds=age_seconds,
+        five_hour_resets_at=parse_iso_timestamp(snapshot_data.get("fiveHourResetsAt")),
     )
 
 
@@ -444,6 +480,14 @@ class GateResult:
     """A stable code for the run-event stream, e.g. "onPace" or "fiveHourExhausted"."""
     reason: str | None = None
     detail: str | None = None
+    """The snapshot the decision was made against, for whoever needs more of it.
+
+    Filled in by `check_pace_gate`, not by the pure `evaluate_pace_gate` — it is
+    a passenger, not an input to the decision. `schedule_resume_if_warranted`
+    is the one reader, and it would otherwise have to re-read and re-log the
+    same file a second later.
+    """
+    snapshot: PaceSnapshot | None = None
 
 
 def evaluate_pace_gate(
@@ -524,7 +568,169 @@ def check_pace_gate(force: bool) -> GateResult:
     elif result.ok:
         log_message(f"Behind pace — {result.detail}")
 
-    return result
+    return replace(result, snapshot=pace_snapshot)
+
+
+# --------------------------------------------------------------------------- #
+# Resuming after the 5-hour window resets
+# --------------------------------------------------------------------------- #
+
+# The CLI's notice names a wall-clock time and no date, e.g.
+# "You've hit your session limit · resets 3:50am (Australia/Melbourne)". The
+# minute, the meridiem and the zone are each optional, because the only sample
+# we have is one wording out of an interface that is not ours — a shape we
+# cannot read must produce None rather than a wrong time, and fall through to a
+# later source in `choose_resume_time`.
+RESET_TIME_PATTERN = re.compile(
+    r"resets\s+(?:(mon|tue|wed|thu|fri|sat|sun)[a-z]*\s+(?:at\s+)?)?"
+    r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]+)\))?",
+    re.IGNORECASE,
+)
+# Read out of the notice only to place the time on a day, never to classify
+# which limit was hit — that is the clamp's job. A weekly or Opus notice is
+# expected to name one ("resets Thursday 9am"), which is exactly what lets the
+# clamp see that the reset is days out and refuse it.
+WEEKDAY_NUMBERS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+# The nominal span of a session window, and so the last-resort guess at when the
+# current one refills. Wrong by at most one window, and wrong *late*, which is
+# the harmless direction: a late resume idles, an early one is refused and burns
+# the day's only resume.
+FIVE_HOUR_WINDOW_SECONDS = 5 * 3600
+# launchd's calendar granularity is a minute, so firing in the same minute the
+# window resets is asking to be refused a second time.
+RESUME_BUFFER_SECONDS = environment_int("AUTONOMOUS_WORK_RESUME_BUFFER_SECONDS", 120)
+# Anything further out than one window plus a little slack is not this window.
+# This is what discards a weekly or Opus limit — both of which arrive by the
+# same route as a session limit — without having to tell their wording apart.
+RESUME_MAX_DELAY_SECONDS = FIVE_HOUR_WINDOW_SECONDS + 15 * 60
+
+RESUME_SOURCE_CLI_NOTICE = "cliNotice"
+RESUME_SOURCE_SNAPSHOT = "snapshot"
+RESUME_SOURCE_FALLBACK = "fallback"
+
+RESUME_SOURCE_DESCRIPTIONS = {
+    RESUME_SOURCE_CLI_NOTICE: "from the CLI's notice",
+    RESUME_SOURCE_SNAPSHOT: "from the usage snapshot",
+    RESUME_SOURCE_FALLBACK: "guessed as five hours from now",
+}
+
+
+def describe_clock_time(moment: datetime) -> str:
+    """"6:17am" — the form the CLI's own notice uses, so the log echoes it back."""
+    return moment.strftime("%-I:%M%p").lower()
+
+
+def parse_reset_time(notice: str | None, now: datetime) -> datetime | None:
+    """The reset instant named in the CLI's limit notice, or None if it names none.
+
+    The notice gives a wall-clock time and, at most, a weekday, so the **next**
+    occurrence is taken — a limit hit at 1 AM naming "3:50am" means later this
+    morning, one hit at 5 PM naming "3:50am" means tomorrow, and one naming
+    "Thursday 9am" means the coming Thursday. A zone in parentheses is used if
+    `zoneinfo` recognises it; otherwise the time is read in `now`'s own zone,
+    which is the right guess because the CLI reports in the machine's zone and
+    this runs on that machine.
+
+    Returns None on anything unrecognised rather than guessing: a wrong time
+    spends the day's only resume, where None falls through to a source that is
+    merely imprecise.
+    """
+    if not notice:
+        return None
+
+    match = RESET_TIME_PATTERN.search(notice)
+    if match is None:
+        return None
+
+    weekday_name, hour_text, minute_text, meridiem, zone_name = match.groups()
+    hour = int(hour_text)
+    minute = int(minute_text) if minute_text else 0
+    if not 0 <= minute <= 59:
+        return None
+
+    if meridiem:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if meridiem.lower() == "pm" else 0)
+    elif not 0 <= hour <= 23:
+        return None
+
+    zone = None
+    if zone_name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            zone = ZoneInfo(zone_name.strip())
+        except Exception:
+            # An unknown zone is not a reason to discard an otherwise readable
+            # time — the machine's own zone is the same one in every case we
+            # expect, and being wrong here costs at most a few idle hours.
+            zone = None
+
+    reference = now.astimezone(zone) if zone is not None else now
+    candidate = reference.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if weekday_name is None:
+        if candidate <= reference:
+            candidate += timedelta(days=1)
+        return candidate
+
+    days_ahead = (WEEKDAY_NUMBERS[weekday_name.lower()] - candidate.weekday()) % 7
+    candidate += timedelta(days=days_ahead)
+    if candidate <= reference:
+        candidate += timedelta(days=7)
+    return candidate
+
+
+@dataclass(frozen=True)
+class ResumeTime:
+    """When to come back, and how sure we are about it."""
+
+    fire_at: datetime
+    """The unbuffered reset this was derived from — what the log quotes."""
+    resets_at: datetime
+    source: str
+
+
+def choose_resume_time(
+    now: datetime,
+    *,
+    limit_notice: str | None,
+    snapshot_resets_at: datetime | None,
+    buffer_seconds: int = RESUME_BUFFER_SECONDS,
+    max_delay_seconds: int = RESUME_MAX_DELAY_SECONDS,
+) -> ResumeTime | None:
+    """When the 5-hour window next refills, from the best source available.
+
+    Three sources in order of how much they know: the CLI's notice (seconds
+    old, and names the answer), the extension's snapshot (can be hours stale),
+    and five hours from now (always available, wrong by at most one window).
+
+    Every candidate is buffered and then clamped into `(now, now + 5h + slack]`.
+    The clamp is what silently rejects a weekly or Opus limit, which reaches
+    this function by exactly the same route as a session limit but names a reset
+    days away. So a notice that fails the clamp yields **no resume at all**
+    rather than falling through — it is not this window, and nothing about it
+    suggests this window is spent. A notice we merely could not parse does fall
+    through, since it tells us nothing either way.
+    """
+    latest_acceptable = now + timedelta(seconds=max_delay_seconds)
+    buffer = timedelta(seconds=buffer_seconds)
+
+    notice_resets_at = parse_reset_time(limit_notice, now)
+    if notice_resets_at is not None:
+        fire_at = notice_resets_at + buffer
+        if now < fire_at <= latest_acceptable:
+            return ResumeTime(fire_at, notice_resets_at, RESUME_SOURCE_CLI_NOTICE)
+        return None
+
+    if snapshot_resets_at is not None:
+        fire_at = snapshot_resets_at + buffer
+        if now < fire_at <= latest_acceptable:
+            return ResumeTime(fire_at, snapshot_resets_at, RESUME_SOURCE_SNAPSHOT)
+
+    fallback_resets_at = now + timedelta(seconds=FIVE_HOUR_WINDOW_SECONDS)
+    return ResumeTime(fallback_resets_at + buffer, fallback_resets_at, RESUME_SOURCE_FALLBACK)
 
 
 # --------------------------------------------------------------------------- #
@@ -1199,6 +1405,116 @@ def remaining_todo_prompts(already_attempted: list[str]) -> list[str]:
     ]
 
 
+def queue_holds_a_todo() -> bool:
+    """Is there anything to come back for?"""
+    queue_lines = read_queue_lines()
+    if queue_lines is None:
+        return False
+    return find_next_todo(parse_queue(queue_lines)) is not None
+
+
+def schedule_resume_if_warranted(
+    reason: str,
+    *,
+    limit_notice: str | None,
+    snapshot_resets_at: datetime | None,
+    forced: bool,
+    is_resume_run: bool,
+    events: RunEventStream,
+    now: datetime | None = None,
+) -> autonomous_work_resume.PendingResume | None:
+    """Ask launchd to start the queue again once the 5-hour window refills.
+
+    Holds every guard from the plan's §3 in one place, and logs the one that
+    bit — a job that starts at 6 AM for no visible reason is worse than one that
+    does not start at all, and so is a resume that silently never happens.
+
+    The guards, and why each is here rather than somewhere more convenient:
+
+    * **A resumed run schedules nothing.** One resume is a second attempt at
+      the night's work; a chain of them is a decision from 2 AM walking through
+      the following day on the strength of one possibly-stale snapshot. This is
+      the guard that makes every other freshness check unnecessary.
+    * **One per calendar day**, since `just trigger-autonomous-work` can also
+      schedule one.
+    * **Never from `--force`.** A forced run is single-shot by definition, and a
+      button press is one instruction rather than a standing one.
+    * **Only where the nightly job is already installed.** Writing a launch
+      agent nobody asked for is not this script's call — the same rule
+      `install_launch_agent(only_if_installed=True)` follows for the same
+      directory.
+    * **Only with work left queued.** Nothing to come back for otherwise.
+    """
+    now = now or datetime.now().astimezone()
+
+    if is_resume_run:
+        log_message("Not scheduling a resume — this run is itself a resume")
+        return None
+
+    if forced:
+        log_message("Not scheduling a resume — a forced run is a single explicit instruction")
+        return None
+
+    if not autonomous_work_settings.INSTALLED_LAUNCH_AGENT_FILE.exists():
+        log_message("Not scheduling a resume — the nightly job is not installed")
+        return None
+
+    if autonomous_work_resume.resume_scheduled_today(now):
+        log_message("Not scheduling a resume — today has already had one")
+        return None
+
+    if not queue_holds_a_todo():
+        log_message("Not scheduling a resume — nothing left queued to come back for")
+        return None
+
+    resume_time = choose_resume_time(
+        now, limit_notice=limit_notice, snapshot_resets_at=snapshot_resets_at
+    )
+    # The notice is echoed whatever happens: its wording is not ours, and this
+    # log line is the only thing that would make a change to it diagnosable.
+    if limit_notice:
+        log_message(
+            "The CLI's limit notice read: {} (reset time read as {})".format(
+                shorten(limit_notice), parse_reset_time(limit_notice, now)
+            )
+        )
+
+    if resume_time is None:
+        log_message(
+            "Not scheduling a resume — the reset named is further out than one session window, "
+            "so it is a weekly or Opus limit rather than this one"
+        )
+        return None
+
+    pending = autonomous_work_resume.PendingResume(
+        scheduled_for=resume_time.fire_at,
+        scheduled_at=now,
+        reason=reason,
+        source=resume_time.source,
+    )
+    update = autonomous_work_resume.schedule_resume(pending)
+    if not update.applied:
+        log_message(f"Could not schedule a resume: {update.detail}")
+        return None
+
+    log_message(
+        "Resuming at {} (5-hour window resets {}, {})".format(
+            describe_clock_time(resume_time.fire_at),
+            describe_clock_time(resume_time.resets_at),
+            RESUME_SOURCE_DESCRIPTIONS[resume_time.source],
+        )
+    )
+    events.resume_scheduled(pending)
+    return pending
+
+
+def resume_scheduled_for(
+    pending: autonomous_work_resume.PendingResume | None,
+) -> datetime | None:
+    """The moment a scheduled resume will fire, for the day's summary — None if none was."""
+    return None if pending is None else pending.scheduled_for.astimezone()
+
+
 def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
     """Close the session record off and append it to the day's summary file.
 
@@ -1234,6 +1550,11 @@ def main() -> int:
         action="store_true",
         help="Report what would run without invoking claude or touching the queue.",
     )
+    argument_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Serve a resume scheduled by an earlier run that hit the 5-hour window.",
+    )
     arguments = argument_parser.parse_args()
 
     if arguments.dry_run:
@@ -1259,6 +1580,19 @@ def main() -> int:
         log_message(f"Dry run — would execute in {destination}:\n{build_prompt(next_entry.prompt)}")
         return 0
 
+    if arguments.resume:
+        # A resume is only legitimate if a run actually asked for one. Three
+        # things make this a no-op — no state, one already served, and one whose
+        # moment is long past — and each is a real situation rather than a bug:
+        # the agent is pinned to a Month and Day, so an uncleaned one fires
+        # again a year later, and a Mac that was asleep runs a missed calendar
+        # job when it wakes. Exit 0 either way; a deliberate no-op is not a
+        # failure worth putting in the system log.
+        consumption = autonomous_work_resume.consume_pending_resume(datetime.now().astimezone())
+        log_message(f"Resume run — {consumption.detail}")
+        if consumption.pending is None:
+            return 0
+
     # Behind pace keeps working through the queue rather than stopping after one
     # prompt, because a single entry rarely spends a night's worth of headroom.
     # `--force` is a single explicit run — the pace gate it bypasses is exactly
@@ -1283,6 +1617,23 @@ def main() -> int:
         if not gate.ok:
             events.skipped(gate.reason, gate.detail)
             session.stop(gate.reason, gate.detail)
+            if gate.reason == "fiveHourExhausted":
+                # The weak of the two endings: the snapshot said the window was
+                # full, and it can be hours stale. Worth a resume anyway — the
+                # week is behind, the queue is full, and the one obstacle clears
+                # at a knowable time.
+                session.resume_scheduled_for = resume_scheduled_for(
+                    schedule_resume_if_warranted(
+                        "fiveHourExhausted",
+                        limit_notice=None,
+                        snapshot_resets_at=(
+                            gate.snapshot.five_hour_resets_at if gate.snapshot else None
+                        ),
+                        forced=arguments.force,
+                        is_resume_run=arguments.resume,
+                        events=events,
+                    )
+                )
             break
 
         queue_lines = read_queue_lines()
@@ -1332,6 +1683,22 @@ def main() -> int:
             # up only to be refused in a second or two, burning through the
             # queue without running any of it.
             session.stop(OUTCOME_SESSION_LIMIT, prompt_result.result_text)
+            # The strong ending: the refusal is seconds old and its notice names
+            # the reset. If that reset is days away it is the weekly or Opus
+            # limit, which arrives by this same route — `choose_resume_time`
+            # rejects it on the distance alone, without reading the wording.
+            session.resume_scheduled_for = resume_scheduled_for(
+                schedule_resume_if_warranted(
+                    OUTCOME_SESSION_LIMIT,
+                    limit_notice=prompt_result.result_text,
+                    snapshot_resets_at=(
+                        gate.snapshot.five_hour_resets_at if gate.snapshot else None
+                    ),
+                    forced=arguments.force,
+                    is_resume_run=arguments.resume,
+                    events=events,
+                )
+            )
             break
 
         if arguments.force:

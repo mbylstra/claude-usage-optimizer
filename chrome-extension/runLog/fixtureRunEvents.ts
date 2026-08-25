@@ -195,6 +195,16 @@ export const SESSION_LIMIT_RUN_EVENTS: AutonomousRunEvent[] = [
     exitCode: 0,
     queueStatus: 'todo',
   },
+  // The scheduler asks launchd to pick the queue back up once the window in
+  // that notice refills, so the run ends on "resuming" rather than on a stop.
+  {
+    type: 'resumeScheduled',
+    runId: RUN_ID,
+    at: at(5),
+    scheduledFor: new Date(RUN_START_MS + 3 * 3600_000).toISOString(),
+    reason: 'sessionLimit',
+    source: 'cliNotice',
+  },
 ];
 
 /** What the nightly job leaves behind on a night the week is already on pace. */

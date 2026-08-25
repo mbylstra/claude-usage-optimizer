@@ -12,6 +12,7 @@ import {
 } from '@/lib/autonomousRunViewModel';
 import type { AutonomousRunEvent } from '@/lib/autonomousRunEvents';
 import { formatStopwatch } from '@/lib/formatDuration';
+import { formatClockTime } from '@/lib/formatClockTime';
 import {
   describeRunCancelStatus,
   isRunCancelStatusError,
@@ -210,6 +211,17 @@ export function RunLogView({
             {isShowingRawEvents ? 'Timeline' : 'Raw JSON'}
           </Button>
         </div>
+
+        {model.resumeScheduledFor !== null && (
+          // The footer's answer to "so is that it for tonight?". A run that
+          // stopped on a spent 5-hour window has asked launchd to pick the
+          // queue back up, and a job starting hours later for no visible reason
+          // is worse than one that never starts.
+          <p className="text-muted-foreground text-xs">
+            Resuming at {formatClockTime(new Date(model.resumeScheduledFor))}, when the 5-hour
+            session window resets.
+          </p>
+        )}
 
         {cancelMessage !== null && (
           <p

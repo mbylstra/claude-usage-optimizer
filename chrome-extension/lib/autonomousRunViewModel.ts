@@ -27,7 +27,8 @@ export type RunTimelineKind =
   | 'output'
   | 'result'
   | 'finished'
-  | 'skipped';
+  | 'skipped'
+  | 'resumeScheduled';
 
 export type RunTimelineTone = 'default' | 'muted' | 'success' | 'error';
 
@@ -60,6 +61,11 @@ export interface AutonomousRunViewModel {
   exitCode: number | null;
   /** Why the run did not happen, when the last thing in the file was a skip. */
   skipDetail: string | null;
+  /**
+   * ISO 8601, when this run asked launchd to pick the queue back up after the
+   * 5-hour window resets. The footer's answer to "so is that it for tonight?".
+   */
+  resumeScheduledFor: string | null;
   timeline: RunTimelineEntry[];
 }
 
@@ -79,6 +85,7 @@ export const EMPTY_RUN_VIEW_MODEL: AutonomousRunViewModel = {
   turns: null,
   exitCode: null,
   skipDetail: null,
+  resumeScheduledFor: null,
   timeline: [],
 };
 
@@ -360,7 +367,33 @@ const SKIP_LABELS = {
   onPace: 'Skipped — on pace',
   emptyQueue: 'Skipped — nothing queued',
   noSnapshot: 'Skipped — no usage snapshot',
+  fiveHourExhausted: 'Skipped — the 5-hour session window is spent',
 } as const;
+
+/** Where the reset time came from, for the resume entry's detail line. */
+const RESUME_SOURCE_LABELS: Record<string, string> = {
+  cliNotice: 'the reset time the CLI named',
+  snapshot: 'the reset time in the usage snapshot',
+  fallback: 'five hours from now, the window not having named a reset',
+};
+
+/**
+ * `Fri 6:17 am`, in the reader's own zone.
+ *
+ * The event carries the scheduling machine's offset, which is the same machine
+ * — but launchd fires on wall-clock, so a DST change between now and then can
+ * move it by an hour. Not worth saying in a footer; worth knowing when one is
+ * an hour out.
+ */
+function describeResumeMoment(scheduledFor: string): string | null {
+  const parsed = Date.parse(scheduledFor);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed).toLocaleString(undefined, {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 function buildTimeline(events: readonly AutonomousRunEvent[]): RunTimelineEntry[] {
   const state: TimelineBuilderState = { entries: [], toolNamesById: new Map() };
@@ -412,6 +445,20 @@ function buildTimeline(events: readonly AutonomousRunEvent[]): RunTimelineEntry[
           'muted',
         );
         break;
+
+      case 'resumeScheduled': {
+        const moment = describeResumeMoment(event.scheduledFor);
+        addEntry(
+          state,
+          eventId,
+          event.at,
+          'resumeScheduled',
+          moment === null ? 'Resuming when the 5-hour window resets' : `Resuming ${moment}`,
+          RESUME_SOURCE_LABELS[event.source] ?? null,
+          'muted',
+        );
+        break;
+      }
     }
   });
 
@@ -439,6 +486,7 @@ export function buildAutonomousRunViewModel(
   if (boundary === null) return EMPTY_RUN_VIEW_MODEL;
 
   const finished = runEvents.find((event) => event.type === 'runFinished') ?? null;
+  const resume = runEvents.find((event) => event.type === 'resumeScheduled') ?? null;
   const skipped = boundary.type === 'runSkipped' ? boundary : null;
   const started = boundary.type === 'runStarted' ? boundary : null;
 
@@ -495,6 +543,7 @@ export function buildAutonomousRunViewModel(
     turns,
     exitCode: finished?.exitCode ?? null,
     skipDetail: skipped?.detail ?? null,
+    resumeScheduledFor: resume?.scheduledFor ?? null,
     timeline: buildTimeline(runEvents),
   };
 }

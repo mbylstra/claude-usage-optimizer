@@ -7,6 +7,10 @@ tearing the native host down), which means a group signal aimed at the scheduler
 does not reliably reach `claude` — it has been observed to outlive one and keep
 working. So both are matched by command line, signalled, and then verified.
 
+A pending resume is cleared too, whether or not anything was running: cancelling
+a run and then having it silently restart itself a few hours later is not what
+anybody means by cancel.
+
 Stdlib-only and 3.9-compatible for the same reason as `usage-host.py`: this may
 be run from contexts where `uv` is not on PATH.
 """
@@ -19,6 +23,11 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import autonomous_work_resume  # noqa: E402  (must follow the sys.path line above)
 
 # Matched against full command lines. The scheduler first, so that it does not
 # outlive its child and mark the queue entry as an error on the way out.
@@ -64,7 +73,17 @@ def signal_process(pid: int, which_signal: int) -> None:
         print("  not permitted to signal pid {}".format(pid))
 
 
+def clear_pending_resume() -> None:
+    """Unschedule a resume an earlier run left behind, if there is one."""
+    if autonomous_work_resume.cancel_resume():
+        print("Cleared the pending resume.")
+
+
 def main() -> int:
+    # First, and unconditionally: a resume outlives the run that scheduled it,
+    # so there is one to clear whether or not anything is running right now.
+    clear_pending_resume()
+
     targets = running_processes()
     if not targets:
         print("No autonomous work running.")

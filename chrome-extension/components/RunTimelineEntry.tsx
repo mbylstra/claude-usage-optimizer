@@ -3,6 +3,7 @@ import {
   ArrowRight,
   CheckCircle2,
   CircleDot,
+  Clock,
   Flag,
   MessageSquare,
   SkipForward,
@@ -29,6 +30,7 @@ const ICONS_BY_KIND = {
   result: CheckCircle2,
   finished: CheckCircle2,
   skipped: SkipForward,
+  resumeScheduled: Clock,
 } as const;
 
 const TONE_CLASSES = {

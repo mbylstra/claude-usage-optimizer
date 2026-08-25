@@ -16,7 +16,7 @@
  */
 export type RunOutcome = 'completed' | 'error' | 'timeout' | 'cancelled' | 'sessionLimit';
 
-export type RunSkipReason = 'onPace' | 'emptyQueue' | 'noSnapshot';
+export type RunSkipReason = 'onPace' | 'emptyQueue' | 'noSnapshot' | 'fiveHourExhausted';
 
 /** Everything the header needs, known before `claude` is invoked. */
 export interface RunStartedEvent {
@@ -66,8 +66,32 @@ export interface RunSkippedEvent {
   detail: string;
 }
 
+/**
+ * The queue will be picked up again once the 5-hour window resets.
+ *
+ * Written after a run's terminal event, so it is the last thing in the run and
+ * the footer can end on it rather than on the run simply stopping. Not a run
+ * boundary: it belongs to the run that scheduled it.
+ */
+export interface ResumeScheduledEvent {
+  type: 'resumeScheduled';
+  runId: string;
+  at: string;
+  /** ISO 8601, with the scheduling machine's offset — launchd fires on wall-clock. */
+  scheduledFor: string;
+  /** Which ending prompted it: `sessionLimit` or `fiveHourExhausted`. */
+  reason: string;
+  /** Where the reset time came from: `cliNotice`, `snapshot` or `fallback`. */
+  source: string;
+}
+
 export type AutonomousRunEvent =
-  RunStartedEvent | ClaudeEventEnvelope | ClaudeOutputEvent | RunFinishedEvent | RunSkippedEvent;
+  | RunStartedEvent
+  | ClaudeEventEnvelope
+  | ClaudeOutputEvent
+  | RunFinishedEvent
+  | RunSkippedEvent
+  | ResumeScheduledEvent;
 
 /** The events that begin a run. The viewer shows the events after the last one. */
 export type RunBoundaryEvent = RunStartedEvent | RunSkippedEvent;
@@ -79,7 +103,12 @@ const RUN_OUTCOMES: readonly string[] = [
   'cancelled',
   'sessionLimit',
 ];
-const RUN_SKIP_REASONS: readonly string[] = ['onPace', 'emptyQueue', 'noSnapshot'];
+const RUN_SKIP_REASONS: readonly string[] = [
+  'onPace',
+  'emptyQueue',
+  'noSnapshot',
+  'fiveHourExhausted',
+];
 
 function readString(source: Record<string, unknown>, field: string, fallback = ''): string {
   const value = source[field];
@@ -147,6 +176,16 @@ export function parseAutonomousRunEvent(value: unknown): AutonomousRunEvent | nu
         queueStatus: typeof source.queueStatus === 'string' ? source.queueStatus : null,
       };
     }
+
+    case 'resumeScheduled':
+      return {
+        type: 'resumeScheduled',
+        runId,
+        at,
+        scheduledFor: readString(source, 'scheduledFor'),
+        reason: readString(source, 'reason'),
+        source: readString(source, 'source'),
+      };
 
     case 'runSkipped': {
       const reason = readString(source, 'reason');

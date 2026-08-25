@@ -162,9 +162,11 @@ session ends when it runs out of `todo` entries, catches back up to pace, the
 5-hour session window itself reports exhausted, or the CLI refuses a prompt
 because a subscription limit has been reached — and those last two end the run
 rather than sitting idle for up to five hours waiting for the window to reset,
-since it does not refill early. `--force` (used by "Run now" and by the test
-recipes) is the one path that stays single-shot: it bypasses the pace check it
-exists to keep re-evaluating, so it runs exactly one prompt.
+since it does not refill early. Instead the run **schedules its own resume**, a
+few minutes after that window is expected to refill — see below. `--force`
+(used by "Run now" and by the test recipes) is the one path that stays
+single-shot: it bypasses the pace check it exists to keep re-evaluating, so it
+runs exactly one prompt.
 
 **A prompt refused by a subscription limit is left `todo`, not marked as an
 error.** It never ran, so failing it would skip it until somebody edited
@@ -218,13 +220,16 @@ just install-autonomous-work     # schedule the nightly run at the configured ti
 just uninstall-autonomous-work   # unschedule it
 just autonomous-status           # is it scheduled?
 
+just autonomous-resume-status    # is a resume pending, and is launchd holding it?
+just cancel-autonomous-resume    # unschedule a pending resume
+
 just test-launchd-run            # run the queue through launchd, as the nightly job does
 
 just autonomous-log              # follow the run live
 just autonomous-summary          # what last night's session did (or a given day's)
 just autonomous-log-raw          # follow the raw stream-json events
 just autonomous-running          # is a run in flight?
-just cancel-autonomous-work      # stop an in-flight run
+just cancel-autonomous-work      # stop an in-flight run, and clear its resume
 
 just run-log-preview             # the run-log window UI, on fixtures, no extension
 ```
@@ -251,7 +256,8 @@ wording change; the `.jsonl` has no run boundaries and no record of which
 prompt, repo or working directory a run used — which is exactly what the
 viewer's header needs. It carries our own envelope events (`runStarted`,
 `claudeEvent` wrapping the stream-json verbatim, `claudeOutput`, `runFinished`,
-`runSkipped`) and is **trimmed to the last five runs on each start**, so it stays
+`runSkipped`, `resumeScheduled`) and is **trimmed to the last five runs on each
+start**, so it stays
 bounded without a rotation job. A dry run writes nothing to it: asking what
 would happen must not disturb the record of what did.
 
@@ -294,7 +300,9 @@ signal aimed at the scheduler — so the cancel script matches both by command
 line, SIGTERMs, waits, then SIGKILLs the survivors. The scheduler catches that
 SIGTERM only to record a `runFinished` with outcome `cancelled` and `os._exit`
 straight away: a cancelled entry must be left as `todo`, not marked as an error
-on the way out.
+on the way out. It also clears any pending resume — cancelling a run and then
+having it silently restart itself a few hours later is not what anybody means by
+cancel.
 
 **Triggering a run from the popup.** Settings has a "Run now" button, which goes
 popup → service worker → native host → `launchctl kickstart`, and reports only
@@ -338,6 +346,78 @@ label was never installed, which the host turns into a "run
 `just install-autonomous-work`" message rather than a generic failure; and
 because launchd will not run two instances of one label, pressing the button
 during a run can no longer start a second overlapping one.
+
+## Resuming after the 5-hour window resets
+
+A session that runs into the 5-hour session window stops, since that window does
+not refill early. But it *does* refill, at a knowable time, often only two or
+three hours away — so rather than leaving the queue until 2 AM the next night,
+the run asks launchd to start it again shortly afterwards. Design and rationale:
+`plans/resume-after-five-hour-reset.md`. `autonomous_work_resume.py` owns the
+whole of it — the state file's shape and the agent's lifecycle — and inherits
+the stdlib-only, 3.9-compatible constraint, being imported by
+`cancel-autonomous-work.py`.
+
+That makes **a third launch agent**:
+
+```
+com.claudeusageoptimizer.autonomouswork           2 AM, pace-gated
+com.claudeusageoptimizer.autonomouswork.ondemand  no schedule, --force
+com.claudeusageoptimizer.autonomouswork.resume    one date and time, --resume
+```
+
+It carries `--resume`, not `--force`, so the pace gate still applies: a week
+that has caught up by the time it fires correctly does nothing.
+
+**Pinning a Month and a Day is what makes it one-shot.** launchd has no one-shot
+calendar job — `Hour`/`Minute` alone repeat daily, adding `Day` repeats monthly,
+adding `Month` repeats yearly. Nor can the job unschedule itself at fire time:
+`launchctl bootout` of a label kills that label's own running process, and the
+scheduler's SIGTERM handler would then record the run as **cancelled**. So
+`backend/autonomous-work-resume.json` is what makes a stray fire a no-op — a
+year later, or on a Mac that ran a missed calendar job on waking.
+
+**One resume per day, and never from a resume.** This is the rule the whole
+design rests on, and it is worth knowing what it saves. A resumed run reads the
+same snapshot file; if Chrome has been closed since, that file still says the
+window is at 100%, the gate skips with `fiveHourExhausted`, and the run would
+schedule *another* resume five hours out — forever, on the strength of one stale
+reading. Under a no-chain rule that cannot happen, so there is no freshness
+test, no chain counter and no maximum to tune. Do not add chaining back as an
+obvious improvement. The per-day half of the rule is why serving a resume
+**stamps `servedAt` rather than deleting the file**: the record that today
+already had one has to outlive the schedule it describes.
+
+Three more guards live in `schedule_resume_if_warranted`: a `--force` run
+schedules nothing (it is one explicit instruction, not a standing one); nothing
+is scheduled where the nightly agent is not installed (the same rule
+`install_launch_agent(only_if_installed=True)` follows — a machine that just ran
+`just uninstall-autonomous-work` must not find an agent written back); and
+nothing is scheduled with an empty queue.
+
+**When the window resets — three sources, in order.** The CLI's own notice, when
+the run ended on `sessionLimit`; the snapshot's `fiveHourResetsAt`, for the
+`fiveHourExhausted` gate ending, which has no notice; and `now + 5h`, which is
+always available and errs *late*, the harmless direction. Every candidate gets a
+buffer and is then clamped into `(now, now + 5h + 15m]`. **That clamp is what
+discards a weekly or Opus limit** — both reach this code by exactly the same
+route as a session limit — without having to classify their wording. A notice
+that fails the clamp therefore schedules *nothing*, rather than falling through:
+it is not this window, and it says nothing about this window being spent. A
+notice we merely could not *parse* does fall through, since it tells us nothing
+either way.
+
+**The notice's wording is not ours.** `resets 3:50am (Australia/Melbourne)` is
+the only sample we have, and `parse_reset_time` returns None rather than a wrong
+time on anything else — falling through costs at most one wasted window, where a
+wrong time spends the day's only resume. The raw notice is logged beside the
+parse result so a wording change is diagnosable from the log alone.
+
+Four places say a resume is coming, because a job that starts at 6 AM for no
+visible reason is worse than one that never starts: `autonomous-work.log`, a
+`resumeScheduled` event in the run-event stream (which the run-log window's
+footer ends on), a `**Resuming:**` line in the day's summary, and
+`just autonomous-resume-status`.
 
 ## Watching a run live
 
@@ -431,10 +511,13 @@ Every knob is also an environment variable rather than a code edit —
 that ends a session rather than moving on to the next `todo`),
 `AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` and
 `AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (both of which win over their mirrored
-setting), and the file-path overrides used by the tests — including
-`AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST` and `AUTONOMOUS_WORK_LAUNCHCTL`, which are
-what let `just test-usage-host` exercise the rescheduling path without touching
-the job installed on the machine.
+setting), `AUTONOMOUS_WORK_RESUME_BUFFER_SECONDS` (default 120 — how long after
+a reset a resume fires), and the file-path overrides used by the tests —
+including `AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST`, `AUTONOMOUS_WORK_LAUNCHCTL`,
+`AUTONOMOUS_WORK_RESUME_LAUNCH_AGENT_PLIST` and
+`AUTONOMOUS_WORK_RESUME_STATE_FILE`, which are what let `just test-usage-host`
+and the unit tests exercise the scheduling paths without touching the jobs
+installed on the machine.
 
 **The pace threshold is set in the extension's Settings screen, in hours** —
 positive tolerates being that far ahead of an even weekly burn before the

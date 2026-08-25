@@ -64,25 +64,31 @@ DEFAULT_APPEND_TO_ALL_PROMPTS = ""
 DEFAULT_PACE_THRESHOLD_HOURS = 0.0
 
 
-def _environment_path(name: str, default: Path) -> Path:
+def environment_path(name: str, default: Path) -> Path:
+    """A path from the environment, expanding `~`, falling back to `default`.
+
+    Public because `autonomous_work_resume.py` declares its own two file paths
+    the same overridable way, and the tests rely on every path in this system
+    being redirectable.
+    """
     raw_value = os.environ.get(name)
     return Path(os.path.expanduser(raw_value)) if raw_value else default
 
 
 # Overridable so the tests can exercise the real code paths without touching the
 # user's actual LaunchAgents directory or spawning a real launchctl.
-SETTINGS_FILE = _environment_path(
+SETTINGS_FILE = environment_path(
     "AUTONOMOUS_WORK_SETTINGS_FILE", SCRIPT_DIRECTORY / "autonomous-work-settings.json"
 )
 LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (LAUNCH_AGENT_LABEL + ".plist")
-INSTALLED_LAUNCH_AGENT_FILE = _environment_path(
+INSTALLED_LAUNCH_AGENT_FILE = environment_path(
     "AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST",
     Path.home() / "Library" / "LaunchAgents" / (LAUNCH_AGENT_LABEL + ".plist"),
 )
 ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (ON_DEMAND_LAUNCH_AGENT_LABEL + ".plist")
 # Defaults beside the nightly agent rather than to a path of its own, so the
 # tests' override of that one carries both out of the real LaunchAgents folder.
-INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE = _environment_path(
+INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE = environment_path(
     "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST",
     INSTALLED_LAUNCH_AGENT_FILE.parent / (ON_DEMAND_LAUNCH_AGENT_LABEL + ".plist"),
 )
@@ -242,15 +248,26 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
 
 def render_launch_agent_plist(settings: AutonomousWorkSettings) -> str:
     """Expand the checked-in template for this machine and this schedule."""
-    return _render_template(LAUNCH_AGENT_TEMPLATE_FILE, settings)
+    return render_template(LAUNCH_AGENT_TEMPLATE_FILE, settings)
 
 
 def render_on_demand_launch_agent_plist() -> str:
     """Expand the on-demand template — the same work, with no time in it."""
-    return _render_template(ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
+    return render_template(ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
 
 
-def _render_template(template_file: Path, settings: AutonomousWorkSettings) -> str:
+def render_template(
+    template_file: Path,
+    settings: AutonomousWorkSettings,
+    extra_replacements: "dict[str, str] | None" = None,
+) -> str:
+    """Expand a launch-agent template for this machine.
+
+    `extra_replacements` is for placeholders only one template has — the resume
+    agent's `__MONTH__` and `__DAY__`, which pin it to a single date. Applied
+    after the common ones, and never able to shadow them, since the mapping is
+    merged rather than replacing.
+    """
     template_text = template_file.read_text(encoding="utf-8")
     replacements = {
         "__PROJECT_ROOT__": str(PROJECT_ROOT),
@@ -258,6 +275,8 @@ def _render_template(template_file: Path, settings: AutonomousWorkSettings) -> s
         "__HOUR__": str(settings.schedule_hour),
         "__MINUTE__": str(settings.schedule_minute),
     }
+    if extra_replacements:
+        replacements.update(extra_replacements)
     for placeholder, value in replacements.items():
         template_text = template_text.replace(placeholder, value)
     return template_text
@@ -286,7 +305,7 @@ def install_launch_agent(
 
     INSTALLED_LAUNCH_AGENT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    load_result = _write_and_load_agent(
+    load_result = write_and_load_agent(
         INSTALLED_LAUNCH_AGENT_FILE, render_launch_agent_plist(settings), always_reload=True
     )
     if load_result is not None:
@@ -295,7 +314,7 @@ def install_launch_agent(
     # The on-demand twin carries no schedule, so saving a new time never needs it
     # reloaded — and reloading it would kill a "Run now" that happened to be in
     # flight. Left alone unless its definition has actually changed.
-    on_demand_result = _write_and_load_agent(
+    on_demand_result = write_and_load_agent(
         INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE,
         render_on_demand_launch_agent_plist(),
         always_reload=False,
@@ -306,10 +325,15 @@ def install_launch_agent(
     return LaunchAgentUpdate(True, "scheduled for {}".format(settings.describe_schedule()))
 
 
-def _write_and_load_agent(
+def write_and_load_agent(
     installed_file: Path, plist_text: str, always_reload: bool
 ) -> str | None:
     """Put one agent in place and make sure launchd is holding it.
+
+    Public because `autonomous_work_resume.py` installs a third agent and must
+    obey the same unload-before-rewrite rule — launchd holds the definition it
+    was given, and an in-place edit changes the file and nothing else. That is
+    the one thing about launchd easy to get wrong twice, so it is written once.
 
     Returns an error description, or None on success.
     """
@@ -323,18 +347,23 @@ def _write_and_load_agent(
         if unchanged:
             # Loading an already-loaded job fails harmlessly; unloading it to be
             # tidy would stop whatever it is doing.
-            _run_launchctl("load", str(installed_file), ignore_failure=True)
+            run_launchctl("load", str(installed_file), ignore_failure=True)
             return None
 
     # Unload before rewriting: launchd holds the job definition it was given, so
     # an in-place edit alone changes the file and nothing else.
-    _run_launchctl("unload", str(installed_file), ignore_failure=True)
+    run_launchctl("unload", str(installed_file), ignore_failure=True)
     installed_file.write_text(plist_text, encoding="utf-8")
-    return _run_launchctl("load", str(installed_file))
+    return run_launchctl("load", str(installed_file))
 
 
-def _run_launchctl(subcommand: str, plist_path: str, ignore_failure: bool = False) -> str | None:
-    """Run one launchctl subcommand; return an error description, or None on success."""
+def run_launchctl(subcommand: str, plist_path: str, ignore_failure: bool = False) -> str | None:
+    """Run one launchctl subcommand; return an error description, or None on success.
+
+    Public alongside `write_and_load_agent`, and for the same reason: it honours
+    `AUTONOMOUS_WORK_LAUNCHCTL`, which is what lets the tests exercise the real
+    scheduling paths without touching the jobs installed on this machine.
+    """
     try:
         completed = subprocess.run(
             [LAUNCHCTL_COMMAND, subcommand, plist_path],

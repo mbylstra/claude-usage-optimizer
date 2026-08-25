@@ -26,3 +26,5 @@ backend/claude-usage.json
 backend/autonomous-work-settings.json
 backend/autonomous-work.jsonl
 backend/autonomous-run-events.jsonl
+# The pending resume a run scheduled for itself, per-machine and per-night
+backend/autonomous-work-resume.json

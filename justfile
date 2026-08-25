@@ -96,6 +96,11 @@ launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_l
 # launchd rather than to Chrome — see CLAUDE.md, "Triggering a run from the popup"
 on_demand_label := launch_agent_label + ".ondemand"
 on_demand_plist := home_directory() / "Library/LaunchAgents" / on_demand_label + ".plist"
+# The one-shot agent a run writes for itself when it hits the 5-hour window, so
+# the queue is picked back up once that window resets — see
+# plans/resume-after-five-hour-reset.md. Written by runs, never by setup.
+resume_label := launch_agent_label + ".resume"
+resume_plist := home_directory() / "Library/LaunchAgents" / resume_label + ".plist"
 
 # The uv this job runs, so the folder grants attach to a binary nothing else
 # uses. Named for the project rather than "uv" because System Settings lists an
@@ -183,10 +188,22 @@ trigger-autonomous-work *args:
 autonomous-dry-run:
     {{ autonomous_script }} --force --dry-run
 
-# Stop any in-flight run (the scheduler and the claude session it spawned)
+# Stop any in-flight run, and clear any resume it had scheduled for itself
 [no-exit-message]
 cancel-autonomous-work:
     @python3 backend/cancel-autonomous-work.py
+
+# Is a resume pending, and is launchd holding it?
+[no-exit-message]
+autonomous-resume-status:
+    @python3 backend/autonomous_work_resume.py
+    @echo
+    @launchctl list | grep {{ resume_label }} || echo "launchd is not holding a resume"
+
+# Unschedule a pending resume without touching anything else
+[no-exit-message]
+cancel-autonomous-resume:
+    @python3 backend/autonomous_work_resume.py --cancel
 
 # Is a run in flight right now?
 [no-exit-message]
@@ -390,10 +407,12 @@ uninstall-autonomous-work:
     rm -f {{ launch_agent_plist }}
     launchctl unload {{ on_demand_plist }} 2>/dev/null || true
     rm -f {{ on_demand_plist }}
-    @echo "Removed {{ launch_agent_label }} and {{ on_demand_label }}"
+    # A pending resume would otherwise fire days after unattended work was
+    # switched off, which is the one thing uninstalling it must not allow.
+    @python3 backend/autonomous_work_resume.py --cancel
+    @echo "Removed {{ launch_agent_label }}, {{ on_demand_label }} and {{ resume_label }}"
 
-# Is the nightly run scheduled? Both jobs are listed — the nightly one and the
-# unscheduled twin "Run now" starts.
+# Is the nightly run scheduled? Lists all three jobs — nightly, "Run now", resume
 autonomous-status:
     @launchctl list | grep {{ launch_agent_label }} || echo "not loaded"
 

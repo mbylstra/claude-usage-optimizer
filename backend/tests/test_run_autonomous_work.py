@@ -18,11 +18,12 @@ writes this machine's actual queue, log, snapshot or settings files.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -30,6 +31,12 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent.parent
 
 _TEMP_DIRECTORY = tempfile.TemporaryDirectory()
 _TEMP_PATH = Path(_TEMP_DIRECTORY.name)
+
+# A launchctl that records rather than acts, so scheduling a resume in a test
+# never loads a job on the machine running it.
+_FAKE_LAUNCHCTL = _TEMP_PATH / "launchctl"
+_FAKE_LAUNCHCTL.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+_FAKE_LAUNCHCTL.chmod(0o755)
 
 os.environ.update(
     {
@@ -42,6 +49,16 @@ os.environ.update(
         "AUTONOMOUS_WORK_NEW_PROJECTS_DIR": str(_TEMP_PATH / "projects"),
         "AUTONOMOUS_WORK_SETTINGS_FILE": str(_TEMP_PATH / "autonomous-work-settings.json"),
         "AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS": "5",
+        # The resume machinery reaches for three more paths and for launchctl.
+        # Redirected here as well, so a test that schedules a resume writes a
+        # plist into a temp directory rather than into ~/Library/LaunchAgents,
+        # and "is the nightly job installed?" is a question about this
+        # directory rather than about the machine running the tests.
+        "AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "nightly.plist"),
+        "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "ondemand.plist"),
+        "AUTONOMOUS_WORK_RESUME_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "resume.plist"),
+        "AUTONOMOUS_WORK_RESUME_STATE_FILE": str(_TEMP_PATH / "autonomous-work-resume.json"),
+        "AUTONOMOUS_WORK_LAUNCHCTL": str(_FAKE_LAUNCHCTL),
     }
 )
 
@@ -214,6 +231,161 @@ class EvaluatePaceGateTests(unittest.TestCase):
     def test_exactly_at_threshold_counts_as_behind_not_on_pace(self):
         result = self._evaluate(self._snapshot(delta_ms=self.THRESHOLD_MS))
         self.assertTrue(result.ok)
+
+
+class ParseResetTimeTests(unittest.TestCase):
+    """Reading the CLI's limit notice — wording that is not ours, so read defensively."""
+
+    # A Tuesday, so a weekday in a notice is unambiguously a different day.
+    NOW = datetime(2026, 8, 25, 1, 30, tzinfo=timezone(timedelta(hours=10)))
+
+    def test_the_one_wording_we_have_a_sample_of(self):
+        parsed = work.parse_reset_time(
+            "You've hit your session limit · resets 3:50am (Australia/Melbourne)", self.NOW
+        )
+        self.assertIsNotNone(parsed)
+        self.assertEqual((parsed.hour, parsed.minute), (3, 50))
+        self.assertEqual(parsed.date(), self.NOW.date())
+
+    def test_a_bare_hour_with_no_minutes(self):
+        parsed = work.parse_reset_time("resets 3am", self.NOW)
+        self.assertEqual((parsed.hour, parsed.minute), (3, 0))
+
+    def test_twenty_four_hour_time_without_a_meridiem(self):
+        parsed = work.parse_reset_time("resets 13:05", self.NOW)
+        self.assertEqual((parsed.hour, parsed.minute), (13, 5))
+
+    def test_a_time_already_past_today_means_tomorrow(self):
+        parsed = work.parse_reset_time("resets 1:00am", self.NOW)
+        self.assertEqual(parsed.date(), (self.NOW + timedelta(days=1)).date())
+
+    def test_midday_and_midnight_meridiems(self):
+        self.assertEqual(work.parse_reset_time("resets 12:00pm", self.NOW).hour, 12)
+        self.assertEqual(work.parse_reset_time("resets 12:30am", self.NOW).hour, 0)
+
+    def test_a_weekday_places_the_time_on_that_day(self):
+        parsed = work.parse_reset_time("You've hit your weekly limit · resets Thu at 9am", self.NOW)
+        # Tuesday the 25th → Thursday the 27th.
+        self.assertEqual(parsed.date(), datetime(2026, 8, 27).date())
+
+    def test_an_unknown_zone_falls_back_to_the_local_one(self):
+        parsed = work.parse_reset_time("resets 3:50am (Mars/Olympus_Mons)", self.NOW)
+        self.assertEqual(parsed.utcoffset(), self.NOW.utcoffset())
+
+    def test_unrecognised_wording_is_none_rather_than_a_guess(self):
+        self.assertIsNone(work.parse_reset_time("resets soon", self.NOW))
+        self.assertIsNone(work.parse_reset_time("your limit has been reached", self.NOW))
+        self.assertIsNone(work.parse_reset_time(None, self.NOW))
+        self.assertIsNone(work.parse_reset_time("", self.NOW))
+
+    def test_an_impossible_clock_reading_is_none(self):
+        self.assertIsNone(work.parse_reset_time("resets 25:00", self.NOW))
+        self.assertIsNone(work.parse_reset_time("resets 13:70", self.NOW))
+        self.assertIsNone(work.parse_reset_time("resets 15pm", self.NOW))
+
+
+class ChooseResumeTimeTests(unittest.TestCase):
+    """The three sources, the buffer, and the clamp that rejects a weekly limit."""
+
+    NOW = datetime(2026, 8, 25, 1, 30, tzinfo=timezone(timedelta(hours=10)))
+    BUFFER_SECONDS = 120
+
+    def _choose(self, limit_notice=None, snapshot_resets_at=None):
+        return work.choose_resume_time(
+            self.NOW,
+            limit_notice=limit_notice,
+            snapshot_resets_at=snapshot_resets_at,
+            buffer_seconds=self.BUFFER_SECONDS,
+        )
+
+    def test_the_notice_wins_and_is_buffered(self):
+        chosen = self._choose(limit_notice="resets 3:50am (Australia/Melbourne)")
+        self.assertEqual(chosen.source, work.RESUME_SOURCE_CLI_NOTICE)
+        self.assertEqual(
+            chosen.fire_at - chosen.resets_at, timedelta(seconds=self.BUFFER_SECONDS)
+        )
+        self.assertEqual((chosen.fire_at.hour, chosen.fire_at.minute), (3, 52))
+
+    def test_the_notice_beats_a_snapshot_that_disagrees(self):
+        chosen = self._choose(
+            limit_notice="resets 3:50am",
+            snapshot_resets_at=self.NOW + timedelta(hours=4),
+        )
+        self.assertEqual(chosen.source, work.RESUME_SOURCE_CLI_NOTICE)
+
+    def test_a_weekly_limits_reset_schedules_nothing_at_all(self):
+        # Days out, so it is not this window — and no source further down the
+        # list should be consulted, because nothing here says this window is
+        # spent.
+        self.assertIsNone(self._choose(limit_notice="weekly limit · resets Thu 9am"))
+
+    def test_an_unparseable_notice_falls_through_rather_than_blocking(self):
+        chosen = self._choose(limit_notice="resets at some point")
+        self.assertEqual(chosen.source, work.RESUME_SOURCE_FALLBACK)
+
+    def test_the_snapshot_is_used_when_there_is_no_notice(self):
+        resets_at = self.NOW + timedelta(hours=2)
+        chosen = self._choose(snapshot_resets_at=resets_at)
+        self.assertEqual(chosen.source, work.RESUME_SOURCE_SNAPSHOT)
+        self.assertEqual(chosen.resets_at, resets_at)
+
+    def test_a_snapshot_reset_already_past_falls_through_to_the_fallback(self):
+        chosen = self._choose(snapshot_resets_at=self.NOW - timedelta(hours=2))
+        self.assertEqual(chosen.source, work.RESUME_SOURCE_FALLBACK)
+
+    def test_a_snapshot_reset_beyond_one_window_falls_through_too(self):
+        chosen = self._choose(snapshot_resets_at=self.NOW + timedelta(days=3))
+        self.assertEqual(chosen.source, work.RESUME_SOURCE_FALLBACK)
+
+    def test_the_fallback_is_one_window_plus_the_buffer(self):
+        chosen = self._choose()
+        self.assertEqual(
+            chosen.fire_at,
+            self.NOW
+            + timedelta(seconds=work.FIVE_HOUR_WINDOW_SECONDS + self.BUFFER_SECONDS),
+        )
+
+    def test_every_source_lands_inside_the_clamp(self):
+        for chosen in [
+            self._choose(limit_notice="resets 3:50am"),
+            self._choose(snapshot_resets_at=self.NOW + timedelta(hours=2)),
+            self._choose(),
+        ]:
+            self.assertGreater(chosen.fire_at, self.NOW)
+            self.assertLessEqual(
+                chosen.fire_at,
+                self.NOW + timedelta(seconds=work.RESUME_MAX_DELAY_SECONDS),
+            )
+
+
+class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
+    """The snapshot contract with the extension, including the version skew in it."""
+
+    def _write_snapshot(self, payload):
+        work.USAGE_SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        work.USAGE_SNAPSHOT_FILE.write_text(json.dumps(payload), encoding="utf-8")
+        self.addCleanup(work.USAGE_SNAPSHOT_FILE.unlink)
+
+    def test_the_reset_time_is_read_when_the_extension_reports_it(self):
+        self._write_snapshot(
+            {
+                "fetchedAt": "2026-08-25T01:00:00.000Z",
+                "weeklyPaceDeltaMs": -3600000,
+                "fiveHourPercent": 100,
+                "fiveHourResetsAt": "2026-08-25T04:00:00.000Z",
+            }
+        )
+        snapshot = work.read_pace_snapshot()
+        self.assertEqual(
+            snapshot.five_hour_resets_at,
+            datetime(2026, 8, 25, 4, 0, tzinfo=timezone.utc),
+        )
+
+    def test_an_extension_that_predates_the_field_still_reads(self):
+        self._write_snapshot({"fetchedAt": "2026-08-25T01:00:00.000Z", "weeklyPaceDeltaMs": -1})
+        snapshot = work.read_pace_snapshot()
+        self.assertIsNotNone(snapshot)
+        self.assertIsNone(snapshot.five_hour_resets_at)
 
 
 class ParseQueueTests(unittest.TestCase):
@@ -683,6 +855,97 @@ class RemainingTodoPromptsTests(unittest.TestCase):
     def test_missing_queue_file_is_not_an_error(self):
         work.QUEUE_FILE.unlink(missing_ok=True)
         self.assertEqual(work.remaining_todo_prompts([]), [])
+
+
+class ScheduleResumeIfWarrantedTests(unittest.TestCase):
+    """The guards from the plan's §3, each of which exists to stop a chain.
+
+    Everything these touch is redirected into the temp directory at the top of
+    this file: the nightly agent's path is a file here, launchctl is a script
+    that does nothing, and the state file is written beside them.
+    """
+
+    NOW = datetime(2026, 8, 25, 1, 30).astimezone()
+    SESSION_LIMIT_NOTICE = "You've hit your session limit · resets 3:50am"
+
+    def setUp(self):
+        work.QUEUE_FILE.write_text("STATUS: todo\nSomething to come back for\n", encoding="utf-8")
+        # The resume only happens where the user has already asked for
+        # unattended work, so every test that expects one starts from there.
+        work.autonomous_work_settings.INSTALLED_LAUNCH_AGENT_FILE.write_text("", encoding="utf-8")
+        self.events = work.RunEventStream(run_id="test", enabled=False)
+
+    def tearDown(self):
+        work.QUEUE_FILE.unlink(missing_ok=True)
+        work.autonomous_work_settings.INSTALLED_LAUNCH_AGENT_FILE.unlink(missing_ok=True)
+        work.autonomous_work_resume.RESUME_STATE_FILE.unlink(missing_ok=True)
+        work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.unlink(missing_ok=True)
+
+    def _schedule(self, **overrides):
+        arguments = {
+            "limit_notice": self.SESSION_LIMIT_NOTICE,
+            "snapshot_resets_at": None,
+            "forced": False,
+            "is_resume_run": False,
+            "events": self.events,
+            "now": self.NOW,
+        }
+        arguments.update(overrides)
+        return work.schedule_resume_if_warranted("sessionLimit", **arguments)
+
+    def test_a_session_limit_with_work_queued_schedules_one(self):
+        pending = self._schedule()
+        self.assertIsNotNone(pending)
+        self.assertEqual((pending.scheduled_for.hour, pending.scheduled_for.minute), (3, 52))
+        self.assertTrue(work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.exists())
+
+    def test_a_resume_run_schedules_nothing_further(self):
+        # The guard that makes every freshness check unnecessary: a resumed run
+        # reads the same possibly-stale snapshot, so allowing it to schedule
+        # another would let one reading walk through the following day.
+        self.assertIsNone(self._schedule(is_resume_run=True))
+        self.assertFalse(work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.exists())
+
+    def test_a_forced_run_schedules_nothing(self):
+        self.assertIsNone(self._schedule(forced=True))
+
+    def test_a_second_run_the_same_day_schedules_nothing(self):
+        self.assertIsNotNone(self._schedule())
+        self.assertIsNone(self._schedule(now=self.NOW + timedelta(hours=1)))
+
+    def test_a_run_the_next_day_may_schedule_one_again(self):
+        self.assertIsNotNone(self._schedule())
+        self.assertIsNotNone(self._schedule(now=self.NOW + timedelta(days=1)))
+
+    def test_nothing_is_scheduled_where_the_nightly_job_is_not_installed(self):
+        # Writing a launch agent nobody asked for is not this script's call —
+        # least of all right after somebody ran `just uninstall-autonomous-work`.
+        work.autonomous_work_settings.INSTALLED_LAUNCH_AGENT_FILE.unlink()
+        self.assertIsNone(self._schedule())
+
+    def test_an_empty_queue_schedules_nothing(self):
+        work.QUEUE_FILE.write_text("STATUS: completed\nAll done\n", encoding="utf-8")
+        self.assertIsNone(self._schedule())
+
+    def test_a_missing_queue_schedules_nothing(self):
+        work.QUEUE_FILE.unlink()
+        self.assertIsNone(self._schedule())
+
+    def test_a_weekly_limit_schedules_nothing(self):
+        self.assertIsNone(
+            self._schedule(limit_notice="You've hit your weekly limit · resets Thu 9am")
+        )
+        self.assertFalse(work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.exists())
+
+    def test_the_exhausted_gate_ending_uses_the_snapshots_reset_time(self):
+        pending = self._schedule(
+            limit_notice=None, snapshot_resets_at=self.NOW + timedelta(hours=2)
+        )
+        self.assertEqual(pending.source, work.RESUME_SOURCE_SNAPSHOT)
+
+    def test_with_no_notice_and_no_snapshot_it_still_comes_back(self):
+        pending = self._schedule(limit_notice=None)
+        self.assertEqual(pending.source, work.RESUME_SOURCE_FALLBACK)
 
 
 class QueueStatusForOutcomeTests(unittest.TestCase):
