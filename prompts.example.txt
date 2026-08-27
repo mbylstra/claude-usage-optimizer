@@ -5,7 +5,8 @@
 # Sections are separated by a line of three or more '=' characters. Each section
 # is:
 #
-#   STATUS: todo | completed | error | draft   (required, first line of the section)
+#   STATUS: todo | completed | error | draft | unmerged:<branch>
+#                                              (required, first line of the section)
 #   REPO: ~/path/to/project                    (optional — see below)
 #   <everything else is the prompt, and may span multiple lines>
 #
@@ -19,6 +20,12 @@
 #
 # 'draft' is never picked up — it's for a prompt you're still writing and don't
 # want run yet. Change it to 'todo' when it's ready.
+#
+# 'unmerged:<branch>' is written by the scheduler when a prompt finished but left
+# its work on a branch instead of merging it — usually because the run had a
+# question it couldn't answer for itself. It is skipped like 'draft': review the
+# branch it names, then mark the entry 'completed', or put it back to 'todo' with
+# the answer written into the prompt.
 ===
 STATUS: todo
 REPO: ~/code/current/claude-usage-optimizer

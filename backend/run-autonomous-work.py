@@ -50,6 +50,14 @@ STATUS_ERROR = "error"
 # casing — `find_next_todo` picks up `todo` and nothing else — and named here
 # only so the queue's vocabulary is stated in one place.
 STATUS_DRAFT = "draft"
+# Work that finished but is sitting on a branch rather than in main, because the
+# run had a question it could not answer for itself. Always carries the branch
+# name after a colon — `unmerged:add-widget` — since a status that did not say
+# where the work went would be worse than no status at all. Skipped by
+# `find_next_todo` like any status that is not `todo`.
+STATUS_UNMERGED = "unmerged"
+# Separates a status from its detail, so far only `unmerged`'s branch name.
+STATUS_DETAIL_SEPARATOR = ":"
 
 # Aliased from the summary module rather than spelled again, so the run-event
 # stream the viewer reads and the day's summary can never disagree about it.
@@ -740,12 +748,43 @@ def choose_resume_time(
 
 @dataclass(frozen=True)
 class QueueEntry:
+    # The status as `normalise_status` leaves it, so it may carry a `:detail`.
+    # Compare against `status_name`, never against the raw string.
     status: str
     """Index into the file's line list, so the status can be rewritten in place."""
     status_line_index: int
     """The REPO: line as a path, or None to start a new project — see `resolve_working_directory`."""
     repository_path: Path | None
     prompt: str
+
+    @property
+    def status_name(self) -> str:
+        """The status word on its own — `unmerged` out of `unmerged:add-widget`."""
+        return status_name_of(self.status)
+
+
+def status_name_of(status: str) -> str:
+    return status.partition(STATUS_DETAIL_SEPARATOR)[0]
+
+
+def normalise_status(status_text: str) -> str:
+    """A STATUS field's value, lowercased — but with any `:detail` left as written.
+
+    `unmerged:Add-Widget` names a git branch, and branch names are
+    case-sensitive, so only the word before the colon can be folded. A colon
+    with nothing after it is dropped rather than kept, so `unmerged:` reads as
+    the plain status it looks like rather than as one with an empty branch.
+    """
+    status_name, separator, detail = status_text.partition(STATUS_DETAIL_SEPARATOR)
+    status_name = status_name.strip().lower()
+    detail = detail.strip()
+    if not separator or not detail:
+        return status_name
+    return f"{status_name}{STATUS_DETAIL_SEPARATOR}{detail}"
+
+
+def unmerged_status(branch_name: str) -> str:
+    return f"{STATUS_UNMERGED}{STATUS_DETAIL_SEPARATOR}{branch_name}"
 
 
 def _parse_section(first_line_index: int, section_lines: list[str]) -> QueueEntry | None:
@@ -762,7 +801,7 @@ def _parse_section(first_line_index: int, section_lines: list[str]) -> QueueEntr
                 continue
             if not stripped_line.startswith(STATUS_FIELD_PREFIX):
                 return None  # A section without a STATUS header is not a work item.
-            status = stripped_line[len(STATUS_FIELD_PREFIX) :].strip().lower()
+            status = normalise_status(stripped_line[len(STATUS_FIELD_PREFIX) :])
             status_line_index = first_line_index + offset
             continue
 
@@ -829,9 +868,25 @@ def read_queue_lines() -> list[str] | None:
 
 def find_next_todo(entries: list[QueueEntry]) -> QueueEntry | None:
     for entry in entries:
-        if entry.status == STATUS_TODO and entry.prompt:
+        if entry.status_name == STATUS_TODO and entry.prompt:
             return entry
     return None
+
+
+def status_on_line(lines: list[str], status_line_index: int) -> str | None:
+    """The status that line holds, or None if it is not a STATUS line at all.
+
+    Checking the line still *is* a STATUS field, rather than only that the index
+    is in range, is what keeps a queue edited during the run from having a line
+    of its prompt overwritten: a run that adds or removes lines above its own
+    entry shifts every index taken before it started.
+    """
+    if not 0 <= status_line_index < len(lines):
+        return None
+    stripped_line = lines[status_line_index].strip()
+    if not stripped_line.startswith(STATUS_FIELD_PREFIX):
+        return None
+    return normalise_status(stripped_line[len(STATUS_FIELD_PREFIX) :])
 
 
 def rewrite_status_line(lines: list[str], status_line_index: int, new_status: str) -> list[str] | None:
@@ -841,26 +896,38 @@ def rewrite_status_line(lines: list[str], status_line_index: int, new_status: st
     line by index rather than by string replacement keeps the update correct
     even when a prompt body happens to contain the word STATUS.
     """
-    if not 0 <= status_line_index < len(lines):
+    if status_on_line(lines, status_line_index) is None:
         return None
     updated_lines = list(lines)
     updated_lines[status_line_index] = f"{STATUS_FIELD_PREFIX} {new_status}"
     return updated_lines
 
 
-def write_queue_status(status_line_index: int, new_status: str) -> None:
-    """Rewrite one STATUS line, replacing the file atomically.
+def write_queue_status(status_line_index: int, new_status: str) -> str:
+    """Rewrite one STATUS line, replacing the file atomically. Returns the status
+    the entry is left holding, which is what the run event and the day's summary
+    then report.
 
     The temp-file swap means a queue edited mid-run is never left truncated.
+
+    An `unmerged:<branch>` already on the line wins over anything this run would
+    write. Only the run itself can have put it there — it is the one party that
+    knows it left work on a branch — and overwriting it with `completed` would
+    throw away the branch name, the single thing that status exists to carry.
     """
     lines = read_queue_lines()
     if lines is None:
-        return
+        return new_status
+
+    status_already_there = status_on_line(lines, status_line_index)
+    if status_already_there is not None and status_name_of(status_already_there) == STATUS_UNMERGED:
+        log_message(f"Queue entry already marked '{status_already_there}' by the run itself")
+        return status_already_there
 
     updated_lines = rewrite_status_line(lines, status_line_index, new_status)
     if updated_lines is None:
         log_message(f"Queue changed while running; not updating status to {new_status}")
-        return
+        return new_status
 
     try:
         with tempfile.NamedTemporaryFile(
@@ -872,6 +939,7 @@ def write_queue_status(status_line_index: int, new_status: str) -> None:
         log_message(f"Queue entry marked '{new_status}'")
     except OSError as error:
         log_message(f"Could not update prompt queue: {error}")
+    return new_status
 
 
 # --------------------------------------------------------------------------- #
@@ -1077,6 +1145,135 @@ def prepare_working_directory(working_directory: Path, is_new_project: bool) -> 
     return True
 
 
+# --------------------------------------------------------------------------- #
+# Work left on a branch
+# --------------------------------------------------------------------------- #
+
+# Tried in order when a repository has no `origin/HEAD` naming its default
+# branch. Only ever used to answer "what would this work have been merged into".
+FALLBACK_DEFAULT_BRANCH_NAMES = ("main", "master")
+# Every git call here is one question about a local repository. Bounded anyway,
+# because this runs unattended and a wedged git would otherwise hold the whole
+# session open.
+GIT_QUERY_TIMEOUT_SECONDS = 15
+
+
+def git_output(working_directory: Path, *arguments: str) -> str | None:
+    """One git command's stdout, stripped — or None if it failed for any reason.
+
+    Every caller is asking a question about a directory that may not be a
+    repository at all, so "git said no" is an answer ("cannot tell") rather than
+    an error worth reporting.
+    """
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=working_directory,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=GIT_QUERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.decode("utf-8", "replace").strip()
+
+
+@dataclass(frozen=True)
+class GitCheckpoint:
+    """Where a working directory's repository stood at some moment.
+
+    Taken before the prompt runs and again after, so "did this run leave work on
+    a branch" can be answered about *this* run rather than about whatever the
+    repository happened to be in the middle of already.
+    """
+
+    branch: str | None
+    head_commit: str | None
+
+
+def capture_git_checkpoint(working_directory: Path) -> GitCheckpoint:
+    return GitCheckpoint(
+        branch=checked_out_branch(working_directory),
+        head_commit=git_output(working_directory, "rev-parse", "HEAD"),
+    )
+
+
+def checked_out_branch(working_directory: Path) -> str | None:
+    """The checked-out branch, or None when there is not one.
+
+    None covers a directory that is not a repository and a detached HEAD alike —
+    neither is anybody's idea of work waiting on a branch.
+    """
+    return git_output(working_directory, "symbolic-ref", "--quiet", "--short", "HEAD") or None
+
+
+def local_branch_exists(working_directory: Path, branch_name: str) -> bool:
+    reference = f"refs/heads/{branch_name}"
+    return git_output(working_directory, "rev-parse", "--verify", "--quiet", reference) is not None
+
+
+def default_branch_name(working_directory: Path) -> str | None:
+    """The branch finished work would have been merged into, or None if there is none.
+
+    `origin/HEAD` first, since a repository with a remote that names one has
+    already answered the question; otherwise the first of `main`/`master` that
+    exists locally. A brand-new project on whatever `init.defaultBranch` says
+    has nothing to be unmerged *from*, and None says exactly that.
+    """
+    origin_head = git_output(
+        working_directory, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"
+    )
+    if origin_head:
+        _, _, branch_name = origin_head.partition("/")
+        if branch_name and local_branch_exists(working_directory, branch_name):
+            return branch_name
+
+    for candidate_name in FALLBACK_DEFAULT_BRANCH_NAMES:
+        if local_branch_exists(working_directory, candidate_name):
+            return candidate_name
+    return None
+
+
+def unmerged_branch_after_run(working_directory: Path, before: GitCheckpoint) -> str | None:
+    """The branch this run left finished work on, or None if it left none.
+
+    Read out of the repository rather than taken on trust from the run itself,
+    which is what makes it work with no cooperation from the prompt: work is
+    unmerged when the branch now checked out is not the default one and carries
+    commits the default branch does not. A run that merged its branch and stayed
+    on it reports nothing, because those commits are contained; so does one that
+    committed straight to the default branch, and one that left its changes
+    uncommitted for review.
+
+    A repository this run did not move is never reported. One already sitting on
+    a half-finished branch when the prompt started was not left that way by this
+    prompt, and claiming its branch would put somebody else's work in the queue.
+    """
+    after = capture_git_checkpoint(working_directory)
+    if after.branch is None:
+        return None
+    if after.branch == before.branch and after.head_commit == before.head_commit:
+        return None
+
+    default_branch = default_branch_name(working_directory)
+    if default_branch is None or after.branch == default_branch:
+        return None
+
+    commits_ahead = git_output(
+        working_directory, "rev-list", "--count", f"{default_branch}..HEAD"
+    )
+    if not commits_ahead or commits_ahead == "0":
+        return None
+
+    log_message(
+        f"Work left on branch '{after.branch}', {commits_ahead} commit(s) "
+        f"ahead of '{default_branch}'"
+    )
+    return after.branch
+
+
 def determine_outcome(
     exit_code: int,
     ran_too_long: bool,
@@ -1109,7 +1306,7 @@ def determine_outcome(
     return exit_code, ("completed" if exit_code == 0 else "error")
 
 
-def queue_status_for_outcome(outcome: str) -> str:
+def queue_status_for_outcome(outcome: str, unmerged_branch: str | None = None) -> str:
     """The queue's STATUS value for a run's outcome.
 
     Keyed off `outcome`, never off the exit code directly: `determine_outcome`
@@ -1117,10 +1314,18 @@ def queue_status_for_outcome(outcome: str) -> str:
     out, or a watchdog kill) and 0 for a session limit that exited 1, and a
     queue status derived from the exit code alone would silently undo both —
     see findings/song-ratings-vinyl-prompt-stall.md.
+
+    A prompt that finished but left its work on a branch is `unmerged:<branch>`
+    rather than `completed`, so the branch waiting on an answer is named in the
+    queue instead of being lost. Only a clean finish can be unmerged: an errored
+    or timed-out run says `error`, which is the more useful of the two things
+    that are both true about it.
     """
     if outcome == OUTCOME_SESSION_LIMIT:
         return STATUS_TODO
-    return STATUS_COMPLETED if outcome == "completed" else STATUS_ERROR
+    if outcome != "completed":
+        return STATUS_ERROR
+    return unmerged_status(unmerged_branch) if unmerged_branch else STATUS_COMPLETED
 
 
 class ClaudeOutputCollector:
@@ -1192,6 +1397,8 @@ class PromptRunResult:
     result_text: str | None = None
     turns: int | None = None
     cost_usd: float | None = None
+    """The branch a completed prompt left its work on — see `unmerged_branch_after_run`."""
+    unmerged_branch: str | None = None
 
 
 def run_claude(
@@ -1207,6 +1414,11 @@ def run_claude(
     events.started(working_directory, is_new_project, prompt_text, forced)
     started_at = datetime.now()
     output = ClaudeOutputCollector()
+    # Taken before the directory is prepared, so a new project reads as the empty
+    # thing it is rather than as the repository `git init` is about to make. Any
+    # repository already here is recorded as it stands, which is what keeps a
+    # branch this run never touched out of the queue.
+    checkpoint_before_run = capture_git_checkpoint(working_directory)
 
     def run_result(
         exit_code: int,
@@ -1217,7 +1429,18 @@ def run_claude(
     ) -> PromptRunResult:
         """This prompt's result, stamped with the times only this function knows."""
         return PromptRunResult(
-            exit_code, outcome, started_at, datetime.now(), result_text, turns, cost_usd
+            exit_code,
+            outcome,
+            started_at,
+            datetime.now(),
+            result_text,
+            turns,
+            cost_usd,
+            unmerged_branch=(
+                unmerged_branch_after_run(working_directory, checkpoint_before_run)
+                if outcome == "completed"
+                else None
+            ),
         )
 
     if not prepare_working_directory(working_directory, is_new_project):
@@ -1401,7 +1624,7 @@ def remaining_todo_prompts(already_attempted: list[str]) -> list[str]:
     return [
         entry.prompt
         for entry in parse_queue(queue_lines)
-        if entry.status == STATUS_TODO and entry.prompt and entry.prompt not in already_attempted
+        if entry.status_name == STATUS_TODO and entry.prompt and entry.prompt not in already_attempted
     ]
 
 
@@ -1572,7 +1795,7 @@ def main() -> int:
 
         next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
-            log_message("No todo prompts in queue (all completed, errored, draft or empty)")
+            log_message("No todo prompts in queue (all completed, errored, unmerged, draft or empty)")
             return 0
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
@@ -1644,8 +1867,8 @@ def main() -> int:
 
         next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
-            log_message("No todo prompts in queue (all completed, errored, draft or empty)")
-            events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored, draft or empty)")
+            log_message("No todo prompts in queue (all completed, errored, unmerged, draft or empty)")
+            events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored, unmerged, draft or empty)")
             session.stop("emptyQueue")
             break
 
@@ -1653,8 +1876,12 @@ def main() -> int:
         prompt_result = run_claude(
             next_entry, working_directory, is_new_project, events, arguments.force, session
         )
-        queue_status = queue_status_for_outcome(prompt_result.outcome)
-        write_queue_status(next_entry.status_line_index, queue_status)
+        # The status the file is left holding, which is not always the one asked
+        # for: a run that marked itself `unmerged:<branch>` keeps that.
+        queue_status = write_queue_status(
+            next_entry.status_line_index,
+            queue_status_for_outcome(prompt_result.outcome, prompt_result.unmerged_branch),
+        )
         # Last, so the terminal event is only written once the queue reflects the
         # outcome the viewer is about to show.
         events.finished(prompt_result.outcome, prompt_result.exit_code, queue_status)

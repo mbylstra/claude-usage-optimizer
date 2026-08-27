@@ -468,9 +468,9 @@ or pass an explicit ID as an argument.
 **Editing the queue.** `prompts.txt` at the repository root is user-editable —
 deliberately at the top level rather than in `backend/`, being the only
 file here meant for regular hand-editing. Sections split on a line of `===`;
-each has a required `STATUS: todo|completed|error|draft`, an optional `REPO:`,
-and a multi-line prompt. The scheduler takes the first `todo`, runs it, rewrites
-that status to `completed` or `error`, and — while a pace-gated run — loops back
+each has a required `STATUS: todo|completed|error|draft|unmerged:<branch>`, an
+optional `REPO:`, and a multi-line prompt. The scheduler takes the first `todo`,
+runs it, rewrites that status, and — while a pace-gated run — loops back
 for the next `todo` rather than stopping. Failed items are skipped until you
 edit them back to `todo`. Only two outcomes leave the status alone: a cancelled
 prompt and one a subscription limit refused, both of which are picked up again
@@ -478,6 +478,12 @@ by the next run. `draft` is skipped the same way — it needs no special
 casing in `run-autonomous-work.py`, since `find_next_todo` already ignores any
 status that isn't `todo`; it exists purely so a prompt you're still drafting
 has a name other than `todo` to sit under.
+
+**A status may carry a `:detail`, and so far exactly one does.** `unmerged:` is
+the only status whose value is not the whole story — the branch is — so
+`normalise_status` lowercases the word before the colon and leaves what follows
+exactly as written, git branch names being case-sensitive. Comparisons go
+through `QueueEntry.status_name`, never against the raw string.
 
 **`prompts.txt` is gitignored**; `prompts.example.txt` is the checked-in
 template to copy from. It is somebody's personal task list, and every run
@@ -597,6 +603,42 @@ the user's Mail, Messages and Safari data.
 The `claude -p` invocation is deliberately plain apart from `--permission-mode
 auto`. Notably it does **not** pass `--bare`, which would authenticate with
 `ANTHROPIC_API_KEY` and so spend the wrong budget entirely.
+
+## Work left on a branch
+
+A prompt that finished the work but had a question it could not answer for
+itself, and so left the branch unmerged rather than guessing, is filed as
+`unmerged:<branch>` instead of `completed`. Skipped by later runs like any
+non-`todo` status, but saying something `error` does not: the work is done, and
+it is *there*.
+
+**It is read out of the repository, not taken on the run's word.** After a
+completed prompt, `unmerged_branch_after_run` asks git whether the branch now
+checked out is something other than the default one and carries commits the
+default branch does not. Nothing has to be added to the prompt for this to work,
+which is the point — a convention the model has to remember is a convention that
+holds until the night it doesn't.
+
+Four cases all read as plain `completed`, each with a test standing over it:
+committing straight to `main`; merging the branch back and staying on it (the
+commits are contained, so nothing is ahead); leaving changes uncommitted for
+review, which several queued prompts ask for by name; and a new project on a
+machine whose `init.defaultBranch` is neither `main` nor `master` — there is no
+branch to be unmerged *from*, and `default_branch_name` returns None to say so.
+
+**A repository the run did not move is never claimed.** The checkpoint taken
+before the prompt starts is what makes that possible: a repo already sitting on
+somebody's half-finished branch would otherwise be reported as this prompt's
+work, and the entry would go into the queue naming a branch it never touched.
+
+`write_queue_status` also lets an `unmerged:` status that is *already* on the
+line win over whatever the run's outcome would write. Only the run itself can
+have put it there, and overwriting it with `completed` would throw away the
+branch name — the one thing that status exists to carry. That path also made
+`rewrite_status_line` check the target is still a `STATUS:` line rather than
+only that the index is in range: a run that edits `prompts.txt` shifts every
+line index taken before it started, and the old guard would have overwritten a
+line of somebody's prompt.
 
 ## Tech Stack
 
