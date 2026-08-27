@@ -5,7 +5,9 @@
 > no context to copy a `REPO:` path from while composing. The file was never the
 > problem; its location was. See **§14** for the reasoning and the direction that
 > replaces it. Everything above §14 is kept as the record of a design that was
-> worked out properly and still lost.
+> worked out properly and still lost. The direction that replaced it was itself
+> replaced; the queue is now a Jira board — `plans/work-queue-as-a-jira-board.md`,
+> whose §8 is this plan's §5 seam, kept intact.
 
 ## Goal
 

@@ -1,8 +1,14 @@
 # Plan: The queue file in an Obsidian vault
 
-> **Status: chosen.** Replaces the gist, Google Doc and GitHub issues designs.
-> See `plans/work-queue-as-github-issues.md` for the design that lost and why —
-> the queue stays a single plain text file; only its *location* changes.
+> **Status: rejected. Not being built.** It was chosen over the gist, Google Doc
+> and GitHub issues designs, and then lost to a Jira board — see
+> `plans/work-queue-as-a-jira-board.md` §1. The short version: keeping the file
+> and moving it bought the queue a phone, but inherited a markdown editor that
+> renders `===` as a heading (§5 below), a conflict window it could not close
+> (§9), and an eviction failure that looks exactly like an empty queue (§7).
+> Everything below is kept as the record of a design that was worked out properly
+> and still lost. The rejected issues design is now at
+> `plans/rejected/work-queue-as-github-issues.md`.
 
 ## Goal
 
