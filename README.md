@@ -358,9 +358,11 @@ Leave the changes uncommitted for review.
 ```
 
 - **`STATUS:`** is required and must be the section's first non-blank line —
-  `todo`, `completed`, `error`, or `draft`. A section without one is ignored
-  entirely, which is what lets the file carry `#` comments at the top. `draft`
-  is never picked up by the scheduler; it's for a prompt you're still writing.
+  `todo`, `completed`, `error`, `draft`, or `unmerged:<branch>`. A section
+  without one is ignored entirely, which is what lets the file carry `#`
+  comments at the top. Only `todo` is ever run: `draft` is for a prompt you're
+  still writing, and `unmerged:<branch>` is work that finished but is waiting on
+  a decision — see below.
 - **`REPO:`** is optional and must come before the prompt body. It is the
   working directory the prompt runs in, `~` included, created if it does not
   exist. **Leave it out and the prompt gets a brand-new repository instead** —
@@ -383,6 +385,21 @@ a queue with no `todo` sections left is a no-op, not an error.
 The status is rewritten by line index rather than by search-and-replace, so a
 prompt body containing the word `STATUS` is harmless, and the file is swapped
 atomically so an edit made mid-run never leaves it truncated.
+
+**Work left on a branch gets `unmerged:<branch>` instead of `completed`.** A run
+that finished the work but had a question it couldn't answer for itself — and so
+left the branch unmerged rather than guessing — would otherwise be filed under
+exactly the same word as one that shipped. The scheduler reads this out of the
+repository rather than taking the run's word for it: if the branch checked out
+when the prompt ends isn't the default one and carries commits the default
+branch doesn't, that branch name goes in the status. Committing straight to
+`main`, merging the branch back, or leaving changes uncommitted for review all
+still read as `completed`, and a branch the run never touched is never claimed.
+
+Like `error` and `draft`, an `unmerged:` entry is skipped on later runs. Unlike
+`error`, it means the work is done and sitting somewhere specific: review the
+branch, merge or discard it, and then mark the entry `completed` — or put it
+back to `todo` with the answer written into the prompt.
 
 ### Scheduling and new projects
 
