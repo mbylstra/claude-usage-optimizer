@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -418,6 +419,12 @@ class ParseQueueTests(unittest.TestCase):
         self.assertEqual(entries[0].status, work.STATUS_DRAFT)
         self.assertEqual(entries[0].prompt, "Not ready yet.")
 
+    def test_an_unmerged_status_keeps_its_branch_name(self):
+        text = "\n".join(["===", "STATUS: unmerged:Add-Widget", "Done, on a branch."])
+        entries = work.parse_queue(text.split("\n"))
+        self.assertEqual(entries[0].status, "unmerged:Add-Widget")
+        self.assertEqual(entries[0].status_name, work.STATUS_UNMERGED)
+
     def test_section_without_status_is_ignored(self):
         text = "\n".join(["===", "Just some notes, no STATUS line."])
         entries = work.parse_queue(text.split("\n"))
@@ -463,6 +470,29 @@ class FindNextTodoTests(unittest.TestCase):
         ]
         self.assertIs(work.find_next_todo(entries), entries[1])
 
+    def test_unmerged_work_is_skipped_in_favour_of_a_later_todo(self):
+        entries = [
+            work.QueueEntry(
+                status="unmerged:add-widget",
+                status_line_index=0,
+                repository_path=None,
+                prompt="waiting on an answer",
+            ),
+            work.QueueEntry(status="todo", status_line_index=1, repository_path=None, prompt="do this"),
+        ]
+        self.assertIs(work.find_next_todo(entries), entries[1])
+
+    def test_none_when_only_unmerged_work_remains(self):
+        entries = [
+            work.QueueEntry(
+                status="unmerged:add-widget",
+                status_line_index=0,
+                repository_path=None,
+                prompt="waiting on an answer",
+            ),
+        ]
+        self.assertIsNone(work.find_next_todo(entries))
+
     def test_none_when_only_drafts_remain(self):
         entries = [
             work.QueueEntry(
@@ -470,6 +500,23 @@ class FindNextTodoTests(unittest.TestCase):
             ),
         ]
         self.assertIsNone(work.find_next_todo(entries))
+
+
+class NormaliseStatusTests(unittest.TestCase):
+    def test_a_plain_status_is_lowercased(self):
+        self.assertEqual(work.normalise_status(" Todo "), work.STATUS_TODO)
+
+    def test_a_branch_name_keeps_its_case(self):
+        # Branch names are case-sensitive, so folding the whole value would name
+        # a branch that does not exist.
+        self.assertEqual(work.normalise_status("Unmerged: Add-Widget"), "unmerged:Add-Widget")
+
+    def test_a_colon_with_nothing_after_it_is_dropped(self):
+        self.assertEqual(work.normalise_status("unmerged:"), work.STATUS_UNMERGED)
+
+    def test_status_name_ignores_the_detail(self):
+        self.assertEqual(work.status_name_of("unmerged:Add-Widget"), work.STATUS_UNMERGED)
+        self.assertEqual(work.status_name_of(work.STATUS_TODO), work.STATUS_TODO)
 
 
 class RewriteStatusLineTests(unittest.TestCase):
@@ -490,6 +537,12 @@ class RewriteStatusLineTests(unittest.TestCase):
     def test_negative_index_returns_none(self):
         lines = ["===", "STATUS: todo"]
         self.assertIsNone(work.rewrite_status_line(lines, -1, "completed"))
+
+    def test_a_line_that_is_no_longer_a_status_line_returns_none(self):
+        # What a run editing the queue above its own entry leaves behind: the
+        # index is still in range, but points at somebody's prompt.
+        lines = ["===", "STATUS: todo", "Do it."]
+        self.assertIsNone(work.rewrite_status_line(lines, 2, "completed"))
 
 
 class ShortenTests(unittest.TestCase):
@@ -948,6 +1001,159 @@ class ScheduleResumeIfWarrantedTests(unittest.TestCase):
         self.assertEqual(pending.source, work.RESUME_SOURCE_FALLBACK)
 
 
+class WriteQueueStatusTests(unittest.TestCase):
+    """The one place the queue file is written, exercised against a real file.
+
+    `work.QUEUE_FILE` points into this module's temp directory — see the
+    environment set up at the top — so nothing here touches the real queue.
+    """
+
+    def _write_queue(self, *lines: str) -> None:
+        work.QUEUE_FILE.write_text("\n".join(lines), encoding="utf-8")
+
+    def _queue_lines(self) -> list[str]:
+        return work.QUEUE_FILE.read_text(encoding="utf-8").split("\n")
+
+    def tearDown(self):
+        work.QUEUE_FILE.unlink(missing_ok=True)
+
+    def test_writes_the_status_and_reports_it_back(self):
+        self._write_queue("===", "STATUS: todo", "Do it.")
+        left_as = work.write_queue_status(1, work.STATUS_COMPLETED)
+        self.assertEqual(left_as, work.STATUS_COMPLETED)
+        self.assertEqual(self._queue_lines()[1], "STATUS: completed")
+
+    def test_an_unmerged_status_the_run_wrote_itself_survives(self):
+        # The run is the only party that can have written this, and it is the
+        # only one that knows where it left the work.
+        self._write_queue("===", "STATUS: unmerged:Add-Widget", "Do it.")
+        left_as = work.write_queue_status(1, work.STATUS_COMPLETED)
+        self.assertEqual(left_as, "unmerged:Add-Widget")
+        self.assertEqual(self._queue_lines()[1], "STATUS: unmerged:Add-Widget")
+
+    def test_an_unmerged_status_outranks_an_error_too(self):
+        self._write_queue("===", "STATUS: unmerged:add-widget", "Do it.")
+        self.assertEqual(work.write_queue_status(1, work.STATUS_ERROR), "unmerged:add-widget")
+
+    def test_a_shifted_index_leaves_the_file_alone(self):
+        # A run that inserted a line above its own entry: the index still lands
+        # inside the file, but on a line of somebody's prompt.
+        self._write_queue("===", "A note added mid-run.", "STATUS: todo", "Do it.")
+        left_as = work.write_queue_status(1, work.STATUS_COMPLETED)
+        self.assertEqual(left_as, work.STATUS_COMPLETED)
+        self.assertEqual(self._queue_lines()[1], "A note added mid-run.")
+        self.assertEqual(self._queue_lines()[2], "STATUS: todo")
+
+    def test_a_missing_queue_file_reports_the_status_it_was_asked_for(self):
+        work.QUEUE_FILE.unlink(missing_ok=True)
+        self.assertEqual(work.write_queue_status(1, work.STATUS_COMPLETED), work.STATUS_COMPLETED)
+
+
+class UnmergedBranchAfterRunTests(unittest.TestCase):
+    """Real git repositories in a temp directory — the whole point is what git says.
+
+    Mocking git here would only test the argument strings, and the questions
+    being asked (is this branch contained in that one?) are exactly the ones git
+    answers and a fake would have to re-implement.
+    """
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.repository = Path(self._directory.name)
+        self.addCleanup(self._directory.cleanup)
+
+    def git(self, *arguments: str) -> None:
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                *arguments,
+            ],
+            cwd=self.repository,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def init_repository(self, default_branch: str = "main") -> None:
+        self.git("init", "--quiet", f"--initial-branch={default_branch}")
+        self.git("commit", "--quiet", "--allow-empty", "-m", "first")
+
+    def commit(self, message: str = "work") -> None:
+        self.git("commit", "--quiet", "--allow-empty", "-m", message)
+
+    def test_a_branch_left_ahead_of_main_is_reported(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.git("checkout", "--quiet", "-b", "add-widget")
+        self.commit()
+        self.assertEqual(work.unmerged_branch_after_run(self.repository, before), "add-widget")
+
+    def test_a_branch_merged_into_main_is_not_reported_even_if_still_checked_out(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.git("checkout", "--quiet", "-b", "add-widget")
+        self.commit()
+        self.git("checkout", "--quiet", "main")
+        self.git("merge", "--quiet", "--no-ff", "-m", "merge", "add-widget")
+        self.git("checkout", "--quiet", "add-widget")
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+    def test_committing_straight_to_main_is_not_unmerged(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.commit()
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+    def test_uncommitted_changes_are_not_unmerged_work(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        (self.repository / "notes.txt").write_text("left for review", encoding="utf-8")
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+    def test_a_branch_the_run_never_touched_is_left_alone(self):
+        # Somebody else's half-finished work, checked out when the prompt
+        # started. Claiming it would put it in the queue under this prompt.
+        self.init_repository()
+        self.git("checkout", "--quiet", "-b", "someone-elses-work")
+        self.commit()
+        before = work.capture_git_checkpoint(self.repository)
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+    def test_commits_added_to_a_pre_existing_branch_are_reported(self):
+        self.init_repository()
+        self.git("checkout", "--quiet", "-b", "add-widget")
+        before = work.capture_git_checkpoint(self.repository)
+        self.commit()
+        self.assertEqual(work.unmerged_branch_after_run(self.repository, before), "add-widget")
+
+    def test_a_new_project_with_no_default_branch_to_merge_into_reports_nothing(self):
+        # `git init` on a machine whose init.defaultBranch is neither main nor
+        # master: the one branch there is *is* the work, not a detour from it.
+        before = work.capture_git_checkpoint(self.repository)
+        self.init_repository(default_branch="trunk")
+        self.commit()
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+    def test_a_directory_that_is_not_a_repository_reports_nothing(self):
+        before = work.capture_git_checkpoint(self.repository)
+        (self.repository / "notes.txt").write_text("no repository here", encoding="utf-8")
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+    def test_a_detached_head_is_not_a_branch(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.git("checkout", "--quiet", "-b", "add-widget")
+        self.commit()
+        self.git("checkout", "--quiet", "--detach")
+        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+
+
 class QueueStatusForOutcomeTests(unittest.TestCase):
     def test_completed_maps_to_completed_status(self):
         self.assertEqual(work.queue_status_for_outcome("completed"), work.STATUS_COMPLETED)
@@ -971,6 +1177,22 @@ class QueueStatusForOutcomeTests(unittest.TestCase):
         exit_code, outcome = work.determine_outcome(0, False, True)
         self.assertEqual(exit_code, 0)
         self.assertEqual(work.queue_status_for_outcome(outcome), work.STATUS_ERROR)
+
+    def test_completed_work_left_on_a_branch_names_that_branch(self):
+        self.assertEqual(
+            work.queue_status_for_outcome("completed", "add-widget"), "unmerged:add-widget"
+        )
+
+    def test_a_branch_does_not_soften_an_error(self):
+        # Both are true of the run, and "error" is the one worth reading: it is
+        # the status that keeps the entry from being treated as done.
+        self.assertEqual(work.queue_status_for_outcome("error", "add-widget"), work.STATUS_ERROR)
+
+    def test_a_branch_does_not_override_a_session_limit(self):
+        self.assertEqual(
+            work.queue_status_for_outcome(work.OUTCOME_SESSION_LIMIT, "add-widget"),
+            work.STATUS_TODO,
+        )
 
 
 if __name__ == "__main__":
