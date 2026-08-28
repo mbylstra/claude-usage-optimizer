@@ -10,7 +10,7 @@ install:
     pnpm install
 
 # Everything a fresh clone needs, in one go. Safe to re-run.
-setup: install build install-private-uv install-usage-host install-autonomous-work
+setup: install install-shadcn-components build install-private-uv install-usage-host install-autonomous-work
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f prompts.txt ]; then
@@ -37,10 +37,49 @@ setup: install build install-private-uv install-usage-host install-autonomous-wo
     echo
     echo "Then put some work in prompts.txt and try: just autonomous-dry-run"
     echo
+    echo "Prefer to queue work from your phone? The queue can live on a Jira"
+    echo "board instead of prompts.txt — reorder it by dragging a card, and read"
+    echo "what each run did in the card's comments. It needs a free Atlassian"
+    echo "account, and setup is not run here because it has to ask you things:"
+    echo "       just install-jira-queue"
+    echo
     echo "If your prompts will read ~/Documents, ~/Desktop or ~/Downloads: click"
     echo "the extension's toolbar icon in Chrome, open Settings, press 'Grant"
     echo "folder access', and allow the macOS dialogs that appear."
     echo "To check afterwards: just check-folder-access"
+
+# The UI primitives that come from shadcn rather than being hand-written. Listed
+# here because the recipe below only manages these — the rest of components/ui/
+# predates shadcn being wired up and is ours to maintain.
+shadcn_components := "select"
+
+# Adds only what is missing, and never overwrites — so it is safe to re-run at
+# any point, like every other install-* recipe. `refresh-shadcn-components` is
+# the deliberate way to take upstream's newer version of one.
+
+# Fetch any shadcn component this project uses but does not have
+[working-directory('chrome-extension')]
+install-shadcn-components:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for component in {{ shadcn_components }}; do
+      if [ -f "components/ui/$component.tsx" ]; then
+        echo "shadcn $component already present — left alone"
+      else
+        echo "Adding shadcn $component…"
+        pnpm exec shadcn add "$component" --yes
+      fi
+    done
+
+# Re-fetch them from upstream, discarding any local edits. Rarely what you want.
+[working-directory('chrome-extension')]
+refresh-shadcn-components:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "This overwrites components/ui/ from upstream shadcn, so any local edit"
+    echo "to one of these is lost: {{ shadcn_components }}"
+    echo "Check 'git diff' afterwards before committing."
+    pnpm exec shadcn add {{ shadcn_components }} --overwrite --yes
 
 # Vite dev server for the popup UI (no chrome.* APIs available)
 [working-directory('chrome-extension')]

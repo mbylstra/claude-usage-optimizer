@@ -40,6 +40,12 @@ export interface JiraCredentialStatus {
  * Where a warning is loud enough to appear. Each level includes the ones before
  * it, so a `badge` warning also shows in the banner and on the settings screen.
  */
+/**
+ * `blocking` is reserved for the one thing that genuinely stops a run — Jira
+ * rejecting the credential outright. A recorded expiry date that has passed is
+ * `badge`: just as loud, but it is a claim about a hand-typed date rather than
+ * about the token, and the run will go on trying.
+ */
 export type JiraWarningLevel = 'none' | 'settings' | 'banner' | 'badge' | 'blocking';
 
 const LEVEL_ORDER: readonly JiraWarningLevel[] = [
@@ -87,10 +93,15 @@ export function deriveJiraCredentialWarning(
   const daysUntilExpiry = status.daysUntilExpiry;
   if (typeof daysUntilExpiry !== 'number') return NO_JIRA_WARNING;
 
+  // Loud, but not `blocking` — and the difference is the whole reason the
+  // scheduler warns rather than refuses on this date. It is typed in by hand and
+  // cannot be read back from any API, so "expired" here may equally mean the
+  // token is dead or that somebody typed 2026 for 2027. Only Jira's own 401
+  // knows which, and it is what actually stops a run.
   if (daysUntilExpiry < 0) {
     return {
-      level: 'blocking',
-      message: `The Jira API token expired ${Math.abs(daysUntilExpiry)} days ago. Runs will not start until it is replaced.`,
+      level: 'badge',
+      message: `The recorded expiry for the Jira API token passed ${Math.abs(daysUntilExpiry)} days ago. Replace it with \`just set-jira-credentials\` — or correct the date there, if it was mistyped.`,
     };
   }
 

@@ -1,4 +1,3 @@
-import * as SelectPrimitive from '@radix-ui/react-select';
 import { ArrowLeft, FolderLock, Play, ScrollText } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
@@ -6,7 +5,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Switch } from './ui/switch';
-import { SelectContent, SelectItem, SelectTrigger } from './ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import {
   describeAutonomousWorkStatus,
   isAutonomousWorkStatusError,
@@ -269,7 +268,7 @@ export function SettingsPage({
             <label htmlFor="model-select" className="text-sm">
               Model for autonomous runs
             </label>
-            <SelectPrimitive.Root
+            <Select
               value={autonomousWorkSettings.model}
               onValueChange={(value: string) =>
                 onAutonomousWorkSettingsChange({
@@ -279,14 +278,14 @@ export function SettingsPage({
               }
             >
               <SelectTrigger id="model-select">
-                <SelectPrimitive.Value />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="haiku">Haiku (fastest, cheapest)</SelectItem>
                 <SelectItem value="sonnet">Sonnet (balanced)</SelectItem>
                 <SelectItem value="opus">Opus (most capable)</SelectItem>
               </SelectContent>
-            </SelectPrimitive.Root>
+            </Select>
             <p className="text-muted-foreground text-xs">
               The Claude model to use when running queued prompts automatically.
             </p>
@@ -296,7 +295,7 @@ export function SettingsPage({
             <label htmlFor="queue-source-select" className="text-sm">
               Queue source
             </label>
-            <SelectPrimitive.Root
+            <Select
               value={autonomousWorkSettings.queueSource}
               onValueChange={(value: string) =>
                 onAutonomousWorkSettingsChange({
@@ -306,13 +305,13 @@ export function SettingsPage({
               }
             >
               <SelectTrigger id="queue-source-select">
-                <SelectPrimitive.Value />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="file">prompts.txt (no account needed)</SelectItem>
                 <SelectItem value="jira">A Jira board</SelectItem>
               </SelectContent>
-            </SelectPrimitive.Root>
+            </Select>
             <p className="text-muted-foreground text-xs">
               Where the queue lives. A board can be reordered by dragging a card, from a phone; a
               file needs no account, no network and no third party. The two are alternatives —
@@ -330,7 +329,7 @@ export function SettingsPage({
                 type="text"
                 className="w-28"
                 spellCheck={false}
-                placeholder="FCP"
+                placeholder="FC"
                 value={autonomousWorkSettings.jiraProjectKey}
                 onChange={(event) =>
                   onAutonomousWorkSettingsChange({

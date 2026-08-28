@@ -93,7 +93,11 @@ PENDING_WRITES_FILE = _environment_path(
 BASE_URL_OVERRIDE = os.environ.get("AUTONOMOUS_WORK_JIRA_BASE_URL")
 
 DEFAULT_PROJECT_NAME = "Free Claude Prompts"
-DEFAULT_PROJECT_KEY = "FCP"
+# Two letters rather than three, because Jira holds a key for a while after a
+# project that used it is renamed or moved, and `FCP` was already spoken for on
+# the first site this ran against. Any free key does; this is only the default
+# for a project this recipe creates itself.
+DEFAULT_PROJECT_KEY = "FC"
 # Team-managed Jira Software with a Kanban board: there the board's columns *are*
 # its statuses, so "add a column" and "add a status" are one gesture with no
 # workflow, issue-type or screen scheme in between.
@@ -329,6 +333,32 @@ class JiraError(Exception):
             # an alarm on its own.
             return "unreachable"
         return "httpError"
+
+    @property
+    def explanation(self) -> str:
+        """Jira's own account of what was wrong, out of the response body.
+
+        A 400 from `POST /project` is the case that needs this: the status code
+        says only "you asked for something impossible", and the body says which
+        field and why. Reporting the code alone turns a one-line fix into an
+        afternoon, so anything that reaches a person prints this too.
+        """
+        if not self.body:
+            return ""
+        try:
+            decoded = json.loads(self.body)
+        except ValueError:
+            return self.body.strip()[:500]
+        if not isinstance(decoded, dict):
+            return self.body.strip()[:500]
+
+        parts = [str(message) for message in decoded.get("errorMessages") or []]
+        field_errors = decoded.get("errors")
+        if isinstance(field_errors, dict):
+            parts.extend(
+                "{}: {}".format(field, message) for field, message in field_errors.items()
+            )
+        return "; ".join(parts) or self.body.strip()[:500]
 
 
 # Everything a write to the board can fail with. `QueueUnavailable` belongs here
@@ -1449,10 +1479,20 @@ def _set_credentials():
     # type: () -> int
     import getpass
 
-    print("Create a token at https://id.atlassian.com/manage-profile/security/api-tokens")
-    print("Atlassian caps every token at one year; note the expiry date it shows you.")
-    print()
     existing = read_credentials()
+
+    print("Three things are needed, and this asks for them in order.\n")
+    print("1. A Jira Cloud site. If you have none, the free plan at")
+    print("   https://www.atlassian.com/software/jira/free takes a couple of minutes")
+    print("   and covers everything here. Its address looks like")
+    print("   https://yourname.atlassian.net")
+    print("2. The email address you sign in to Atlassian with.")
+    print("3. An API token, from")
+    print("   https://id.atlassian.com/manage-profile/security/api-tokens")
+    print("   Atlassian caps every token at one year and shows you the expiry date")
+    print("   as it creates it — copy that date down, because no API can report it")
+    print("   back and it is what the expiry warnings count from.\n")
+
     site_url = _prompt("Jira site URL", existing.site_url if existing else "")
     email = _prompt("Atlassian account email", existing.email if existing else "")
     api_token = getpass.getpass("API token (not echoed): ").strip()
@@ -1465,7 +1505,7 @@ def _set_credentials():
     )
 
     if not (site_url and email and api_token):
-        print("Site URL, email and token are all required.")
+        print("\nSite URL, email and token are all required — nothing was written.")
         return 1
 
     credentials = JiraCredentials(
@@ -1482,7 +1522,16 @@ def _set_credentials():
     if status.ok:
         print("Credential works — {}".format(credentials.describe()))
         return 0
-    print("Credential stored, but the check failed ({}): {}".format(status.cause, status.detail))
+
+    print("\nCredential stored, but the check failed ({}): {}".format(status.cause, status.detail))
+    # Four causes, four different fixes. A generic failure here is how somebody
+    # spends twenty minutes re-pasting a token that was never the problem.
+    print({
+        "unauthorised": "The email or the token is wrong. Tokens are shown once — create a new one.",
+        "notFound": "The site URL does not look like a Jira site. Check it in the browser.",
+        "unreachable": "Could not reach the site at all — check the URL and your connection.",
+        "forbidden": "The credential is valid but this account lacks access to that site.",
+    }.get(status.cause, "Re-run this once you know what changed."))
     return 1
 
 
@@ -1519,14 +1568,18 @@ def _install(project_key_argument=None):
         try:
             project = create_project(client, account_id)
         except JiraError as error:
+            print("Could not create the project: {}".format(error))
+            if error.explanation:
+                print("Jira said: {}".format(error.explanation))
             if error.status_code == 403:
                 print(
-                    "Creating a project needs Administer Jira permission, which this account "
-                    "does not have. Make the project by hand and pass its key: "
-                    "`just install-jira-queue MYKEY`."
+                    "\nCreating a project needs Administer Jira permission, which this account "
+                    "does not have."
                 )
-            else:
-                print("Could not create the project ({}): {}".format(error.cause, error))
+            print(
+                "\nMake the project by hand instead — any Jira Software project will do — "
+                "and pass its key:\n    just install-jira-queue MYKEY"
+            )
             return 1
     else:
         print("Leaving the existing project alone: {}".format(project.get("key")))
@@ -1544,26 +1597,45 @@ def _install(project_key_argument=None):
     )
     write_status(probe_credentials(credentials, project_key=resolved_key))
 
+    board_url = "{}/jira/software/projects/{}/boards".format(credentials.base_url, resolved_key)
+
     print()
-    print("Board: {}/jira/software/projects/{}/boards".format(credentials.base_url, resolved_key))
-    print()
+    print("Credential and project are set up. {} steps are left, and none of them".format(
+        "Three" if statuses.missing else "Two"
+    ))
+    print("can be done from here.\n")
+
+    step = 1
     if statuses.missing:
         # Not a shortcut this recipe is taking: the team-managed template makes
         # three columns, and Jira Cloud exposes no documented REST route for
         # adding one. Two clicks each, once — the same way `just setup` ends by
         # printing the one thing it cannot do itself.
-        print("Two columns still have to be added by hand — Jira has no API for it:")
+        print("{}. Add the missing columns by hand. Measured, not assumed: the".format(step))
+        print("   status itself can be created over the API, but getting it into a")
+        print("   team-managed project's workflow — which is what makes it a column —")
+        print("   has no route we could find. Two clicks each, once.")
+        print("   Open {}".format(board_url))
         for name in statuses.missing:
-            print("  • open the board → + at the right of the columns → name it '{}'".format(name))
-        print("  (in a team-managed project, adding a column creates the status)")
-        print()
-        print("Then re-run `just jira-status` to check.")
+            print("   then '+' to the right of the last column, and name it: {}".format(name))
+        print("   (in a team-managed project, adding a column creates the status)\n")
+        step += 1
     else:
-        print("All five columns are present.")
-    print()
-    print("The scheduler is now pointed at Jira. The extension's Settings screen")
-    print("owns this setting too, so set 'Queue source' there as well — the next")
-    print("time the popup saves, it rewrites the mirror this just changed.")
+        print("   (all five columns are already present on {})\n".format(board_url))
+
+    print("{}. Point the extension at the board. Click its toolbar icon in Chrome,".format(step))
+    print("   open Settings, set 'Queue source' to 'A Jira board' and 'Jira project")
+    print("   key' to {}. This is not optional: the extension owns those two".format(resolved_key))
+    print("   settings, and the next time it saves it overwrites what this just")
+    print("   wrote to disk.\n")
+    step += 1
+
+    print("{}. Check it: just jira-status".format(step))
+    print("   It answers site, project, credential, expiry, columns and queue depth")
+    print("   in one screen. Then `just queue-list` shows what would run next.\n")
+
+    print("To bring your existing prompts.txt across: just import-prompts-to-jira")
+    print("It asks before creating anything and leaves the file alone.")
     return 0
 
 
@@ -1776,20 +1848,28 @@ def main():
     parser.add_argument("project_key", nargs="?", help="An existing project to use, for --install.")
     arguments = parser.parse_args()
 
-    if arguments.install:
-        return _install(arguments.project_key)
-    if arguments.set_credentials:
-        return _set_credentials()
-    if arguments.status:
-        return _status()
-    if arguments.list:
-        return _list_queue()
-    if arguments.source:
-        return _queue_source_report()
-    if arguments.import_prompts:
-        return _import_prompts()
-    if arguments.probe_adf:
-        return _probe_adf()
+    try:
+        if arguments.install:
+            return _install(arguments.project_key)
+        if arguments.set_credentials:
+            return _set_credentials()
+        if arguments.status:
+            return _status()
+        if arguments.list:
+            return _list_queue()
+        if arguments.source:
+            return _queue_source_report()
+        if arguments.import_prompts:
+            return _import_prompts()
+        if arguments.probe_adf:
+            return _probe_adf()
+    except (EOFError, KeyboardInterrupt):
+        # Ctrl-C or Ctrl-D part way through the credential questions, which is a
+        # perfectly ordinary way to change your mind. Nothing has been written
+        # yet at any point one of these can arrive — the credential file is
+        # written after the last question, not as the answers come in.
+        print("\nStopped. Nothing was written.")
+        return 1
     return 1
 
 

@@ -107,7 +107,7 @@ The honest costs, stated up front rather than buried in §13:
 
 Jira does not have spaces — Confluence does. The container this plan creates is
 a **project**, of type *Jira Software*, team-managed, with a Kanban board. Its
-name is `Free Claude Prompts` and its key defaults to `FCP`.
+name is `Free Claude Prompts` and its key defaults to `FC`.
 
 Team-managed rather than company-managed is a deliberate choice and it matters
 for §7: in a team-managed project **the board's columns *are* its statuses**, so
@@ -184,7 +184,7 @@ One call per pick-up:
 
 ```
 GET /rest/api/3/search/jql
-    ?jql=project = "FCP" AND status = "To Do" ORDER BY Rank ASC
+    ?jql=project = "FC" AND status = "To Do" ORDER BY Rank ASC
     &fields=summary,description,labels,status
     &maxResults=50
 ```
@@ -512,7 +512,7 @@ re-run at any point, creates only what is missing, never appends or accumulates:
 4. If not, `POST /rest/api/3/project` with
    `projectTypeKey: "software"`,
    `projectTemplateKey: "com.pyxis.greenhopper.jira:gh-simplified-agility-kanban"`,
-   `leadAccountId` from step 2, key `FCP`.
+   `leadAccountId` from step 2, key `FC`.
 5. Resolve the project's statuses and record which ones are missing.
 6. Write the project key and status mapping into the settings mirror.
 7. Print the board URL, and the steps a human has to click.
@@ -533,8 +533,32 @@ the recipe **verifies** afterwards rather than assuming, which is what step 5 an
 > **As built**, and it does verify: step 5 runs and step 7 prints only the
 > columns actually missing, by name, or says all five are present. A 403 on
 > project creation is caught and reported as the permission it is, with the
-> `just install-jira-queue MYKEY` escape hatch named in the same breath — that
-> being the one failure a user pointed at somebody else's Jira will hit.
+> `just install-jira-queue MYKEY` escape hatch named in the same breath.
+>
+> **The board-column question is now measured rather than assumed**, against a
+> real team-managed project, and the answer is more interesting than "no API":
+>
+> | Attempt | Result |
+> | --- | --- |
+> | `POST /rest/api/3/statuses`, scoped to the project | **Works.** Creates the status. |
+> | `GET /rest/api/3/project/{key}/statuses` afterwards | Does *not* list it — a status outside the workflow is not a column. |
+> | `PUT /rest/greenhopper/1.0/rapidviewconfig/columns` | **500** on a simplified board, both with an empty column and with the new status mapped in. |
+> | `GET /rest/api/3/workflows/search?expand=values.transitions` | **Works**, and finds the project's own workflow, `isEditable: true`. |
+> | `POST /rest/api/3/workflows/update/validation` | **400**, "invalid request payload", on three guessed body shapes. |
+>
+> So the chain is *create status → add it to the workflow → it becomes a
+> column*, the first link works over the public API and the last one is a
+> consequence, and only the middle link is missing. It is missing for want of a
+> payload schema rather than for want of an endpoint — `workflows/update` exists,
+> the workflow is editable, and the project is admin-able. **That is a much
+> better place to start from than this plan assumed**, and anyone picking it up
+> should read the bulk-update schema properly rather than guess at it, as was
+> done here.
+>
+> The one thing to know before trying: a status created and then left out of the
+> workflow is invisible on the board and has to be deleted with
+> `DELETE /rest/api/3/statuses?id=…`, or it will collide by name with the one the
+> UI creates when somebody adds the column by hand.
 
 **Creating a project needs Administer Jira permission**, which the owner of a
 free site has by definition. A user pointed at somebody else's Jira will fail
@@ -830,8 +854,11 @@ because the thing they are about has not been measured yet.
 - ~~**`/rest/api/3/search/jql` pagination preserving rank order across pages.**~~
   **Settled by not building it.** One page, `maxResults=50`, no paginator — see
   §4. The risk was in code that now does not exist.
-- **Board column creation via any scriptable route** (§7) is assumed absent.
-  If Phase 0 finds one, the install gets shorter; if not, nothing breaks.
+- ~~**Board column creation via any scriptable route** (§7) is assumed absent.~~
+  **Partly measured, and the assumption was too pessimistic.** Creating the
+  status works over the public API; associating it with a team-managed project's
+  workflow is the missing link, and `workflows/update` looks like the right
+  endpoint. §7 has the full table of what was tried.
 - **Whether token expiry is readable from an API** (§5.3). If it is, the recorded
   date becomes a cache; if not, a user who mistypes the date gets a warning on the
   wrong day — which the daily probe still catches on the right one.
@@ -902,7 +929,7 @@ fallback here, so a bad answer costs a change rather than a redesign:
 | --- | --- |
 | Does v3's ADF flatten losslessly? | Switch the read path to `/rest/api/2/` (§4). |
 | Does `/search/jql` hold rank across pages? | Moot as built — one page, no paginator (§4). |
-| Can board columns be created by API? | Nothing breaks; the two clicks stay printed (§7). |
+| Can board columns be created by API? | Partly answered already — §7's table; the two clicks stay printed for now. |
 | Is token expiry readable from an API? | Nothing breaks; the typed date stays the source (§5.3). |
 | Can MCP's headless auth be enabled? | Phase 6 is cancelled; nothing depends on it (§6.3). |
 
