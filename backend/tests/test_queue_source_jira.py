@@ -255,14 +255,23 @@ class _Handler(BaseHTTPRequestHandler):
             )
 
         if parsed.path == "/rest/api/3/statuses/search":
+            # `id` is deliberately NOT modelled as a filter — the real
+            # endpoint has no such parameter (measured;
+            # plans/company-managed-jira-project.md §0.3/§0.4) and silently
+            # ignores one if sent, returning the unfiltered, paginated list.
+            # A fake that honoured `id` is exactly how the live "|||...|||"
+            # bug slipped past this suite the first time around.
             search = (query.get("searchString") or [None])[0]
-            status_id = (query.get("id") or [None])[0]
             values = list(state.site_statuses.values())
-            if status_id is not None:
-                values = [s for s in values if s["id"] == status_id]
-            elif search is not None:
+            if search is not None:
                 values = [s for s in values if search.lower() in s["name"].lower()]
-            return self._reply(200, {"values": values, "isLast": True})
+            start_at = int((query.get("startAt") or ["0"])[0])
+            max_results = int((query.get("maxResults") or [str(len(values) or 1)])[0])
+            page = values[start_at : start_at + max_results]
+            return self._reply(
+                200,
+                {"values": page, "isLast": start_at + max_results >= len(values)},
+            )
 
         if parsed.path == "/rest/api/3/workflows/search":
             return self._reply(200, {"values": [dict(state.workflow)]})
@@ -1066,6 +1075,33 @@ class WorkflowStatusTests(StubJiraTestCase):
         status_refs = {s["statusReference"] for s in refreshed["statuses"]}
         for pre_existing_id in ("10028", "10029", "3", "10027"):
             self.assertIn(pre_existing_id, status_refs)
+
+    def test_pre_existing_statuses_keep_their_own_name_even_with_decoys_ahead(self):
+        # Regression guard for a real failure: `/statuses/search` has no `id`
+        # filter, so looking a pre-existing status up by id must not silently
+        # fall back to whatever sorts first in the site's full status list.
+        # This site alone carries dozens of statuses from old personal
+        # projects (one literally named "||||||||||||||||||") — a decoy ahead
+        # of the real ones in iteration order is the realistic case, not an
+        # edge case.
+        self.state.site_statuses = dict(
+            {"decoy-1": {"id": "decoy-1", "name": "||||||||||||||||||", "statusCategory": "TODO"}},
+            **self.state.site_statuses,
+        )
+        workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        jira.ensure_statuses_in_workflow(self.source.client, workflow)
+
+        update_call = next(
+            c for c in reversed(self.state.requests)
+            if c[0] == "POST" and c[1] == "/rest/api/3/workflows/update"
+        )
+        pool_by_ref = {entry["statusReference"]: entry for entry in update_call[2]["statuses"]}
+        self.assertEqual(pool_by_ref["10028"]["name"], "Backlog")
+        self.assertEqual(pool_by_ref["10029"]["name"], "Selected for Development")
+        self.assertEqual(pool_by_ref["3"]["name"], "In Progress")
+        self.assertEqual(pool_by_ref["10027"]["name"], "Done")
+        for entry in pool_by_ref.values():
+            self.assertNotEqual(entry["name"], "||||||||||||||||||")
 
     def test_a_second_call_is_a_no_op(self):
         workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)

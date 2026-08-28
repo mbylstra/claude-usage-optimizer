@@ -1621,13 +1621,25 @@ def ensure_statuses_in_workflow(client, workflow, wanted_names=_WANTED_STATUS_CA
 
     # The status pool: every status already on the workflow (by its own real
     # id — no reason to mint a UUID for something that already exists) plus
-    # the ones being added.
+    # the ones being added. The read side doesn't carry name/category, so the
+    # ones we don't already know by name need looking up — one call for the
+    # whole site's status list, indexed client-side (there is no `id` filter
+    # on `/statuses/search`, despite how tempting that looks; passing one is
+    # silently ignored and returns the unfiltered list, which is how this bit
+    # a live install: it took the first status alphabetically/positionally in
+    # the response, wrote its name into the update, and collided).
+    site_status_by_id = _all_site_statuses_by_id(client)
     status_pool = []  # type: list[dict]
     seen_ids = set()
-    for status_id, status in existing_by_id.items():
-        # The read side doesn't carry name/category — look them up from the
-        # site's status list only for the ones we don't already know by name.
-        status_pool.append(_status_pool_entry_for_id(client, status_id))
+    for status_id in existing_by_id:
+        site_status = site_status_by_id.get(status_id)
+        status_pool.append({
+            "id": status_id,
+            "name": (site_status or {}).get("name") or "",
+            "statusCategory": (site_status or {}).get("statusCategory") or "TODO",
+            "statusReference": status_id,
+            "description": "",
+        })
         seen_ids.add(status_id)
     for name, site_status in site_status_by_name.items():
         status_id = site_status["id"]
@@ -1688,30 +1700,33 @@ def ensure_statuses_in_workflow(client, workflow, wanted_names=_WANTED_STATUS_CA
     return result_by_name, True
 
 
-def _status_pool_entry_for_id(client, status_id):
-    # type: (JiraClient, str) -> dict
-    """Enough of a status's own record to satisfy the `workflows/update` pool.
+def _all_site_statuses_by_id(client, page_size=200):
+    # type: (JiraClient, int) -> dict[str, dict]
+    """Every status on the site, indexed by id.
 
-    Only called for statuses already on the workflow — cheap in practice
-    since there are never more than a handful.
+    `/rest/api/3/statuses/search` has no `id` filter — `searchString`,
+    `statusCategory`, `projectId` and `includeGlobalStatuses` are the whole
+    list (measured against the live API). Fetching everything once and
+    indexing client-side is the only reliable way to resolve "what is status
+    X's name" — this site alone carries dozens of statuses across old
+    personal projects, so paging is real, not defensive.
     """
-    found = client.request(
-        "GET", "/rest/api/3/statuses/search", query={"id": status_id, "maxResults": 1}
-    )
-    values = (found or {}).get("values") or []
-    if values and isinstance(values[0], dict):
-        status = values[0]
-        return {
-            "id": status_id,
-            "name": status.get("name") or "",
-            "statusCategory": status.get("statusCategory") or "TODO",
-            "statusReference": status_id,
-            "description": "",
-        }
-    return {
-        "id": status_id, "name": "", "statusCategory": "TODO",
-        "statusReference": status_id, "description": "",
-    }
+    by_id = {}  # type: dict[str, dict]
+    start_at = 0
+    while True:
+        page = client.request(
+            "GET",
+            "/rest/api/3/statuses/search",
+            query={"startAt": start_at, "maxResults": page_size},
+        )
+        values = (page or {}).get("values") or []
+        for status in values:
+            if isinstance(status, dict) and status.get("id"):
+                by_id[status["id"]] = status
+        if (page or {}).get("isLast", True) or not values:
+            break
+        start_at += page_size
+    return by_id
 
 
 # --------------------------------------------------------------------------- #
