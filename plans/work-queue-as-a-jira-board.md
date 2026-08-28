@@ -49,8 +49,8 @@ card.
 Non-goals: mirroring Jira into `prompts.txt` or back (§8 explains why that is
 the one design that must not be built); Jira Data Center or Server; a Forge or
 Connect app; webhooks or anything that listens; Confluence; MCP as the
-scheduler's transport (§6 is the whole argument, and where MCP *does* belong);
-the run ever *changing* the rank (it reads the order, it never writes it);
+scheduler's transport (§6 is the whole argument, and where MCP _does_ belong);
+the run ever _changing_ the rank (it reads the order, it never writes it);
 multi-user workflows — this is one person's queue that happens to live in a
 multi-user tool.
 
@@ -91,26 +91,26 @@ listed as costs:
 - **Push notifications, for free.** The Jira mobile app can notify you when a
   card reaches Done or In Review. The GitHub plan called "somewhere to read the
   account of what happened" its real prize and the Obsidian plan got it by
-  putting `summaries/` in the vault; Jira gets it *and* tells you it is there.
+  putting `summaries/` in the vault; Jira gets it _and_ tells you it is there.
 
 The honest costs, stated up front rather than buried in §13:
 
 - **A card needs a summary.** This was named as a con of the issues design and
   it is no less true here. §3 mitigates it: a card with an empty description
-  uses its summary *as* the prompt, so a one-line prompt needs one field, not two.
+  uses its summary _as_ the prompt, so a one-line prompt needs one field, not two.
 - **A third-party account and a network dependency**, where a file needed
   neither. This is why §8 keeps the file source rather than replacing it.
 - **Credentials that expire.** §5 is the longest section in this plan for that
   reason.
 
-## 2. Terminology: it is a Jira *project*
+## 2. Terminology: it is a Jira _project_
 
 Jira does not have spaces — Confluence does. The container this plan creates is
-a **project**, of type *Jira Software*, team-managed, with a Kanban board. Its
-name is `Free Claude Prompts` and its key defaults to `FC`.
+a **project**, of type _Jira Software_, team-managed, with a Kanban board. Its
+name is `Free Claude Prompts` and its key defaults to `FCP`.
 
 Team-managed rather than company-managed is a deliberate choice and it matters
-for §7: in a team-managed project **the board's columns *are* its statuses**, so
+for §7: in a team-managed project **the board's columns _are_ its statuses**, so
 "add a column" and "add a status" are one gesture with no workflow scheme, no
 issue-type scheme and no screen scheme in between. A company-managed project
 would need all three configured before the five columns in the goal existed.
@@ -140,7 +140,7 @@ prompt you can state in a sentence is one field on a phone; a long one gets a
 title worth having on a card.
 
 **In Review holds both endings that need a human**, told apart by a label. The
-column means *your turn*, and both an unmerged branch and a failed prompt mean
+column means _your turn_, and both an unmerged branch and a failed prompt mean
 exactly that. It is also what keeps the user's five columns intact rather than
 growing a sixth for failures. §12 records the argument against.
 
@@ -150,7 +150,7 @@ themselves, and it exists so that the gesture stays single.
 
 **The `:detail` convention does not cross the boundary.** `unmerged:<branch>`
 exists because a text file has one field to carry both the status and the branch
-name. Jira has columns, labels *and* comments, so `JiraQueueSource.record_outcome`
+name. Jira has columns, labels _and_ comments, so `JiraQueueSource.record_outcome`
 splits the string at §8's boundary: the status name picks the column, the detail
 goes in the comment. Nothing downstream of the queue changes, and no `:detail`
 parsing exists on the Jira side at all.
@@ -184,7 +184,7 @@ One call per pick-up:
 
 ```
 GET /rest/api/3/search/jql
-    ?jql=project = "FC" AND status = "To Do" ORDER BY Rank ASC
+    ?jql=project = "FCP" AND status = "To Do" ORDER BY Rank ASC
     &fields=summary,description,labels,status
     &maxResults=50
 ```
@@ -196,7 +196,7 @@ queue, which is the worst failure this design has.
 
 > **As built: one page, and no paginator at all.** The risk above is real and the
 > cheapest way to be rid of it is not to write the thing that carries it. Fifty
-> cards is far more queue than anyone has, the run only ever wants the *first*
+> cards is far more queue than anyone has, the run only ever wants the _first_
 > one, and `remaining_todo_prompts` is a line in a summary rather than a
 > decision. If a board ever outgrows one page, the fix is a paginator with a test
 > that asserts rank order across the seam — not a paginator added quietly now.
@@ -217,14 +217,14 @@ prompt contains and what a document model is most likely to reshape.
 
 The v2 API (`/rest/api/2/`) returns wiki markup instead and is the fallback if
 the flattener turns out to be lossy. It is the fallback rather than the default
-precisely because it is a *conversion* of the stored ADF and so has its own
+precisely because it is a _conversion_ of the stored ADF and so has its own
 lossiness, in the same places.
 
 > **As built.** `flatten_adf` handles `text`, `hardBreak`, `codeBlock`,
 > `mention`, `emoji`, `rule` and seven block types, and passes a plain string
 > through unchanged so a v2 response needs no special casing at the call site.
 > It is covered against backticks, asterisks, underscores, a path and a fenced
-> block — but against documents *this repo built*, which is not the same test as
+> block — but against documents _this repo built_, which is not the same test as
 > against documents Jira built out of something a person typed. That is what
 > `just probe-jira-adf` is still owed for.
 
@@ -258,7 +258,7 @@ It costs more in four places:
    Jira platform REST scopes → set a callback URL → copy a client id and secret.
    Six clicks and two pastes rather than three clicks and one.
 2. **The client secret cannot be shipped.** A Web Store extension is not a
-   confidential client, so the user must register their *own* app and paste
+   confidential client, so the user must register their _own_ app and paste
    their own id and secret — which puts the setup burden back near the API
    token's, just doubled.
 3. **Rotation is a race, and this codebase has exactly the wrong shape for it.**
@@ -276,8 +276,8 @@ It costs more in four places:
 **Ship the API token. Design the credential behind an interface so OAuth can be
 added later without touching anything else.**
 
-The reasoning turns on a distinction the concern itself makes — *"either
-automatically, or the user needs a good warning system"*:
+The reasoning turns on a distinction the concern itself makes — _"either
+automatically, or the user needs a good warning system"_:
 
 > An API token's expiry is a **scheduled event with a date known at creation
 > time**. OAuth's failure modes are **unscheduled**.
@@ -308,13 +308,17 @@ just set-jira-credentials     # prompts in the terminal, writes 0600
 writing `backend/jira-credentials.json`, mode `0600`, gitignored:
 
 ```json
-{ "siteUrl": "https://example.atlassian.net",
-  "email": "…", "apiToken": "…", "tokenExpiresAt": "2027-08-28" }
+{
+  "siteUrl": "https://example.atlassian.net",
+  "email": "…",
+  "apiToken": "…",
+  "tokenExpiresAt": "2027-08-28"
+}
 ```
 
 Consequences worth stating:
 
-- **The token is never logged.** The host's convention of logging arriving *key*
+- **The token is never logged.** The host's convention of logging arriving _key_
   names rather than values is already the right one and needs no change; the
   credential simply never arrives over that wire.
 - **The popup shows status, never the secret** — valid / expires in N days /
@@ -335,7 +339,7 @@ Consequences worth stating:
 
 ### 5.4 The warning system — the actual deliverable of this section
 
-The load-bearing insight is about *whose clock* drives the check:
+The load-bearing insight is about _whose clock_ drives the check:
 
 > **The run is the wrong thing to discover a broken credential.** It fires at
 > 2 AM, and only when the week is behind pace — which may be never for a
@@ -347,12 +351,12 @@ snapshot, does a **throttled daily probe** — `GET /rest/api/3/myself`, one cal
 cheap — and records the result in `backend/jira-status.json`. Escalating from
 there:
 
-| When | Where it shows |
-| --- | --- |
-| 30 days before expiry | a line in the popup's Settings screen |
-| 14 days | a banner on the popup's main view |
+| When                        | Where it shows                                              |
+| --------------------------- | ----------------------------------------------------------- |
+| 30 days before expiry       | a line in the popup's Settings screen                       |
+| 14 days                     | a banner on the popup's main view                           |
 | 7 days, or any failed probe | the **toolbar badge**, the thing you look at all day anyway |
-| expired, or a 401 | badge, plus the run refuses to start and says why |
+| expired, or a 401           | badge, plus the run refuses to start and says why           |
 
 The badge is the point. This extension's whole premise is that a number in the
 toolbar changes behaviour; a credential about to expire belongs in the same
@@ -388,7 +392,7 @@ alarm, since a laptop is offline most nights it is shut).
 
 ### 5.5 What happens if it fails at 2 AM anyway
 
-The safe direction is *do nothing, loudly*:
+The safe direction is _do nothing, loudly_:
 
 - **The read fails** — expired token, no network, project gone. Log the cause,
   write the gate's decision as usual, and **exit 0 having run nothing**. It must
@@ -407,7 +411,7 @@ The safe direction is *do nothing, loudly*:
 > did not say: **every write path catches `QueueUnavailable` as well as
 > `JiraError`**. Resolving the project's statuses is itself a call and is made
 > lazily, so the first thing a write does can be the thing that discovers Jira is
-> gone — and that arrives as the *read* error, not the write one. A write path
+> gone — and that arrives as the _read_ error, not the write one. A write path
 > that let it through would take the run down at the exact moment it was trying
 > to be careful with an outcome. `WRITE_FAILURES` is that tuple, and there is a
 > test that shuts the stub server's socket mid-run to prove it.
@@ -425,7 +429,7 @@ can actually do, because the answer is different for each.
 Replacing §4's search and §9's transitions with MCP tool calls fails on four
 counts, and the first is decisive:
 
-1. **MCP is a protocol for giving a *model* tools. The scheduler is not a
+1. **MCP is a protocol for giving a _model_ tools. The scheduler is not a
    model.** Picking the top-ranked To Do card is a deterministic query with one
    right answer. Routing it through a tool call means either running an LLM to
    read the queue — absurd, and it would spend the very budget this project
@@ -456,7 +460,7 @@ step**:
   2 AM under launchd, and Claude Code's support for OAuth against HTTP MCP
   servers has open issues.
 - The headless alternative is **an Atlassian API token** — the same credential
-  §5 already chose, with the same mandatory annual expiry — *plus* an
+  §5 already chose, with the same mandatory annual expiry — _plus_ an
   administrator toggle in Atlassian Administration (Rovo → MCP server →
   Authentication) that has to be found and enabled first.
 
@@ -465,7 +469,7 @@ stands unchanged, and §5.4's warning system is required either way.
 
 ### 6.3 Inside the run, as a tool for Claude — yes, and this is the good one
 
-The place MCP earns its keep is the one place there *is* a model:
+The place MCP earns its keep is the one place there _is_ a model:
 `claude -p --mcp-config`, giving the running prompt the Atlassian tools. That
 buys two things a description field cannot:
 
@@ -512,7 +516,7 @@ re-run at any point, creates only what is missing, never appends or accumulates:
 4. If not, `POST /rest/api/3/project` with
    `projectTypeKey: "software"`,
    `projectTemplateKey: "com.pyxis.greenhopper.jira:gh-simplified-agility-kanban"`,
-   `leadAccountId` from step 2, key `FC`.
+   `leadAccountId` from step 2, key `FCP`.
 5. Resolve the project's statuses and record which ones are missing.
 6. Write the project key and status mapping into the settings mirror.
 7. Print the board URL, and the steps a human has to click.
@@ -538,16 +542,16 @@ the recipe **verifies** afterwards rather than assuming, which is what step 5 an
 > **The board-column question is now measured rather than assumed**, against a
 > real team-managed project, and the answer is more interesting than "no API":
 >
-> | Attempt | Result |
-> | --- | --- |
-> | `POST /rest/api/3/statuses`, scoped to the project | **Works.** Creates the status. |
-> | `GET /rest/api/3/project/{key}/statuses` afterwards | Does *not* list it — a status outside the workflow is not a column. |
-> | `PUT /rest/greenhopper/1.0/rapidviewconfig/columns` | **500** on a simplified board, both with an empty column and with the new status mapped in. |
-> | `GET /rest/api/3/workflows/search?expand=values.transitions` | **Works**, and finds the project's own workflow, `isEditable: true`. |
-> | `POST /rest/api/3/workflows/update/validation` | **400**, "invalid request payload", on three guessed body shapes. |
+> | Attempt                                                      | Result                                                                                      |
+> | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+> | `POST /rest/api/3/statuses`, scoped to the project           | **Works.** Creates the status.                                                              |
+> | `GET /rest/api/3/project/{key}/statuses` afterwards          | Does _not_ list it — a status outside the workflow is not a column.                         |
+> | `PUT /rest/greenhopper/1.0/rapidviewconfig/columns`          | **500** on a simplified board, both with an empty column and with the new status mapped in. |
+> | `GET /rest/api/3/workflows/search?expand=values.transitions` | **Works**, and finds the project's own workflow, `isEditable: true`.                        |
+> | `POST /rest/api/3/workflows/update/validation`               | **400**, "invalid request payload", on three guessed body shapes.                           |
 >
-> So the chain is *create status → add it to the workflow → it becomes a
-> column*, the first link works over the public API and the last one is a
+> So the chain is _create status → add it to the workflow → it becomes a
+> column_, the first link works over the public API and the last one is a
 > consequence, and only the middle link is missing. It is missing for want of a
 > payload schema rather than for want of an endpoint — `workflows/update` exists,
 > the workflow is editable, and the project is admin-able. **That is a much
@@ -595,7 +599,7 @@ by something the rest of the plan already required:
 - **`abandon`** is `start`'s inverse, and §9's table is what needs it: "back to
   To Do is not a status change — it is the undoing of `start()`". The obvious
   shortcut is to call `record_outcome(entry, STATUS_TODO)` from the cancellation
-  handler, and it is wrong, because that would have the *file* source rewrite a
+  handler, and it is wrong, because that would have the _file_ source rewrite a
   STATUS line it has deliberately left alone since the day it was written. A
   cancelled prompt must leave the queue exactly as it found it, and only a method
   that means "undo the pick-up" can promise that for both sources.
@@ -622,7 +626,7 @@ for it.
 **`QueueEntry.status_line_index` becomes an opaque `handle`** — a line index for
 the file source, an issue key for Jira. This is the one invasive change and it is
 mechanical: the field is read only in the places listed above, and
-`status_on_line` / `rewrite_status_line` move *inside* `FileQueueSource` where
+`status_on_line` / `rewrite_status_line` move _inside_ `FileQueueSource` where
 they belong, being file-shaped concerns that never meant anything to the rest of
 the script.
 
@@ -677,13 +681,13 @@ probe. Nothing is added to any script's `dependencies = []`.
 from the `result` event, falling back to the last assistant message when a run
 was cancelled or wedged — and `unmerged_branch`. Per outcome:
 
-| Outcome         | Column      | Labels                       | Comment                                     |
-| --------------- | ----------- | ---------------------------- | ------------------------------------------- |
-| `completed`     | Done        | —                            | `result_text`, plus turns and cost          |
-| unmerged branch | In Review   | `+claude-unmerged`           | `result_text`, the branch, the repo path    |
-| `error`         | In Review   | `+claude-error`              | `result_text` or last output, and exit code |
-| `sessionLimit`  | back to To Do | unchanged                  | none                                        |
-| cancelled       | back to To Do | unchanged                  | none                                        |
+| Outcome         | Column        | Labels             | Comment                                     |
+| --------------- | ------------- | ------------------ | ------------------------------------------- |
+| `completed`     | Done          | —                  | `result_text`, plus turns and cost          |
+| unmerged branch | In Review     | `+claude-unmerged` | `result_text`, the branch, the repo path    |
+| `error`         | In Review     | `+claude-error`    | `result_text` or last output, and exit code |
+| `sessionLimit`  | back to To Do | unchanged          | none                                        |
+| cancelled       | back to To Do | unchanged          | none                                        |
 
 The last two rows are the existing rule restated in board terms: those are the
 only two outcomes that leave a queue entry's status alone, because the prompt
@@ -702,7 +706,7 @@ undoing of §8's `start()`, returning the card to where it was.
 **One comment per attempt**, so a card re-queued three times reads as three
 attempts with three accounts. This is what `prompts.txt` structurally cannot do,
 and with §1's push notifications it is the payoff that justifies the whole
-feature: over breakfast the board *is* the morning-after summary — last night's
+feature: over breakfast the board _is_ the morning-after summary — last night's
 work sitting in Done, anything needing you in In Review — and each card explains
 itself.
 
@@ -716,11 +720,11 @@ Following the existing mirror path — popup → service worker → native host 
 `backend/autonomous-work-settings.json` → `autonomous_work_settings.py`.
 **Credentials do not travel this path (§5.3); these are the non-secret half.**
 
-| Setting             | Default   | Environment override                |
-| ------------------- | --------- | ----------------------------------- |
-| `queueSource`       | `"file"`  | `AUTONOMOUS_WORK_QUEUE_SOURCE`      |
-| `jiraProjectKey`    | `""`      | `AUTONOMOUS_WORK_JIRA_PROJECT`      |
-| `jiraStatusNames`   | the five  | —                                   |
+| Setting           | Default  | Environment override           |
+| ----------------- | -------- | ------------------------------ |
+| `queueSource`     | `"file"` | `AUTONOMOUS_WORK_QUEUE_SOURCE` |
+| `jiraProjectKey`  | `""`     | `AUTONOMOUS_WORK_JIRA_PROJECT` |
+| `jiraStatusNames` | the five | —                              |
 
 Plus `AUTONOMOUS_WORK_JIRA_BASE_URL`, so the tests can point the whole transport
 at a local stub — the same trick `AUTONOMOUS_WORK_LAUNCHCTL` already plays for
@@ -733,7 +737,7 @@ path can leave an existing install with no queue at all.
 
 > **As built, with one papercut that could not be designed away.**
 > `just install-jira-queue` writes `queueSource: jira` into the mirror so the
-> scheduler works the moment it finishes — but the extension *owns* that field
+> scheduler works the moment it finishes — but the extension _owns_ that field
 > and rewrites the whole mirror on its next save, which would put it back to
 > `file`. The two cannot both be the owner. The recipe therefore ends by saying
 > so and telling you to set Queue source in the popup's Settings screen as well;
@@ -752,7 +756,7 @@ in `usage-host.py`, one more key in the arriving key list.
 > mirrored setting the extension silently blanks on every save. So Settings has
 > five text inputs behind a collapsed "Renamed columns", shown only for the Jira
 > source, each placeholdered with the name the board is created with. A blank
-> field is *removed* rather than stored as `""` — an empty string is not a
+> field is _removed_ rather than stored as `""` — an empty string is not a
 > rename, and storing one would send the run looking for a column called "".
 
 ## 11. Recipes
@@ -784,7 +788,7 @@ the board, not the migration's.
 - **A Jira board, over a file in a synced folder.** §1 — rank is a first-class
   draggable field, which is the one property every previous design had to
   reconstruct.
-- **A team-managed Jira Software project**, because there the columns *are* the
+- **A team-managed Jira Software project**, because there the columns _are_ the
   statuses. §2.
 - **The prompt is the description, or the summary when the description is
   empty.** §3 — this is what stops a forced title from being double entry.
@@ -797,7 +801,7 @@ the board, not the migration's.
 - **The extension's five-minute clock drives the credential probe, not the
   run's.** §5.4. This is the section's real content.
 - **REST for the queue, MCP only inside the run.** §6 — MCP is a way to give a
-  *model* tools, and the scheduler is not a model. It also buys nothing on
+  _model_ tools, and the scheduler is not a model. It also buys nothing on
   longevity: its headless path is the same API token plus an admin toggle.
 - **A prompt may read and comment on its card, never transition it**, enforced by
   the tool set rather than by instruction. §6.3.
@@ -831,7 +835,7 @@ turns out nobody has touched it.
 > **One argument struck out, because it contradicts §5.5 and §5.5 is right.**
 > This paragraph originally also argued that the file is "the fallback when Jira
 > is unreachable". It must not be, and as built it is not: an unreachable Jira
-> runs *nothing*. A file holding work you deleted from the board weeks ago is
+> runs _nothing_. A file holding work you deleted from the board weeks ago is
 > not a safety net, it is the one failure that costs work rather than time.
 > The only falling back that happens is at **configuration** time — no project
 > key, or no credential file, where there is no Jira queue to have failed — and
@@ -841,7 +845,7 @@ turns out nobody has touched it.
 The runner-up worth arguing about is **In Review holding failures**. The case
 against is that a successful-but-unmerged branch and a crashed prompt are
 different things and a `Blocked` column would say so. The case for, which won: the
-column means *your turn*, both are, and the goal named five columns.
+column means _your turn_, both are, and the goal named five columns.
 
 ## 13. Risks and unknowns
 
@@ -880,7 +884,7 @@ because the thing they are about has not been measured yet.
 - **A run that crosses an expiry.** A token valid at 2:00 and expired at 2:40
   fails the write, not the read — which is exactly what §5.5's pending-writes
   file exists for, and the reason it is a phase rather than a nicety. Built, and
-  the failure is *reproduced* in a test rather than only reasoned about: the stub
+  the failure is _reproduced_ in a test rather than only reasoned about: the stub
   server's socket is closed mid-run and the outcome has to land in the
   pending-writes file rather than raise.
 
@@ -894,7 +898,7 @@ Two the build added to this list:
 
 ## 14. Phases
 
-0. **Probe.** *Not done — see below.* `just probe-jira-adf` and a scratch
+0. **Probe.** _Not done — see below._ `just probe-jira-adf` and a scratch
    project: what does a real prompt survive as through v3 and v2; does
    `/search/jql` hold rank across pages; can columns be created by any API; is
    token expiry readable; can the MCP server's headless auth be enabled and
@@ -913,7 +917,7 @@ Two the build added to this list:
    warning rather than blocking on the recorded date.
 5. **Resilience.** ✅ The pending-writes file, the 429 retry, and the settings
    through the extension.
-6. **MCP inside the run.** *Not done.* Optional, and gated on Phase 0's answer
+6. **MCP inside the run.** _Not done._ Optional, and gated on Phase 0's answer
    about the headless auth path.
 
 **Phase 0 could not be done from here, and that is a fact about the phase rather
@@ -925,13 +929,13 @@ and prints the two flattenings against what was sent. **Run it once before
 trusting a long prompt to the board.** Each unknown it covers has a documented
 fallback here, so a bad answer costs a change rather than a redesign:
 
-| Question | If the answer is bad |
-| --- | --- |
-| Does v3's ADF flatten losslessly? | Switch the read path to `/rest/api/2/` (§4). |
-| Does `/search/jql` hold rank across pages? | Moot as built — one page, no paginator (§4). |
-| Can board columns be created by API? | Partly answered already — §7's table; the two clicks stay printed for now. |
-| Is token expiry readable from an API? | Nothing breaks; the typed date stays the source (§5.3). |
-| Can MCP's headless auth be enabled? | Phase 6 is cancelled; nothing depends on it (§6.3). |
+| Question                                   | If the answer is bad                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------- |
+| Does v3's ADF flatten losslessly?          | Switch the read path to `/rest/api/2/` (§4).                               |
+| Does `/search/jql` hold rank across pages? | Moot as built — one page, no paginator (§4).                               |
+| Can board columns be created by API?       | Partly answered already — §7's table; the two clicks stay printed for now. |
+| Is token expiry readable from an API?      | Nothing breaks; the typed date stays the source (§5.3).                    |
+| Can MCP's headless auth be enabled?        | Phase 6 is cancelled; nothing depends on it (§6.3).                        |
 
 **Phase 4 was not optional and was not treated as such** — it is the half of §5
 that makes the API token choice defensible, and phases 1–3 without it would have
@@ -944,10 +948,10 @@ Atlassian account are marked as such rather than claimed.
 
 - ⏳ A prompt typed into the Jira mobile app at 11 PM runs at 2 AM, and by
   morning its card is in Done carrying Claude's account of what it did.
-  *Every step is covered against the stub; the end-to-end run needs a site.*
+  _Every step is covered against the stub; the end-to-end run needs a site._
 - ⏳ **Dragging a card to the top of To Do changes what runs next, with no other
-  action taken anywhere.** *The read is `ORDER BY Rank ASC` and asserted to be;
-  the drag itself is Jira's.*
+  action taken anywhere.** _The read is `ORDER BY Rank ASC` and asserted to be;
+  the drag itself is Jira's._
 - ✅ A prompt that left work on a branch is in In Review with the branch named,
   and dragging it back to To Do is the only gesture needed to re-queue it —
   `start` clears both labels, which is what keeps that a single gesture.
@@ -959,7 +963,7 @@ Atlassian account are marked as such rather than claimed.
 - ✅ With `queueSource` unset, behaviour is unchanged — the 227 existing tests
   still pass, alongside 74 new ones for the two sources (16 for the file, 58 for
   Jira) and 4 more for the setting that chooses between them, with `just check`
-  and `just test-usage-host` both green. Not *byte*-identical on the tests
+  and `just test-usage-host` both green. Not _byte_-identical on the tests
   themselves: §8 records the one rename that could not be avoided.
 
 ## 16. References
