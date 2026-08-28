@@ -26,9 +26,9 @@ columns exist — is now paid **once, in code, inside `install-jira-queue`**,
 instead of by a human clicking.
 
 This plan switches `create_project` to a company-managed Kanban template and
-scripts the rest end to end: a Task-only issue type scheme, the two missing
-statuses wired into the workflow with global transitions, and the board's five
-columns mapped. The target is **zero printed manual steps** except the one that
+scripts the rest end to end: an issue type scheme whose default is `Task`
+instead of `Bug`, the two missing statuses wired into the workflow with global
+transitions, and the board's five columns mapped. The target is **zero printed manual steps** except the one that
 is genuinely not ours to do — pointing the extension's Settings at the board.
 
 The existing FC project is brand new with nothing worth keeping, so it is simply
@@ -74,18 +74,31 @@ Until that is done, treat §3–§5 as the intended shape, not a guarantee.
 - Which issue type scheme and issue type screen scheme are assigned?
   `GET /rest/api/3/issuetypescheme/project?projectId={id}`,
   `GET /rest/api/3/issuetypescreenscheme/project?projectId={id}`.
+  **§0.2 branches on this answer** — a project-specific scheme can be edited in
+  place; the shared site default scheme cannot.
 
-### 0.2 A Task-only issue type scheme
+### 0.2 A scheme that defaults to Task
+
+The want is narrow: a card created by hand on the board should come out a
+`Task` instead of a `Bug` — the other standard types stay offered. No palette
+narrowing.
 
 - `GET /rest/api/3/issuetype` → the site's `Task` id (`hierarchyLevel == 0`,
   `name == "Task"`, not `subtask`).
-- `POST /rest/api/3/issuetypescheme` with
-  `{name, issueTypeIds: [taskId], defaultIssueTypeId: taskId}`.
-- `POST /rest/api/3/issuetypescheme/project` `{issueTypeSchemeId, projectId}` to
-  bind it. Does binding a scheme that omits every non-Task type succeed on a
-  fresh project (only Task issues exist)?
-- Confirm the create dialog on the board then offers only `Task`.
-- Cleanup: rebind the site default scheme, `DELETE /issuetypescheme/{id}`.
+- Which scheme the fresh project was assigned (§0.1) decides the route:
+  - **Project-specific scheme:** does
+    `PUT /rest/api/3/issuetypescheme/{schemeId}` accept a body that changes
+    only `defaultIssueTypeId`, or does it demand the full type list back?
+  - **Shared site default scheme:** `POST /rest/api/3/issuetypescheme` with
+    `{name, issueTypeIds: <the assigned scheme's own type list>, defaultIssueTypeId: taskId}`,
+    then `POST /rest/api/3/issuetypescheme/project`
+    `{issueTypeSchemeId, projectId}` to bind it. Does binding succeed on a
+    fresh project?
+- Confirm the create dialog on the board then defaults to `Task`, with the
+  other standard types still offered.
+- Cleanup: rebind the site default scheme and `DELETE /issuetypescheme/{id}`
+  if a dedicated one was created, or restore the original `defaultIssueTypeId`
+  if the project's own scheme was edited in place.
 
 ### 0.3 The two missing statuses
 
@@ -199,9 +212,12 @@ Re-run safe at every step: find-or-create, or diff-and-patch, never append.
    is the deliberate "re-apply the config" path.
 4. Create the project from `gh-kanban-template` if absent. Handle a `202` +
    task-poll response if §0.1 finds one.
-5. **Issue type scheme.** Resolve the site's `Task` id; find-or-create a
-   `Free Claude Prompts — Task only` scheme with `Task` as its sole and default
-   type; bind it to the project if not already bound.
+5. **Issue type scheme.** Resolve the site's `Task` id. If the project's
+   assigned scheme is project-specific (§0.2), set its `defaultIssueTypeId` to
+   `Task` in place; otherwise find-or-create a
+   `Free Claude Prompts — defaults to Task` scheme carrying the assigned
+   scheme's type list with `Task` as default, and bind it to the project if not
+   already bound.
 6. **Workflow statuses.** Resolve the project's workflow. Find-or-create the
    `Draft` and `In Review` statuses (project scope per §0.3). Diff the
    workflow's current statuses against the five wanted; `workflows/update` to add
@@ -248,22 +264,27 @@ team-managed board being undirected. A directed classic workflow without global
 transitions makes the run's To Do → In Progress → In Review → To Do moves fail
 intermittently. §0.4 confirms how to express them; §9.5 carries the fallback.
 
-## 5. The Task-only issue type scheme
+## 5. The issue type scheme — default to Task, keep every type
 
-- **A new scheme, never the site default.** The default issue type scheme is
-  shared by every project on the site; narrowing it to Task-only would break the
-  other ~17. A dedicated scheme bound to FC touches only FC. (This is the
-  inverse of `jira-repository-picker.md`'s "the field is global" wrinkle — there
-  the API forces global; here it lets us scope, so we scope.)
-- Find-or-create by scheme `name`; idempotent.
+The requirement is deliberately narrow: a card created by hand on the board
+defaults to `Task` instead of `Bug`. The other standard types stay available —
+the ask is the default, not a narrowed palette.
+
+- **Never rewrite the site default scheme.** It is shared by every project on
+  the site; changing its default would change the create dialog of the other
+  ~17 projects. (This is the inverse of `jira-repository-picker.md`'s "the
+  field is global" wrinkle — there the API forces global; here it lets us
+  scope, so we scope.)
+- If §0.1 shows the fresh project comes with a **project-specific scheme**,
+  edit that one in place — `PUT` its `defaultIssueTypeId` to the `Task` id, no
+  new object at all. If it is the shared site default, find-or-create a
+  dedicated scheme by `name`, mirroring the assigned scheme's type list so
+  nothing the create dialog offered disappears, with
+  `defaultIssueTypeId = taskId`; idempotent.
 - `defaultIssueTypeId = taskId` is the whole feature — it replaces
   `jira-default-work-type`'s printed deletions.
-- `create_card` keeps `"issuetype": {"name": "Task"}` — still correct, now also
-  enforced by the scheme, so a card made by hand on the board matches a card the
-  importer makes.
-- Epic sits at hierarchy level 1 and is wired into the board separately; the
-  Task-only scheme covers the standard-level types the create dialog offers.
-  §0.2 confirms a single-standard-type scheme binds cleanly.
+- `create_card` keeps `"issuetype": {"name": "Task"}` — still correct, and now
+  a card made by hand on the board matches a card the importer makes.
 
 ## 6. Code changes, file by file
 
@@ -276,7 +297,9 @@ intermittently. §0.4 confirms how to express them; §9.5 carries the fallback.
   - `create_project`: new template key, docstring, and a `202`/task-poll branch
     if §0.1 needs one.
   - New: `resolve_task_issue_type(client)`,
-    `ensure_task_only_scheme(client, project_id)` → `(scheme_id, created, bound)`.
+    `ensure_scheme_defaults_to_task(client, project_id)` →
+    `(scheme_id, changed, bound)` — edits the project's own scheme in place
+    when it has one, else finds-or-creates and binds the dedicated scheme.
   - New: `resolve_project_workflow(client, project_id)`,
     `find_or_create_status(client, project_id, name, category)`,
     `delete_stranded_status(client, status_id)`,
@@ -312,10 +335,10 @@ intermittently. §0.4 confirms how to express them; §9.5 carries the fallback.
 - **`CLAUDE.md`** — the "Jira half" section: flip "team-managed" → "company-
   managed" and rewrite the rationale paragraph (it currently argues *for*
   team-managed). New paragraph: `install-jira-queue` now builds the five columns
-  end to end — Task-only issue type scheme, `Draft`/`In Review` statuses in the
-  workflow with global transitions, board column mapping — and the only printed
-  step is pointing the extension at the board; note the Phase 0 caveats and that
-  `jira-default-work-type` is superseded.
+  end to end — an issue type scheme defaulting to `Task`, `Draft`/`In Review`
+  statuses in the workflow with global transitions, board column mapping — and
+  the only printed step is pointing the extension at the board; note the Phase 0
+  caveats and that `jira-default-work-type` is superseded.
 - **`plans/work-queue-as-a-jira-board.md`** — indented "As revised — see
   `plans/company-managed-jira-project.md`" notes on §2 (project type), §7 (the
   manual columns step) and §13's board-column bullet.
@@ -344,8 +367,10 @@ limitation the board plan already lives with.
    manual) would leave the switch barely worth its Phase 0.
 3. **Kanban template, not Scrum.** No sprints; matches the current board and the
    "ranked queue, read top-down" model.
-4. **A dedicated Task-only issue type scheme bound to FC — never the site
-   default.** One queue's tidiness must not narrow every other project's types.
+4. **Default to Task, keep every type — via the project's own scheme when it
+   has one, else a dedicated scheme; never the site default.** The ask is the
+   default, not a narrowed palette — and rewriting the site default scheme's
+   default would change the create dialog of the other ~17 projects.
 5. **Global transitions in the workflow.** `_transition` works by destination
    name over whatever transitions exist, and the board it replaces was
    undirected; a directed classic workflow would make the run's card moves fail
@@ -388,7 +413,7 @@ limitation the board plan already lives with.
 1. **Phase 0 — measure.** Real site, throwaway company-managed project, every
    probe in §0, answers written back into §0, project deleted. Blocks everything
    below.
-2. **Template swap + Task-only scheme.** Smallest useful increment: company-
+2. **Template swap + Task-default scheme.** Smallest useful increment: company-
    managed project created, issue type scheme scripted, columns still printed.
    Shippable alone — it kills the work-type friction and supersedes
    `jira-default-work-type`.
@@ -406,7 +431,8 @@ limitation the board plan already lives with.
 - `just install-jira-queue` on a clean site creates a company-managed project
   and leaves `just jira-status` reporting all five columns present, with nothing
   printed but "point the extension at the board".
-- A card created by hand on the board offers only `Task` and defaults to it.
+- A card created by hand on the board defaults to `Task`, with the other
+  standard types still offered.
 - The run moves a card To Do → In Progress → In Review → To Do with no
   `No transition` error.
 - Re-running `just install-jira-queue` changes nothing and prints nothing new.
