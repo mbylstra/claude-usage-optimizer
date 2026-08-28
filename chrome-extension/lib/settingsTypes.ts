@@ -49,7 +49,7 @@ export interface AutonomousWorkSettings {
    * run would happily execute a prompt deleted from the board yesterday.
    */
   queueSource: QueueSourceName;
-  /** The Jira project the board lives in, e.g. `FC`. Ignored for the file source. */
+  /** The Jira project the board lives in, e.g. `FCP`. Ignored for the file source. */
   jiraProjectKey: string;
   /**
    * The status names, where a column has been renamed in Jira. Only the renamed

@@ -340,6 +340,22 @@ class PromptFromIssueTests(unittest.TestCase):
         self.assertEqual(repository, Path("~/code/thing").expanduser())
         self.assertEqual(prompt, "Do the thing.")
 
+    def test_a_description_holding_only_a_repo_line_falls_back_to_the_summary(self):
+        # The card that reported an empty queue: pointing a one-sentence card at
+        # a repository left no prompt text behind, and `next_todo` skipped it.
+        prompt, repository = jira.prompt_from_issue(
+            self._issue("Tidy up the log formatting", jira.adf_document("REPO: ~/code/thing"))
+        )
+        self.assertEqual(prompt, "Tidy up the log formatting")
+        self.assertEqual(repository, Path("~/code/thing").expanduser())
+
+    def test_a_repo_line_in_the_summary_is_lifted_off_too(self):
+        prompt, repository = jira.prompt_from_issue(
+            self._issue("REPO: ~/code/thing")
+        )
+        self.assertEqual(prompt, "")
+        self.assertEqual(repository, Path("~/code/thing").expanduser())
+
     def test_a_repo_line_below_the_prompt_is_left_in_the_text(self):
         prompt, repository = jira.prompt_from_issue(
             self._issue("t", jira.adf_document("Do the thing.\n\nREPO: ~/code/thing"))

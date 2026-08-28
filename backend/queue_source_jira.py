@@ -93,11 +93,7 @@ PENDING_WRITES_FILE = _environment_path(
 BASE_URL_OVERRIDE = os.environ.get("AUTONOMOUS_WORK_JIRA_BASE_URL")
 
 DEFAULT_PROJECT_NAME = "Free Claude Prompts"
-# Two letters rather than three, because Jira holds a key for a while after a
-# project that used it is renamed or moved, and `FCP` was already spoken for on
-# the first site this ran against. Any free key does; this is only the default
-# for a project this recipe creates itself.
-DEFAULT_PROJECT_KEY = "FC"
+DEFAULT_PROJECT_KEY = "FCP"
 # Team-managed Jira Software with a Kanban board: there the board's columns *are*
 # its statuses, so "add a column" and "add a status" are one gesture with no
 # workflow, issue-type or screen scheme in between.
@@ -571,20 +567,9 @@ def adf_document(text):
 # --------------------------------------------------------------------------- #
 
 
-def prompt_from_issue(issue):
-    # type: (dict) -> tuple[str, Path | None]
-    """A card's prompt text and its `REPO:` path.
-
-    **The prompt is the description, or the summary when the description is
-    empty.** Jira forces a summary, and this is what stops that from being
-    double entry: a prompt you can state in a sentence is one field on a phone,
-    and a long one gets a title worth having on the board.
-    """
-    fields = issue.get("fields") or {}
-    description = flatten_adf(fields.get("description"))
-    summary = (fields.get("summary") or "").strip()
-    body = description or summary
-
+def _split_repository_line(body):
+    # type: (str) -> tuple[str, Path | None]
+    """Lift a leading `REPO:` line off a block of text, returning what is left."""
     repository_path = None
     remaining_lines = []  # type: list[str]
     for line in body.split("\n"):
@@ -601,6 +586,32 @@ def prompt_from_issue(issue):
         remaining_lines.append(line)
 
     return "\n".join(remaining_lines).strip(), repository_path
+
+
+def prompt_from_issue(issue):
+    # type: (dict) -> tuple[str, Path | None]
+    """A card's prompt text and its `REPO:` path.
+
+    **The prompt is the description, or the summary when the description says
+    nothing more than a `REPO:` line.** Jira forces a summary, and that fallback
+    is what stops it from being double entry: a prompt you can state in a
+    sentence is one field on a phone, and a long one gets a title worth having
+    on the board.
+
+    "Nothing more than a `REPO:` line" rather than "empty", because pointing a
+    one-sentence card at a repository is the obvious thing to want, and reading
+    the result as an empty prompt made the card invisible to `next_todo` — a
+    board with work on it reporting an empty queue.
+    """
+    fields = issue.get("fields") or {}
+    prompt, repository_path = _split_repository_line(flatten_adf(fields.get("description")))
+    if prompt:
+        return prompt, repository_path
+
+    summary_prompt, summary_repository = _split_repository_line(
+        (fields.get("summary") or "").strip()
+    )
+    return summary_prompt, repository_path or summary_repository
 
 
 @dataclass
@@ -855,6 +866,14 @@ class JiraQueueSource:
             entry = self._entry_from_issue(issue, STATUS_TODO)
             if entry.prompt and entry.handle:
                 return entry
+            # Skipping in silence is what makes a card carrying no prompt look
+            # exactly like an empty board — the hardest version of this to
+            # diagnose, since `just queue-list` still shows the card by summary.
+            self._log(
+                "Skipping Jira card {} — it carries no prompt text".format(
+                    issue.get("key") or "?"
+                )
+            )
         return None
 
     def holds_a_todo(self) -> bool:

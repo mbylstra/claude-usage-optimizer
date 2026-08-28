@@ -330,7 +330,7 @@ export function SettingsPage({
                 type="text"
                 className="w-28"
                 spellCheck={false}
-                placeholder="FC"
+                placeholder="FCP"
                 value={autonomousWorkSettings.jiraProjectKey}
                 onChange={(event) =>
                   onAutonomousWorkSettingsChange({
