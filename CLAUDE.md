@@ -707,8 +707,14 @@ route for board configuration — the same way `just setup` ends by printing the
 one thing it cannot do itself. Status names are **discovered, not hard-coded**,
 matched case-insensitively with per-column overrides in settings.
 
-**The prompt is the description, or the summary when the description is empty.**
-Jira forces a summary and this is what stops that from being double entry.
+**The prompt is the description, or the summary when the description says
+nothing more than a `REPO:` line.** Jira forces a summary and this is what stops
+that from being double entry. "Nothing more than a `REPO:` line" rather than
+"empty", because pointing a one-sentence card at a repository is the obvious
+thing to want — and reading what was left as an empty prompt made the card
+invisible to `next_todo`, so a board with work on it reported an empty queue.
+`next_todo` now logs every card it passes over for that reason, since skipping
+in silence is indistinguishable from an empty board.
 
 **Descriptions arrive as Atlassian Document Format** — a JSON tree, not text —
 and `flatten_adf` walks it. The saving grace is that **the run only ever reads
