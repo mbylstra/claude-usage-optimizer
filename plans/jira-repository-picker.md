@@ -50,6 +50,16 @@ field. Three things came back that the plan below is built on, not assumed:
    prints a manual step for (§3 there: "Jira Cloud exposes no documented REST
    route"). Adding a field to a team-managed layout is a UI-only action.
 
+   > **As revised — see `plans/company-managed-jira-project.md` §0.6.** The
+   > queue moved to a company-managed project for unrelated reasons (a
+   > default-work-type lever this plan didn't need), and that project type
+   > *does* expose the screen/tab model over the public API — confirmed
+   > end to end: `issuetypescreenscheme/project` → screen scheme → screen →
+   > `GET /screens/{id}/tabs` → `POST /screens/{id}/tabs/{tabId}/fields`
+   > accepted (a specific "field already exists" `400`, not a wall). §3's
+   > manual step below is expected to go away on a company-managed project;
+   > this plan's own phases and field-creation detail are unaffected.
+
 Adding and soft-disabling options (`POST`/`PUT`
 `/field/{id}/context/{contextId}/option`) both worked cleanly and are fully
 scriptable. Deleting the probe field worked too, despite `DELETE` answering
@@ -150,6 +160,16 @@ division CLAUDE.md already draws for descriptions ("the run only ever reads
 descriptions and never writes them").
 
 ## 3. The one step that has to stay manual
+
+> **As revised — see `plans/company-managed-jira-project.md` §0.6.** This
+> section's premise no longer holds on the project type `install-jira-queue`
+> now creates: the screen/tab attach chain is confirmed working over the
+> public API on a company-managed project. What follows describes the
+> team-managed-only gap as it stood when this plan was written; treat it as
+> superseded rather than build against it — the attach step this section
+> prints manually should instead call
+> `POST /screens/{id}/tabs/{tabId}/fields` directly, the same
+> find-or-create discipline as everything else this plan does.
 
 Per §0.3, nothing over the API can put `Repository` onto FCP's card layout.
 `just install-jira-queue` calls `sync_repository_field` once, with whatever

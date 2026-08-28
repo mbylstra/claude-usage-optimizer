@@ -36,11 +36,37 @@ import queue_source_jira as jira  # noqa: E402  (same)
 # --------------------------------------------------------------------------- #
 
 PROJECT_KEY = "FCP"
+PROJECT_ID = "10441"
 ALL_STATUS_NAMES = list(jira.DEFAULT_STATUS_NAMES.values())
+
+# A minimal but realistic set of the site's issue types, mirroring the
+# duplicates-from-migration shape measured on the real site (§0.2): two
+# "Task"s, one of them a decoy that must lose to hierarchyLevel/subtask
+# filtering, never to name alone.
+TASK_ID = "10016"
+SITE_ISSUE_TYPES = [
+    {"id": TASK_ID, "name": "Task", "subtask": False, "hierarchyLevel": 0},
+    {"id": "10052", "name": "Task", "subtask": True, "hierarchyLevel": -1},  # decoy
+    {"id": "10008", "name": "Story", "subtask": False, "hierarchyLevel": 0},
+    {"id": "10015", "name": "Bug", "subtask": False, "hierarchyLevel": 0},
+    {"id": "10017", "name": "Sub-task", "subtask": True, "hierarchyLevel": -1},
+]
+
+WORKFLOW_ENTITY_ID = "wf-fcp-1"
+WORKFLOW_SCHEME_ID = "10442"
+ISSUE_TYPE_SCHEME_ID = "10694"
 
 
 class FakeJiraState:
-    """A board, in memory: issues with a status, labels, a description and comments."""
+    """A board, in memory: issues with a status, labels, a description and comments.
+
+    Also models enough of a company-managed project's scheme/workflow/status
+    machinery for `configure_project` and its pieces to run against — starting
+    from the shape a fresh `gh-kanban-template` project actually has (measured,
+    plans/company-managed-jira-project.md §0.1): `Backlog / Selected for
+    Development / In Progress / Done`, no "To Do", issue type scheme defaults
+    to whatever Jira's own default is (modelled here as Bug, `10015`).
+    """
 
     def __init__(self):
         self.issues = {}  # type: dict
@@ -50,6 +76,76 @@ class FakeJiraState:
         self.next_status_code = None  # Forced failure for the next call, once.
         self.fail_writes = False
         self._counter = 0
+
+        # -- scheme / workflow / board machinery ---------------------------- #
+        self.issue_types = list(SITE_ISSUE_TYPES)
+        self.issue_type_scheme = {
+            "id": ISSUE_TYPE_SCHEME_ID,
+            "name": "FCP: Kanban Issue Type Scheme",
+            "defaultIssueTypeId": "10015",  # Bug — the un-configured starting point
+            "isDefault": False,
+        }
+        # id -> {id, name, statusCategory, scope}
+        self.site_statuses = {
+            "10028": {"id": "10028", "name": "Backlog", "statusCategory": "TODO", "scope": "GLOBAL"},
+            "10029": {
+                "id": "10029", "name": "Selected for Development",
+                "statusCategory": "TODO", "scope": "GLOBAL",
+            },
+            "3": {"id": "3", "name": "In Progress", "statusCategory": "IN_PROGRESS", "scope": "GLOBAL"},
+            "10027": {"id": "10027", "name": "Done", "statusCategory": "DONE", "scope": "GLOBAL"},
+        }
+        self._next_status_id = 20000
+        self.workflow = {
+            "id": WORKFLOW_ENTITY_ID,
+            "version": {"versionNumber": 0, "id": "wf-version-0"},
+            "statuses": [
+                {"statusReference": "10028", "properties": {}},
+                {"statusReference": "10029", "properties": {}},
+                {"statusReference": "3", "properties": {}},
+                {"statusReference": "10027", "properties": {}},
+            ],
+            "transitions": [
+                {"id": "1", "type": "INITIAL", "toStatusReference": "10028", "links": [],
+                 "name": "Create", "description": "", "actions": [], "validators": [],
+                 "triggers": [], "properties": {}},
+                {"id": "11", "type": "GLOBAL", "toStatusReference": "10028", "links": [],
+                 "name": "Backlog", "description": "", "actions": [], "validators": [],
+                 "triggers": [], "properties": {}},
+                {"id": "21", "type": "GLOBAL", "toStatusReference": "10029", "links": [],
+                 "name": "Selected for Development", "description": "", "actions": [],
+                 "validators": [], "triggers": [], "properties": {}},
+                {"id": "31", "type": "GLOBAL", "toStatusReference": "3", "links": [],
+                 "name": "In Progress", "description": "", "actions": [], "validators": [],
+                 "triggers": [], "properties": {}},
+                {"id": "41", "type": "GLOBAL", "toStatusReference": "10027", "links": [],
+                 "name": "Done", "description": "", "actions": [], "validators": [],
+                 "triggers": [], "properties": {}},
+            ],
+        }
+        self.workflow_scheme_id = WORKFLOW_SCHEME_ID
+        self.board_id = 475
+        # [{name, statuses: [{id}]}] — the same shape /configuration returns.
+        self.board_columns = [
+            {"name": "Backlog", "statuses": [{"id": "10028"}]},
+            {"name": "Selected for Development", "statuses": [{"id": "10029"}]},
+            {"name": "In Progress", "statuses": [{"id": "3"}]},
+            {"name": "Done", "statuses": [{"id": "10027"}]},
+        ]
+        self.rapidviewconfig_columns_status_code = None  # e.g. 500, once
+        self.deleted_workflow_schemes = []  # type: list
+        self.deleted_workflows = []  # type: list
+        self.project_deleted = False
+        self.purge_task_id = "task-1"
+        self.purge_task_status = "COMPLETE"
+
+    def add_site_status(self, name, category="TODO"):
+        self._next_status_id += 1
+        status_id = str(self._next_status_id)
+        self.site_statuses[status_id] = {
+            "id": status_id, "name": name, "statusCategory": category, "scope": "GLOBAL",
+        }
+        return status_id
 
     def add_issue(self, summary, description=None, status="To Do", labels=None):
         self._counter += 1
@@ -146,6 +242,57 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
 
+        if parsed.path == "/rest/api/3/issuetype":
+            return self._reply(200, state.issue_types)
+
+        if parsed.path == "/rest/api/3/issuetypescheme/project":
+            return self._reply(
+                200,
+                {"values": [{
+                    "issueTypeScheme": dict(state.issue_type_scheme),
+                    "projectIds": [PROJECT_ID],
+                }]},
+            )
+
+        if parsed.path == "/rest/api/3/statuses/search":
+            search = (query.get("searchString") or [None])[0]
+            status_id = (query.get("id") or [None])[0]
+            values = list(state.site_statuses.values())
+            if status_id is not None:
+                values = [s for s in values if s["id"] == status_id]
+            elif search is not None:
+                values = [s for s in values if search.lower() in s["name"].lower()]
+            return self._reply(200, {"values": values, "isLast": True})
+
+        if parsed.path == "/rest/api/3/workflows/search":
+            return self._reply(200, {"values": [dict(state.workflow)]})
+
+        if parsed.path == "/rest/api/3/workflowscheme/project":
+            return self._reply(
+                200,
+                {"values": [{
+                    "workflowScheme": {"id": state.workflow_scheme_id},
+                    "projectIds": [PROJECT_ID],
+                }]},
+            )
+
+        if parsed.path == "/rest/agile/1.0/board":
+            return self._reply(200, {"values": [{"id": state.board_id, "type": "kanban"}]})
+
+        if parsed.path == "/rest/agile/1.0/board/{}/configuration".format(state.board_id):
+            return self._reply(
+                200,
+                {"columnConfig": {"columns": list(state.board_columns), "constraintType": "none"}},
+            )
+
+        if parsed.path == "/rest/api/3/project/{}".format(PROJECT_KEY):
+            if state.project_deleted:
+                return self._reply(404)
+            return self._reply(200, {"id": PROJECT_ID, "key": PROJECT_KEY})
+
+        if parsed.path == "/rest/api/3/task/{}".format(state.purge_task_id):
+            return self._reply(200, {"id": state.purge_task_id, "status": state.purge_task_status})
+
         return self._reply(404)
 
     def do_POST(self):  # noqa: N802
@@ -167,6 +314,52 @@ class _Handler(BaseHTTPRequestHandler):
             state.issues[key]["comments"].append(jira.flatten_adf(body.get("body")))
             return self._reply(201, {"id": "1"})
 
+        if parsed.path == "/rest/api/3/statuses":
+            scope = (body.get("scope") or {}).get("type")
+            if scope != "GLOBAL":
+                return self._reply(
+                    400, {"errorMessages": ["We couldn't find project in this scope."]}
+                )
+            created = []
+            for wanted in body.get("statuses") or []:
+                name = wanted.get("name")
+                if any(s["name"] == name for s in state.site_statuses.values()):
+                    return self._reply(
+                        400,
+                        {"errorMessages": [
+                            'Status name "{}" already in use. Try a different name.'.format(name)
+                        ]},
+                    )
+                status_id = state.add_site_status(name, wanted.get("statusCategory") or "TODO")
+                created.append(dict(state.site_statuses[status_id]))
+            return self._reply(200, created)
+
+        if parsed.path == "/rest/api/3/issuetypescheme":
+            state.issue_type_scheme = {
+                "id": ISSUE_TYPE_SCHEME_ID,
+                "name": body.get("name"),
+                "defaultIssueTypeId": body.get("defaultIssueTypeId"),
+                "isDefault": False,
+            }
+            return self._reply(200, {"issueTypeSchemeId": ISSUE_TYPE_SCHEME_ID})
+
+        if parsed.path == "/rest/api/3/workflows/update":
+            for entry in body.get("workflows") or []:
+                if entry.get("id") == state.workflow["id"]:
+                    state.workflow["statuses"] = list(entry.get("statuses") or [])
+                    state.workflow["transitions"] = list(entry.get("transitions") or [])
+                    state.workflow["version"] = {
+                        "versionNumber": state.workflow["version"]["versionNumber"] + 1,
+                        "id": "wf-version-{}".format(
+                            state.workflow["version"]["versionNumber"] + 1
+                        ),
+                    }
+            return self._reply(200, {"statuses": body.get("statuses") or []})
+
+        if parsed.path == "/rest/api/3/project/{}/delete".format(PROJECT_KEY):
+            state.project_deleted = True
+            return self._reply(200, {"id": state.purge_task_id, "status": "RUNNING"})
+
         return self._reply(404)
 
     def do_PUT(self):  # noqa: N802
@@ -174,6 +367,24 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         body = self._body()
         state.requests.append(("PUT", parsed.path, body))
+
+        if parsed.path == "/rest/greenhopper/1.0/rapidviewconfig/columns":
+            if state.rapidviewconfig_columns_status_code is not None:
+                code = state.rapidviewconfig_columns_status_code
+                state.rapidviewconfig_columns_status_code = None
+                return self._reply(code, {"errorMessages": ["forced"]})
+            state.board_columns = [
+                {"name": col["name"], "statuses": list(col["mappedStatuses"])}
+                for col in body.get("mappedColumns") or []
+            ]
+            return self._reply(200, body)
+
+        if parsed.path.startswith("/rest/api/3/issuetypescheme/") and parsed.path.split("/")[-1].isdigit():
+            state.issue_type_scheme["defaultIssueTypeId"] = body.get(
+                "defaultIssueTypeId", state.issue_type_scheme["defaultIssueTypeId"]
+            )
+            return self._reply(204)
+
         if self._forced_failure() or (state.fail_writes and self._reply(500) is None):
             return
 
@@ -184,6 +395,27 @@ class _Handler(BaseHTTPRequestHandler):
                 labels.append(operation["add"])
             if "remove" in operation and operation["remove"] in labels:
                 labels.remove(operation["remove"])
+        return self._reply(204)
+
+    def do_DELETE(self):  # noqa: N802
+        state = self.state
+        parsed = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(parsed.query)
+        state.requests.append(("DELETE", parsed.path, query))
+
+        if parsed.path == "/rest/api/3/statuses":
+            for status_id in (query.get("id") or [""])[0].split(","):
+                state.site_statuses.pop(status_id, None)
+            return self._reply(204)
+
+        if parsed.path == "/rest/api/3/workflowscheme/{}".format(state.workflow_scheme_id):
+            state.deleted_workflow_schemes.append(state.workflow_scheme_id)
+            return self._reply(204)
+
+        if parsed.path == "/rest/api/3/workflow/{}".format(state.workflow["id"]):
+            state.deleted_workflows.append(state.workflow["id"])
+            return self._reply(204)
+
         return self._reply(204)
 
 
@@ -740,6 +972,202 @@ class ProbeTests(StubJiraTestCase):
     def test_a_probed_status_never_carries_the_token(self):
         payload = json.dumps(jira.probe_credentials(self.credentials, PROJECT_KEY).to_json())
         self.assertNotIn("token", payload)
+
+
+# --------------------------------------------------------------------------- #
+# Company-managed configuration — plans/company-managed-jira-project.md §0/§6
+# --------------------------------------------------------------------------- #
+
+
+class IssueTypeSchemeTests(StubJiraTestCase):
+    def test_the_sites_task_id_is_the_non_subtask_top_level_one(self):
+        # The decoy Task (a sub-task, hierarchyLevel -1) must lose — matching
+        # by name alone would pick between them arbitrarily.
+        self.assertEqual(jira.resolve_task_issue_type(self.source.client), TASK_ID)
+
+    def test_a_project_specific_scheme_is_edited_in_place_with_a_partial_body(self):
+        scheme_id, changed, bound = jira.ensure_scheme_defaults_to_task(
+            self.source.client, PROJECT_ID
+        )
+        self.assertEqual(scheme_id, ISSUE_TYPE_SCHEME_ID)
+        self.assertTrue(changed)
+        self.assertTrue(bound)
+        self.assertEqual(self.state.issue_type_scheme["defaultIssueTypeId"], TASK_ID)
+
+    def test_a_second_call_is_a_no_op(self):
+        jira.ensure_scheme_defaults_to_task(self.source.client, PROJECT_ID)
+        put_count_before = len(
+            [c for c in self.state.requests if c[0] == "PUT" and "issuetypescheme" in c[1]]
+        )
+        scheme_id, changed, bound = jira.ensure_scheme_defaults_to_task(
+            self.source.client, PROJECT_ID
+        )
+        self.assertFalse(changed)
+        put_count_after = len(
+            [c for c in self.state.requests if c[0] == "PUT" and "issuetypescheme" in c[1]]
+        )
+        self.assertEqual(put_count_before, put_count_after)
+
+
+class StatusFindOrCreateTests(StubJiraTestCase):
+    def test_a_missing_status_is_created_global_scope(self):
+        status = jira.find_or_create_status(self.source.client, "Draft", "TODO")
+        self.assertEqual(status["name"], "Draft")
+        create_calls = [c for c in self.state.requests if c[0] == "POST" and c[1] == "/rest/api/3/statuses"]
+        self.assertEqual(len(create_calls), 1)
+        self.assertEqual(create_calls[0][2]["scope"]["type"], "GLOBAL")
+
+    def test_an_existing_status_is_found_rather_than_recreated(self):
+        self.state.add_site_status("Draft", "TODO")
+        jira.find_or_create_status(self.source.client, "Draft", "TODO")
+        create_calls = [c for c in self.state.requests if c[0] == "POST" and c[1] == "/rest/api/3/statuses"]
+        self.assertEqual(len(create_calls), 0)
+
+    def test_exact_name_match_does_not_confuse_lookalikes(self):
+        self.state.add_site_status("todo", "TODO")  # lowercase decoy
+        self.state.add_site_status("To Do", "TODO")
+        status = jira.find_or_create_status(self.source.client, "To Do", "TODO")
+        self.assertEqual(status["name"], "To Do")
+
+    def test_a_stranded_status_can_be_deleted(self):
+        status_id = self.state.add_site_status("Orphan", "TODO")
+        jira.delete_stranded_status(self.source.client, status_id)
+        self.assertNotIn(status_id, self.state.site_statuses)
+
+
+class WorkflowStatusTests(StubJiraTestCase):
+    def test_resolve_project_workflow_uses_the_plural_endpoint(self):
+        workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        self.assertEqual(workflow["id"], WORKFLOW_ENTITY_ID)
+        calls = [c for c in self.state.requests if c[0] == "GET" and c[1] == "/rest/api/3/workflows/search"]
+        self.assertEqual(len(calls), 1)
+
+    def test_missing_statuses_are_added_with_global_transitions(self):
+        workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        status_by_name, changed = jira.ensure_statuses_in_workflow(self.source.client, workflow)
+        self.assertTrue(changed)
+        self.assertEqual(set(status_by_name.keys()), set(jira.DEFAULT_STATUS_NAMES.values()))
+
+        refreshed = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        status_refs = {s["statusReference"] for s in refreshed["statuses"]}
+        for name in ("Draft", "To Do", "In Review"):
+            status_id = status_by_name[name]["id"]
+            self.assertIn(status_id, status_refs)
+            matching = [t for t in refreshed["transitions"] if t["toStatusReference"] == status_id]
+            self.assertTrue(matching, "no transition to {}".format(name))
+            self.assertEqual(matching[0]["type"], "GLOBAL")
+
+    def test_the_four_pre_existing_statuses_are_never_dropped(self):
+        # Regression guard for the exact failure Phase 0 hit live: omitting an
+        # untouched pre-existing status from the write's pool.
+        workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        jira.ensure_statuses_in_workflow(self.source.client, workflow)
+        refreshed = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        status_refs = {s["statusReference"] for s in refreshed["statuses"]}
+        for pre_existing_id in ("10028", "10029", "3", "10027"):
+            self.assertIn(pre_existing_id, status_refs)
+
+    def test_a_second_call_is_a_no_op(self):
+        workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        jira.ensure_statuses_in_workflow(self.source.client, workflow)
+
+        workflow_again = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        update_calls_before = len(
+            [c for c in self.state.requests if c[0] == "POST" and c[1] == "/rest/api/3/workflows/update"]
+        )
+        _, changed = jira.ensure_statuses_in_workflow(self.source.client, workflow_again)
+        update_calls_after = len(
+            [c for c in self.state.requests if c[0] == "POST" and c[1] == "/rest/api/3/workflows/update"]
+        )
+        self.assertFalse(changed)
+        self.assertEqual(update_calls_before, update_calls_after)
+
+
+class BoardColumnTests(StubJiraTestCase):
+    def _wanted_status_by_column(self):
+        workflow = jira.resolve_project_workflow(self.source.client, PROJECT_ID)
+        status_by_name, _ = jira.ensure_statuses_in_workflow(self.source.client, workflow)
+        return {
+            column: status_by_name[jira.DEFAULT_STATUS_NAMES[column]] for column in jira.COLUMN_KEYS
+        }
+
+    def test_columns_are_mapped_in_order(self):
+        ordered = self._wanted_status_by_column()
+        changed = jira.ensure_board_columns(self.source.client, self.state.board_id, ordered)
+        self.assertTrue(changed)
+        names = [c["name"] for c in self.state.board_columns]
+        self.assertEqual(names, ["Draft", "To Do", "In Progress", "In Review", "Done"])
+
+    def test_a_second_call_is_a_no_op(self):
+        ordered = self._wanted_status_by_column()
+        jira.ensure_board_columns(self.source.client, self.state.board_id, ordered)
+        put_calls_before = len(
+            [c for c in self.state.requests if c[0] == "PUT" and "rapidviewconfig" in c[1]]
+        )
+        changed = jira.ensure_board_columns(self.source.client, self.state.board_id, ordered)
+        put_calls_after = len(
+            [c for c in self.state.requests if c[0] == "PUT" and "rapidviewconfig" in c[1]]
+        )
+        self.assertFalse(changed)
+        self.assertEqual(put_calls_before, put_calls_after)
+
+    def test_a_500_degrades_rather_than_raising(self):
+        ordered = self._wanted_status_by_column()
+        self.state.rapidviewconfig_columns_status_code = 500
+        logged = []
+        changed = jira.ensure_board_columns(
+            self.source.client, self.state.board_id, ordered, log=logged.append
+        )
+        self.assertFalse(changed)
+        self.assertTrue(any("Could not set board columns" in line for line in logged))
+
+
+class ConfigureProjectOrchestrationTests(StubJiraTestCase):
+    def test_configure_project_leaves_all_five_columns_present(self):
+        statuses = jira.configure_project(
+            self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY}, log=self.logged.append
+        )
+        self.assertEqual(statuses.missing, [])
+        self.assertEqual(self.state.issue_type_scheme["defaultIssueTypeId"], TASK_ID)
+        names = [c["name"] for c in self.state.board_columns]
+        self.assertEqual(names, ["Draft", "To Do", "In Progress", "In Review", "Done"])
+
+    def test_a_second_call_writes_nothing_new(self):
+        jira.configure_project(self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY})
+        writes_before = [c for c in self.state.requests if c[0] in ("POST", "PUT")]
+        jira.configure_project(self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY})
+        writes_after = [c for c in self.state.requests if c[0] in ("POST", "PUT")]
+        self.assertEqual(len(writes_before), len(writes_after))
+
+
+class PurgeProjectRemnantsTests(StubJiraTestCase):
+    def test_purge_cascades_workflow_scheme_and_workflow(self):
+        jira.purge_project_remnants(self.source.client, PROJECT_KEY, log=self.logged.append)
+        self.assertTrue(self.state.project_deleted)
+        self.assertIn(self.state.workflow_scheme_id, self.state.deleted_workflow_schemes)
+        self.assertIn(self.state.workflow["id"], self.state.deleted_workflows)
+
+    def test_purge_polls_the_task_to_completion(self):
+        self.state.purge_task_status = "RUNNING"
+
+        # Flip to COMPLETE after the first poll, so the loop has to actually
+        # poll rather than accepting the first response unconditionally.
+        original_request = self.source.client.request
+        polls = {"count": 0}
+
+        def counting_request(method, path, body=None, query=None):
+            if path == "/rest/api/3/task/{}".format(self.state.purge_task_id):
+                polls["count"] += 1
+                if polls["count"] >= 2:
+                    self.state.purge_task_status = "COMPLETE"
+            return original_request(method, path, body=body, query=query)
+
+        self.source.client.request = counting_request
+        from unittest.mock import patch
+
+        with patch("queue_source_jira.time.sleep"):
+            jira.purge_project_remnants(self.source.client, PROJECT_KEY, log=self.logged.append)
+        self.assertGreaterEqual(polls["count"], 2)
 
 
 if __name__ == "__main__":

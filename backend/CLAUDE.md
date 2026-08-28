@@ -92,7 +92,8 @@ just run-log-preview             # the run-log window UI, on fixtures, no extens
 
 just queue-source                # which queue the next run reads, and can it be read
 just queue-list                  # what the next run would pick up, in rank order
-just install-jira-queue          # credential, project, statuses, board URL
+just install-jira-queue          # credential, company-managed project, scheme/workflow/columns
+just jira-configure-project      # repair a project's scheme/workflow/columns (or --purge it)
 just set-jira-credentials        # rotate the API token
 just jira-status                 # site, project, credential, columns, queue depth
 just import-prompts-to-jira      # one-shot migration of prompts.txt
@@ -555,14 +556,41 @@ hard kill the cancellation handler could not survive.
 
 ### The Jira half
 
-Five columns: Draft, To Do, In Progress, In Review, Done, in a **team-managed**
-Jira Software project, because there the board's columns *are* its statuses and
-adding one is a single gesture with no workflow, issue-type or screen scheme in
-between. `just install-jira-queue` creates the project by API and then **prints
-the two columns a human has to add**, Jira Cloud exposing no documented REST
-route for board configuration — the same way `just setup` ends by printing the
-one thing it cannot do itself. Status names are **discovered, not hard-coded**,
-matched case-insensitively with per-column overrides in settings.
+Five columns: Draft, To Do, In Progress, In Review, Done, in a
+**company-managed** ("classic") Jira Software project. Team-managed shipped
+first — the board's columns *are* its statuses there, so adding one used to be
+a single gesture with no scheme in between — but it has no issue type scheme
+(no lever for the default work type) and no screen a custom field can be
+attached to over the API, and both of those became real requirements
+(`plans/jira-default-work-type.md`, `plans/jira-repository-picker.md` §0.3). A
+company-managed project has both, reachable over the public API, at the cost
+of configuring the scheme/workflow/columns machinery in between — paid once,
+in code, by `just install-jira-queue`. Full rationale and everything measured
+before it was scripted: `plans/company-managed-jira-project.md` §0.
+
+`just install-jira-queue` now builds all five columns end to end: an issue
+type scheme that defaults new cards to `Task` instead of Jira's alphabetical
+pick, `Draft`/`To Do`/`In Review` added to the project's workflow with global
+transitions (this site's Kanban template starts with `Backlog`/`Selected for
+Development` instead of `To Do` — none of the three exist by default), and
+the board's column mapping — all via `POST /rest/api/3/workflows/update`,
+whose schema is not worth guessing at (read the raw OpenAPI spec,
+`swagger-v3.v3.json`; the rendered docs page truncates) and
+`PUT /rest/greenhopper/1.0/rapidviewconfig/columns`, an undocumented private
+endpoint that turned out to work cleanly on a classic board. The only printed
+step left is pointing the extension's Settings at the board — that step
+belongs to the extension, not to this script, and stays printed. **A project
+someone already customised is left entirely alone** on `_install` — the
+scheme/workflow/column scripting only runs against a project this created or
+one explicitly repaired. `just jira-configure-project` is that repair path:
+it re-applies the same scheme/workflow/column steps against an existing
+project without touching the credential or the settings mirror, and its
+`--purge` flag cascades a deleted project's orphaned workflow scheme and
+workflow — Jira's own `DELETE /project` is a **soft** delete with a 60-day
+trash, and those two objects outlive even the async cascade-delete endpoint,
+colliding by name with whatever a recreated project generates. Status names
+are **discovered, not hard-coded**, matched case-insensitively with
+per-column overrides in settings.
 
 **The prompt is the description, or the summary when the description says
 nothing more than a `REPO:` line.** Jira forces a summary and this is what stops

@@ -115,6 +115,15 @@ for §7: in a team-managed project **the board's columns _are_ its statuses**, s
 issue-type scheme and no screen scheme in between. A company-managed project
 would need all three configured before the five columns in the goal existed.
 
+> **As revised — see `plans/company-managed-jira-project.md`.** Two follow-on
+> requirements — a default work type lever, and a screen a custom field can
+> attach to — both turned out to need exactly the scheme machinery team-managed
+> was chosen to avoid, and neither is reachable on a team-managed project over
+> the public API. The later plan measured what configuring that machinery
+> actually costs (§0) and found it scriptable end to end, at the price this
+> paragraph predicted — paid once, in code, not per-user. `install-jira-queue`
+> now creates a company-managed project.
+
 The **Free** plan of Jira Cloud covers this comfortably — one user, unlimited
 projects, no card. Nothing in this plan needs a paid tier.
 
@@ -564,6 +573,15 @@ the recipe **verifies** afterwards rather than assuming, which is what step 5 an
 > `DELETE /rest/api/3/statuses?id=…`, or it will collide by name with the one the
 > UI creates when somebody adds the column by hand.
 
+> **As revised — see `plans/company-managed-jira-project.md` §0.4.** The
+> `workflows/update` schema this section left as future work is now fully
+> known — read from the raw OpenAPI spec rather than guessed at a second time
+> — and step 7's printed manual step is **gone**: both the workflow-status
+> addition and `rapidviewconfig/columns` (on the *classic* board a
+> company-managed project gets — this section's `500` was on a simplified
+> team-managed one) now work over the API with nothing printed but "point the
+> extension at the board".
+
 **Creating a project needs Administer Jira permission**, which the owner of a
 free site has by definition. A user pointed at somebody else's Jira will fail
 here with a clear message and can instead name an existing project in settings —
@@ -859,10 +877,11 @@ because the thing they are about has not been measured yet.
   **Settled by not building it.** One page, `maxResults=50`, no paginator — see
   §4. The risk was in code that now does not exist.
 - ~~**Board column creation via any scriptable route** (§7) is assumed absent.~~
-  **Partly measured, and the assumption was too pessimistic.** Creating the
-  status works over the public API; associating it with a team-managed project's
-  workflow is the missing link, and `workflows/update` looks like the right
-  endpoint. §7 has the full table of what was tried.
+  **Fully settled — see `plans/company-managed-jira-project.md` §0.4/§0.5.**
+  Creating the status works over the public API, as first found here; the
+  missing link this section left open — the exact `workflows/update` schema —
+  is now known and scripted, and so is `rapidviewconfig/columns`'s body shape
+  on a classic board. §7 has the full table of what was tried here.
 - **Whether token expiry is readable from an API** (§5.3). If it is, the recorded
   date becomes a cache; if not, a user who mistypes the date gets a warning on the
   wrong day — which the daily probe still catches on the right one.

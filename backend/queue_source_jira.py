@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""The work queue as a Jira board — see `plans/work-queue-as-a-jira-board.md`.
+"""The work queue as a Jira board — see `plans/work-queue-as-a-jira-board.md`
+and `plans/company-managed-jira-project.md`.
 
-Five columns (Draft, To Do, In Progress, In Review, Done) in a team-managed
+Five columns (Draft, To Do, In Progress, In Review, Done) in a company-managed
 Jira Software project. The run reads the To Do column `ORDER BY Rank ASC`, moves
 the card it is working on into In Progress, and writes Claude's own account of
 what it did back onto the card as a comment.
@@ -94,10 +95,15 @@ BASE_URL_OVERRIDE = os.environ.get("AUTONOMOUS_WORK_JIRA_BASE_URL")
 
 DEFAULT_PROJECT_NAME = "Free Claude Prompts"
 DEFAULT_PROJECT_KEY = "FCP"
-# Team-managed Jira Software with a Kanban board: there the board's columns *are*
-# its statuses, so "add a column" and "add a status" are one gesture with no
-# workflow, issue-type or screen scheme in between.
-KANBAN_TEMPLATE_KEY = "com.pyxis.greenhopper.jira:gh-simplified-agility-kanban"
+# Company-managed ("classic") Jira Software with a Kanban board. Team-managed
+# was tried first — see plans/work-queue-as-a-jira-board.md §2 — and abandoned
+# because a team-managed project has no issue type scheme (no lever for the
+# default work type — plans/jira-default-work-type) and no screen to attach a
+# custom field to (plans/jira-repository-picker.md §0.3). A company-managed
+# project has both, reachable over the public API — see
+# plans/company-managed-jira-project.md §0 for what was measured before this
+# was scripted.
+COMPANY_MANAGED_KANBAN_TEMPLATE_KEY = "com.pyxis.greenhopper.jira:gh-kanban-template"
 
 COLUMN_DRAFT = "draft"
 COLUMN_TODO = "todo"
@@ -1332,11 +1338,16 @@ def find_project(client, project_name, project_key=None):
 
 def create_project(client, account_id, project_name=DEFAULT_PROJECT_NAME, project_key=DEFAULT_PROJECT_KEY):
     # type: (JiraClient, str, str, str) -> dict
-    """A team-managed Jira Software project with a Kanban board.
+    """A company-managed Jira Software project with a Kanban board.
 
     Needs Administer Jira permission, which the owner of a free site has by
     definition. A user pointed at somebody else's Jira fails here with a clear
     message and can name an existing project instead.
+
+    Creation is synchronous (measured, plans/company-managed-jira-project.md
+    §0.1) — the response is `{id, key, self}` directly, never a `202` with a
+    task to poll. The board id is *not* in it; the caller follows up with
+    `resolve_board_id`.
     """
     return client.request(
         "POST",
@@ -1345,11 +1356,489 @@ def create_project(client, account_id, project_name=DEFAULT_PROJECT_NAME, projec
             "key": project_key,
             "name": project_name,
             "projectTypeKey": "software",
-            "projectTemplateKey": KANBAN_TEMPLATE_KEY,
+            "projectTemplateKey": COMPANY_MANAGED_KANBAN_TEMPLATE_KEY,
             "leadAccountId": account_id,
             "assigneeType": "PROJECT_LEAD",
         },
     )
+
+
+# --------------------------------------------------------------------------- #
+# Issue type scheme — default to Task (plan §0.2, §5)
+# --------------------------------------------------------------------------- #
+
+
+def resolve_task_issue_type(client):
+    # type: (JiraClient) -> str
+    """The site's `Task` issue type id — the standard, top-level one.
+
+    Measured: this site carries a duplicate `Task`/`Story`/`Bug` from old
+    migrations, so matching by name alone picks arbitrarily between two ids.
+    `hierarchyLevel == 0 and not subtask` is what the standard, non-sub-task
+    types share and duplicates from Epic/Sub-task hierarchies do not.
+    """
+    issue_types = client.request("GET", "/rest/api/3/issuetype")
+    for issue_type in issue_types if isinstance(issue_types, list) else []:
+        if not isinstance(issue_type, dict):
+            continue
+        if (
+            issue_type.get("name") == "Task"
+            and not issue_type.get("subtask")
+            and issue_type.get("hierarchyLevel") == 0
+        ):
+            return str(issue_type.get("id"))
+    raise JiraError("No standard 'Task' issue type on this site")
+
+
+def ensure_scheme_defaults_to_task(client, project_id):
+    # type: (JiraClient, str) -> tuple[str, bool, bool]
+    """Make the project's issue type scheme default to `Task`.
+
+    Returns `(scheme_id, changed, bound)`. `changed` is False when the scheme
+    already defaulted to Task — this must be safe to call on every `_install`
+    and `--configure-project` run without writing anything the second time.
+
+    Measured: a fresh company-managed project always gets its own
+    project-specific scheme (never the shared site default, id `10000` on
+    this site, `isDefault: true`, bound to ~17 other projects) — but the
+    shared-scheme branch is kept as a defensive fallback for a user-named
+    pre-existing project this plan did not create.
+    """
+    task_id = resolve_task_issue_type(client)
+
+    response = client.request(
+        "GET", "/rest/api/3/issuetypescheme/project", query={"projectId": project_id}
+    )
+    values = (response or {}).get("values") or []
+    if not values:
+        raise JiraError("Project {} has no issue type scheme".format(project_id))
+    scheme = values[0].get("issueTypeScheme") or {}
+    scheme_id = str(scheme.get("id"))
+    is_shared_default = bool(scheme.get("isDefault"))
+
+    if scheme.get("defaultIssueTypeId") == task_id:
+        return scheme_id, False, True
+
+    if not is_shared_default:
+        # Project-specific scheme: a partial body is accepted (measured) —
+        # no need to resend the type list.
+        client.request(
+            "PUT",
+            "/rest/api/3/issuetypescheme/{}".format(scheme_id),
+            body={"defaultIssueTypeId": task_id},
+        )
+        return scheme_id, True, True
+
+    # Shared site default scheme — never edited in place. Find-or-create a
+    # dedicated scheme carrying the same type list, defaulting to Task, and
+    # bind it to this project instead.
+    dedicated_name = "{} — defaults to Task".format(DEFAULT_PROJECT_NAME)
+    existing = _find_issue_type_scheme_by_name(client, dedicated_name)
+    if existing is not None:
+        dedicated_id = str(existing.get("id"))
+        if existing.get("defaultIssueTypeId") != task_id:
+            client.request(
+                "PUT",
+                "/rest/api/3/issuetypescheme/{}".format(dedicated_id),
+                body={"defaultIssueTypeId": task_id},
+            )
+    else:
+        created = client.request(
+            "POST",
+            "/rest/api/3/issuetypescheme",
+            body={
+                "name": dedicated_name,
+                "issueTypeIds": _issue_type_ids_for_project(client, project_id),
+                "defaultIssueTypeId": task_id,
+            },
+        )
+        dedicated_id = str((created or {}).get("issueTypeSchemeId") or "")
+
+    client.request(
+        "PUT",
+        "/rest/api/3/issuetypescheme/project",
+        body={"issueTypeSchemeId": dedicated_id, "projectId": project_id},
+    )
+    return dedicated_id, True, True
+
+
+def _find_issue_type_scheme_by_name(client, name):
+    # type: (JiraClient, str) -> dict | None
+    """Search the site's issue type schemes by exact name.
+
+    The `issueTypeSchemeId` filter on `GET /issuetypescheme` is measured to be
+    ignored — it always returns the full site list — so find-or-create has to
+    filter client-side rather than ask the API to do it.
+    """
+    response = client.request("GET", "/rest/api/3/issuetypescheme", query={"maxResults": 200})
+    for scheme in (response or {}).get("values") or []:
+        if isinstance(scheme, dict) and scheme.get("name") == name:
+            return scheme
+    return None
+
+
+def _issue_type_ids_for_project(client, project_id):
+    # type: (JiraClient, str) -> list[str]
+    """The project's current issue type ids, via createmeta.
+
+    The scheme list endpoint does not return `issueTypeIds` in a form worth
+    trusting (see `_find_issue_type_scheme_by_name`'s note) — createmeta is
+    the measured working alternative.
+    """
+    response = client.request(
+        "GET", "/rest/api/3/issue/createmeta", query={"projectIds": project_id}
+    )
+    projects = (response or {}).get("projects") or []
+    if not projects:
+        return []
+    return [
+        str(issue_type.get("id"))
+        for issue_type in projects[0].get("issuetypes") or []
+        if isinstance(issue_type, dict) and issue_type.get("id")
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Workflow statuses and global transitions (plan §0.3, §0.4, §5)
+# --------------------------------------------------------------------------- #
+
+# Every status this plan's five columns need, with the vocabulary
+# `POST /rest/api/3/statuses` measures to expect. Company-managed forces
+# `GLOBAL` scope for new statuses (measured — `PROJECT` scope 400s outright)
+# — there is no project-scoped status on Jira Cloud.
+_WANTED_STATUS_CATEGORIES = {
+    "Draft": "TODO",
+    "To Do": "TODO",
+    "In Progress": "IN_PROGRESS",
+    "In Review": "IN_PROGRESS",
+    "Done": "DONE",
+}
+
+
+def find_or_create_status(client, name, category):
+    # type: (JiraClient, str, str) -> dict
+    """The site's status by exact name, creating it (GLOBAL scope) if absent.
+
+    Exact match, not case-insensitive: this site carries both `"todo"` and
+    `"To Do"` as distinct statuses, so a looser match risks picking the wrong
+    one. Search-before-create, never create-and-catch-the-clash: the create
+    endpoint's name-clash error does not hand back the existing status, only
+    a `400`.
+    """
+    found = client.request(
+        "GET",
+        "/rest/api/3/statuses/search",
+        query={"searchString": name, "maxResults": 50},
+    )
+    for status in (found or {}).get("values") or []:
+        if isinstance(status, dict) and status.get("name") == name:
+            return status
+
+    created = client.request(
+        "POST",
+        "/rest/api/3/statuses",
+        body={
+            "statuses": [{"name": name, "statusCategory": category}],
+            "scope": {"type": "GLOBAL"},
+        },
+    )
+    return created[0] if isinstance(created, list) and created else {"name": name}
+
+
+def delete_stranded_status(client, status_id):
+    # type: (JiraClient, str) -> None
+    """Clean up a status this run created but could not wire into a workflow.
+
+    A status outside every workflow is invisible on the board and would
+    collide by name with the one a person creates by hand later — the same
+    note the team-managed board plan left in its §7.
+    """
+    client.request("DELETE", "/rest/api/3/statuses", query={"id": status_id})
+
+
+def resolve_project_workflow(client, project_id):
+    # type: (JiraClient, str) -> dict
+    """The project's workflow, in the shape `workflows/update` expects back.
+
+    **Use the plural `workflows/search`, not its singular `workflow/search`
+    namesake** — measured: the singular endpoint's response does not
+    round-trip into `workflows/update` (different `id` shape entirely), even
+    though the two names look interchangeable at a glance.
+    """
+    response = client.request(
+        "GET",
+        "/rest/api/3/workflows/search",
+        query={"projectId": project_id, "maxResults": 50, "expand": "values.transitions"},
+    )
+    values = (response or {}).get("values") or []
+    if len(values) != 1:
+        raise JiraError(
+            "Expected exactly one workflow for project {}, found {}".format(
+                project_id, len(values)
+            )
+        )
+    return values[0]
+
+
+def ensure_statuses_in_workflow(client, workflow, wanted_names=_WANTED_STATUS_CATEGORIES):
+    # type: (JiraClient, dict, dict[str, str]) -> tuple[dict, bool]
+    """Add whichever of `wanted_names` are missing from the workflow, with a
+    `GLOBAL` transition to each, in one `workflows/update` call.
+
+    Returns `(status_by_name, changed)` where `status_by_name` maps every
+    wanted name to its status dict (existing statuses included, so the caller
+    never has to search again) and `changed` says whether a write happened —
+    the idempotency a second call needs to prove.
+
+    The write's exact schema — reverse-engineered from the raw OpenAPI spec
+    (`swagger-v3.v3.json`'s `WorkflowUpdateRequest`) and confirmed live, not
+    guessed — is documented in plans/company-managed-jira-project.md §0.4.
+    The two load-bearing rules that are easy to get wrong by analogy with the
+    rest of the v3 API: the top-level `statuses` pool must list *every*
+    status the workflow ends up with, existing ones included, or an untouched
+    pre-existing status reads back as "unknown"; and a pre-existing status's
+    `statusReference` is its own real numeric id, never a freshly minted one.
+    """
+    existing_by_id = {}  # type: dict[str, dict]
+    for status in workflow.get("statuses") or []:
+        status_id = status.get("statusReference")
+        if status_id:
+            existing_by_id[status_id] = status
+
+    # Resolve every wanted status by name first (find-or-create), building the
+    # full id->{name,category} pool the write needs regardless of whether
+    # anything is actually missing.
+    site_status_by_name = {}  # type: dict[str, dict]
+    for name, category in wanted_names.items():
+        site_status_by_name[name] = find_or_create_status(client, name, category)
+
+    wanted_ids = {status["id"] for status in site_status_by_name.values()}
+    missing_ids = wanted_ids - set(existing_by_id.keys())
+
+    result_by_name = dict(site_status_by_name)
+    if not missing_ids:
+        return result_by_name, False
+
+    # The status pool: every status already on the workflow (by its own real
+    # id — no reason to mint a UUID for something that already exists) plus
+    # the ones being added.
+    status_pool = []  # type: list[dict]
+    seen_ids = set()
+    for status_id, status in existing_by_id.items():
+        # The read side doesn't carry name/category — look them up from the
+        # site's status list only for the ones we don't already know by name.
+        status_pool.append(_status_pool_entry_for_id(client, status_id))
+        seen_ids.add(status_id)
+    for name, site_status in site_status_by_name.items():
+        status_id = site_status["id"]
+        if status_id in seen_ids:
+            continue
+        status_pool.append({
+            "id": status_id,
+            "name": site_status.get("name") or name,
+            "statusCategory": site_status.get("statusCategory") or wanted_names[name],
+            "statusReference": status_id,
+            "description": "",
+        })
+        seen_ids.add(status_id)
+
+    new_workflow_statuses = [
+        {"statusReference": status_id, "properties": {}}
+        for status_id in list(existing_by_id.keys()) + [
+            sid for sid in wanted_ids if sid not in existing_by_id
+        ]
+    ]
+
+    new_transitions = list(workflow.get("transitions") or [])
+    existing_numeric_ids = [
+        int(t["id"]) for t in new_transitions if str(t.get("id") or "").isdigit()
+    ]
+    next_transition_id = (max(existing_numeric_ids) + 100) if existing_numeric_ids else 100
+    for name, site_status in site_status_by_name.items():
+        status_id = site_status["id"]
+        if status_id in existing_by_id:
+            continue
+        new_transitions.append({
+            "id": str(next_transition_id),
+            "type": "GLOBAL",
+            "toStatusReference": status_id,
+            "links": [],
+            "name": name,
+            "description": "",
+            "actions": [],
+            "validators": [],
+            "triggers": [],
+            "properties": {},
+        })
+        next_transition_id += 100
+
+    client.request(
+        "POST",
+        "/rest/api/3/workflows/update",
+        body={
+            "statuses": status_pool,
+            "workflows": [{
+                "id": workflow["id"],
+                "version": workflow["version"],
+                "statuses": new_workflow_statuses,
+                "transitions": new_transitions,
+            }],
+        },
+    )
+    return result_by_name, True
+
+
+def _status_pool_entry_for_id(client, status_id):
+    # type: (JiraClient, str) -> dict
+    """Enough of a status's own record to satisfy the `workflows/update` pool.
+
+    Only called for statuses already on the workflow — cheap in practice
+    since there are never more than a handful.
+    """
+    found = client.request(
+        "GET", "/rest/api/3/statuses/search", query={"id": status_id, "maxResults": 1}
+    )
+    values = (found or {}).get("values") or []
+    if values and isinstance(values[0], dict):
+        status = values[0]
+        return {
+            "id": status_id,
+            "name": status.get("name") or "",
+            "statusCategory": status.get("statusCategory") or "TODO",
+            "statusReference": status_id,
+            "description": "",
+        }
+    return {
+        "id": status_id, "name": "", "statusCategory": "TODO",
+        "statusReference": status_id, "description": "",
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Board columns (plan §0.5, §5)
+# --------------------------------------------------------------------------- #
+
+
+def resolve_board_id(client, project_key):
+    # type: (JiraClient, str) -> int
+    """The agile board id for a project — not in the project-create response."""
+    response = client.request(
+        "GET", "/rest/agile/1.0/board", query={"projectKeyOrId": project_key}
+    )
+    values = (response or {}).get("values") or []
+    if not values:
+        raise JiraError("No board found for project {}".format(project_key))
+    return int(values[0]["id"])
+
+
+def ensure_board_columns(client, board_id, ordered_status_by_column, log=_ignore):
+    # type: (JiraClient, int, dict[str, dict], object) -> bool
+    """Map the board's columns to `ordered_status_by_column`, in order.
+
+    `ordered_status_by_column` is `{column_key: status_dict}` in the wanted
+    display order (`COLUMN_KEYS`). No-op — and no write — if the board
+    already matches. Degrades to returning False (never raising) on a `500`,
+    since the plan's fallback is to print the two-column manual step; not
+    expected to fire on a classic board (measured clean), kept defensively
+    for an untested board shape.
+    """
+    config = client.request("GET", "/rest/agile/1.0/board/{}/configuration".format(board_id))
+    current_columns = (config.get("columnConfig") or {}).get("columns") or []
+    wanted_columns = [
+        {"name": DEFAULT_STATUS_NAMES[column], "mappedStatuses": [{"id": status["id"]}]}
+        for column, status in ordered_status_by_column.items()
+    ]
+
+    current_shape = [
+        (col.get("name"), tuple(s.get("id") for s in col.get("statuses") or []))
+        for col in current_columns
+        if (col.get("statuses") or [])  # ignore the board's own leading "unmapped" bucket
+    ]
+    wanted_shape = [
+        (col["name"], tuple(s["id"] for s in col["mappedStatuses"])) for col in wanted_columns
+    ]
+    if current_shape == wanted_shape:
+        return False
+
+    try:
+        client.request(
+            "PUT",
+            "/rest/greenhopper/1.0/rapidviewconfig/columns",
+            # No `columnsData` wrapper — measured to `400` if present.
+            body={"rapidViewId": board_id, "mappedColumns": wanted_columns},
+        )
+        return True
+    except JiraError as error:
+        log("Could not set board columns via the API ({}): {}".format(error.cause, error))
+        return False
+
+
+# --------------------------------------------------------------------------- #
+# Teardown / re-run safety (plan §0.7, §9 risk 6)
+# --------------------------------------------------------------------------- #
+
+
+def purge_project_remnants(client, project_key, log=_ignore):
+    # type: (JiraClient, str, object) -> None
+    """Cascade-delete a project and the objects Jira's own soft delete leaves behind.
+
+    `DELETE /project/{key}` (used nowhere in this module — the destructive
+    half of teardown is deliberately not wired into any `just` recipe) is
+    measured to be a **soft** delete: the project sits in a 60-day trash and
+    its workflow, workflow scheme, issue type scheme and issue type screen
+    scheme all survive as orphans, still named after the project key and
+    still reported "active" — colliding by name with whatever a recreated
+    project would generate. This function is the actual cascade:
+
+    1. `POST /project/{key}/delete` (async — `Administer Jira`, not the
+       softer `Administer Projects`) — cascades the issue type scheme and
+       issue type screen scheme automatically (measured).
+    2. The workflow scheme and the workflow itself still need two explicit
+       deletes afterward, in that order — the workflow can't be deleted while
+       a scheme still references it.
+
+    Statuses are never touched here: they are `GLOBAL` scope from the moment
+    they are created (§0.3) and project deletion, soft or hard, never reaches
+    them either way.
+    """
+    project = client.request("GET", "/rest/api/3/project/{}".format(project_key))
+    project_id = str(project.get("id"))
+    workflow = resolve_project_workflow(client, project_id)
+    workflow_scheme_response = client.request(
+        "GET", "/rest/api/3/workflowscheme/project", query={"projectId": project_id}
+    )
+    workflow_scheme_values = (workflow_scheme_response or {}).get("values") or []
+    workflow_scheme_id = None
+    if workflow_scheme_values:
+        workflow_scheme_id = (workflow_scheme_values[0].get("workflowScheme") or {}).get("id")
+
+    task = client.request("POST", "/rest/api/3/project/{}/delete".format(project_key))
+    task_id = (task or {}).get("id")
+    if task_id:
+        _poll_task(client, task_id, log=log)
+
+    if workflow_scheme_id:
+        try:
+            client.request("DELETE", "/rest/api/3/workflowscheme/{}".format(workflow_scheme_id))
+        except JiraError as error:
+            log("Could not delete orphaned workflow scheme {}: {}".format(
+                workflow_scheme_id, error
+            ))
+    try:
+        client.request("DELETE", "/rest/api/3/workflow/{}".format(workflow["id"]))
+    except JiraError as error:
+        log("Could not delete orphaned workflow {}: {}".format(workflow["id"], error))
+
+
+def _poll_task(client, task_id, log=_ignore, attempts=30, delay_seconds=2):
+    # type: (JiraClient, str, object, int, int) -> None
+    for _ in range(attempts):
+        progress = client.request("GET", "/rest/api/3/task/{}".format(task_id))
+        status = (progress or {}).get("status")
+        if status in ("COMPLETE", "FAILED", "CANCELLED"):
+            return
+        time.sleep(delay_seconds)
+    log("Gave up waiting for Jira task {} to finish".format(task_id))
 
 
 def create_card(client, project_key, summary, description, status_name=None):
@@ -1554,6 +2043,50 @@ def _set_credentials():
     return 1
 
 
+def configure_project(client, project, log=print):
+    # type: (JiraClient, dict, object) -> ProjectStatuses
+    """Steps 5–7: issue type scheme, workflow statuses, board columns.
+
+    Re-run safe: every step is find-or-create / diff-and-patch, and a second
+    call against an already-configured project issues zero writes. This is
+    the shared body of both `_install` and `--configure-project` — the latter
+    exists so a project's config can be repaired without touching the
+    credential or the settings mirror.
+
+    Returns the project's `ProjectStatuses` after configuring, so the caller
+    can report what — if anything — is still missing (only possible if the
+    board-column PUT degraded on a `500`; see `ensure_board_columns`).
+    """
+    project_id = str(project.get("id"))
+    project_key = str(project.get("key"))
+
+    scheme_id, scheme_changed, _ = ensure_scheme_defaults_to_task(client, project_id)
+    log(
+        "Issue type scheme {} defaults to Task{}".format(
+            scheme_id, "" if not scheme_changed else " (updated)"
+        )
+    )
+
+    workflow = resolve_project_workflow(client, project_id)
+    status_by_name, workflow_changed = ensure_statuses_in_workflow(client, workflow)
+    if workflow_changed:
+        log("Added the missing statuses to the workflow, with global transitions")
+    else:
+        log("Workflow already carries all five statuses")
+
+    board_id = resolve_board_id(client, project_key)
+    ordered_status_by_column = {
+        column: status_by_name[DEFAULT_STATUS_NAMES[column]] for column in COLUMN_KEYS
+    }
+    columns_changed = ensure_board_columns(client, board_id, ordered_status_by_column, log=log)
+    if columns_changed:
+        log("Board columns set to Draft | To Do | In Progress | In Review | Done")
+    else:
+        log("Board columns already match")
+
+    return resolve_project_statuses(client, project_key)
+
+
 def _install(project_key_argument=None):
     # type: (str | None) -> int
     import autonomous_work_settings
@@ -1602,9 +2135,18 @@ def _install(project_key_argument=None):
             return 1
     else:
         print("Leaving the existing project alone: {}".format(project.get("key")))
+        print("(config drifted? `just jira-configure-project` re-applies it)")
 
     resolved_key = str(project.get("key") or DEFAULT_PROJECT_KEY)
-    statuses = resolve_project_statuses(client, resolved_key)
+
+    print("Configuring the issue type scheme, workflow and board columns…")
+    try:
+        statuses = configure_project(client, project, log=print)
+    except JiraError as error:
+        print("Could not finish configuring the project ({}): {}".format(error.cause, error))
+        if error.explanation:
+            print("Jira said: {}".format(error.explanation))
+        statuses = resolve_project_statuses(client, resolved_key)
 
     settings = autonomous_work_settings.read_settings()
     autonomous_work_settings.write_settings(
@@ -1619,42 +2161,82 @@ def _install(project_key_argument=None):
     board_url = "{}/jira/software/projects/{}/boards".format(credentials.base_url, resolved_key)
 
     print()
-    print("Credential and project are set up. {} steps are left, and none of them".format(
-        "Three" if statuses.missing else "Two"
-    ))
-    print("can be done from here.\n")
-
-    step = 1
     if statuses.missing:
-        # Not a shortcut this recipe is taking: the team-managed template makes
-        # three columns, and Jira Cloud exposes no documented REST route for
-        # adding one. Two clicks each, once — the same way `just setup` ends by
-        # printing the one thing it cannot do itself.
-        print("{}. Add the missing columns by hand. Measured, not assumed: the".format(step))
-        print("   status itself can be created over the API, but getting it into a")
-        print("   team-managed project's workflow — which is what makes it a column —")
-        print("   has no route we could find. Two clicks each, once.")
-        print("   Open {}".format(board_url))
+        # Defensive fallback, not the expected path: measured to work cleanly
+        # on a classic board (plans/company-managed-jira-project.md §0.5).
+        # Reached only if `ensure_board_columns` degraded on a `500` this
+        # plan's own probing did not hit.
+        print("Almost there — one thing is left, and it can't be done from here:\n")
+        print("1. Add the missing columns by hand. The scripted column mapping")
+        print("   did not take (see the log above for why). Open {}".format(board_url))
         for name in statuses.missing:
             print("   then '+' to the right of the last column, and name it: {}".format(name))
-        print("   (in a team-managed project, adding a column creates the status)\n")
-        step += 1
+        print()
     else:
-        print("   (all five columns are already present on {})\n".format(board_url))
+        print("Done — all five columns are present on {}\n".format(board_url))
 
-    print("{}. Point the extension at the board. Click its toolbar icon in Chrome,".format(step))
-    print("   open Settings, set 'Queue source' to 'A Jira board' and 'Jira project")
-    print("   key' to {}. This is not optional: the extension owns those two".format(resolved_key))
-    print("   settings, and the next time it saves it overwrites what this just")
-    print("   wrote to disk.\n")
-    step += 1
+    print("One step is left, and it is not ours to do: point the extension at the")
+    print("board. Click its toolbar icon in Chrome, open Settings, set 'Queue source'")
+    print("to 'A Jira board' and 'Jira project key' to {}. This overwrites what".format(
+        resolved_key
+    ))
+    print("this just wrote to disk the next time the extension saves settings.\n")
 
-    print("{}. Check it: just jira-status".format(step))
-    print("   It answers site, project, credential, expiry, columns and queue depth")
-    print("   in one screen. Then `just queue-list` shows what would run next.\n")
+    print("Check it: just jira-status")
+    print("It answers site, project, credential, expiry, columns and queue depth")
+    print("in one screen. Then `just queue-list` shows what would run next.\n")
 
     print("To bring your existing prompts.txt across: just import-prompts-to-jira")
     print("It asks before creating anything and leaves the file alone.")
+    return 0 if not statuses.missing else 1
+
+
+def _configure_project(project_key_argument=None, purge=False):
+    # type: (str | None, bool) -> int
+    """Repair an existing project's scheme, workflow and columns.
+
+    Touches neither the credential nor the settings mirror — `_install` owns
+    those. Mirrors `--probe-adf`'s "run it by hand and see" role: the repair
+    path for a project whose config has drifted, without recreating it.
+    """
+    credentials, configured_project_key = _load_configured()
+    if credentials is None:
+        return 1
+    project_key = (project_key_argument or configured_project_key or "").strip().upper()
+    if not project_key:
+        print("No project key configured and none given. Pass one:")
+        print("    just jira-configure-project MYKEY")
+        return 1
+
+    client = JiraClient(credentials, log=print)
+    project = find_project(client, DEFAULT_PROJECT_NAME, project_key)
+    if project is None:
+        print("No project with key {} on {}.".format(project_key, credentials.site_url))
+        return 1
+
+    if purge:
+        print("Purging {} and its remnants…".format(project_key))
+        try:
+            purge_project_remnants(client, project_key, log=print)
+        except JiraError as error:
+            print("Purge did not finish cleanly ({}): {}".format(error.cause, error))
+            return 1
+        print("Purged. Nothing else was configured.")
+        return 0
+
+    try:
+        statuses = configure_project(client, project, log=print)
+    except JiraError as error:
+        print("Could not finish configuring the project ({}): {}".format(error.cause, error))
+        if error.explanation:
+            print("Jira said: {}".format(error.explanation))
+        return 1
+
+    print()
+    if statuses.missing:
+        print("Everything scripted took, except: {}".format(", ".join(statuses.missing)))
+        return 1
+    print("{} is fully configured — all five columns present.".format(project_key))
     return 0
 
 
@@ -1864,7 +2446,22 @@ def main():
     modes.add_argument("--source", action="store_true", help="Which queue, and is it reachable.")
     modes.add_argument("--import-prompts", action="store_true", help="Migrate prompts.txt.")
     modes.add_argument("--probe-adf", action="store_true", help="What a real prompt survives as.")
-    parser.add_argument("project_key", nargs="?", help="An existing project to use, for --install.")
+    modes.add_argument(
+        "--configure-project",
+        action="store_true",
+        help="Repair an existing project's scheme, workflow and columns.",
+    )
+    parser.add_argument(
+        "project_key",
+        nargs="?",
+        help="An existing project to use, for --install or --configure-project.",
+    )
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="With --configure-project: cascade-delete the project and its orphaned "
+        "workflow scheme/workflow, rather than configuring it.",
+    )
     arguments = parser.parse_args()
 
     try:
@@ -1882,6 +2479,8 @@ def main():
             return _import_prompts()
         if arguments.probe_adf:
             return _probe_adf()
+        if arguments.configure_project:
+            return _configure_project(arguments.project_key, purge=arguments.purge)
     except (EOFError, KeyboardInterrupt):
         # Ctrl-C or Ctrl-D part way through the credential questions, which is a
         # perfectly ordinary way to change your mind. Nothing has been written
