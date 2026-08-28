@@ -39,7 +39,46 @@ export interface AutonomousWorkSettings {
    * one place that converts.
    */
   paceThresholdHours: number;
+  /**
+   * Where the queue lives. `file` is `prompts.txt` at the repository root, which
+   * needs no account, no network and no third party, and is what a fresh clone
+   * works with; `jira` is a board — see plans/work-queue-as-a-jira-board.md.
+   *
+   * The two are alternatives and never both live. Nothing is mirrored between
+   * them, because a stale copy is indistinguishable from a real queue and the
+   * run would happily execute a prompt deleted from the board yesterday.
+   */
+  queueSource: QueueSourceName;
+  /** The Jira project the board lives in, e.g. `FCP`. Ignored for the file source. */
+  jiraProjectKey: string;
+  /**
+   * The status names, where a column has been renamed in Jira. Only the renamed
+   * ones appear; anything absent uses the name the board was created with.
+   *
+   * The **credential** deliberately does not travel this path — it is a `0600`
+   * file set from the terminal, because this object is mirrored to a plaintext
+   * file the native host rewrites and logs around.
+   */
+  jiraStatusNames: JiraStatusNames;
 }
+
+export type QueueSourceName = 'file' | 'jira';
+
+/** Column key to status name. Keys are the five `JIRA_COLUMN_KEYS` below. */
+export type JiraStatusNames = Partial<Record<JiraColumnKey, string>>;
+
+export type JiraColumnKey = 'draft' | 'todo' | 'inProgress' | 'inReview' | 'done';
+
+/** The five columns, in board order, with the names the project is created with. */
+export const JIRA_COLUMNS: readonly { key: JiraColumnKey; defaultName: string }[] = [
+  { key: 'draft', defaultName: 'Draft' },
+  { key: 'todo', defaultName: 'To Do' },
+  { key: 'inProgress', defaultName: 'In Progress' },
+  { key: 'inReview', defaultName: 'In Review' },
+  { key: 'done', defaultName: 'Done' },
+];
+
+const JIRA_COLUMN_KEYS: readonly string[] = JIRA_COLUMNS.map((column) => column.key);
 
 export interface ExtensionSettings {
   /**
@@ -56,6 +95,8 @@ export const DEFAULT_MODEL = 'opus';
 export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
 export const DEFAULT_APPEND_TO_ALL_PROMPTS = '';
 export const DEFAULT_PACE_THRESHOLD_HOURS = 0;
+export const DEFAULT_QUEUE_SOURCE: QueueSourceName = 'file';
+export const DEFAULT_JIRA_PROJECT_KEY = '';
 
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
@@ -64,6 +105,9 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
   appendToAllPrompts: DEFAULT_APPEND_TO_ALL_PROMPTS,
   paceThresholdHours: DEFAULT_PACE_THRESHOLD_HOURS,
+  queueSource: DEFAULT_QUEUE_SOURCE,
+  jiraProjectKey: DEFAULT_JIRA_PROJECT_KEY,
+  jiraStatusNames: {},
 };
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -95,6 +139,9 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     maxPromptDurationHours?: unknown;
     appendToAllPrompts?: unknown;
     paceThresholdHours?: unknown;
+    queueSource?: unknown;
+    jiraProjectKey?: unknown;
+    jiraStatusNames?: unknown;
   };
 
   const newProjectsDirectory =
@@ -127,6 +174,19 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       ? autonomousWorkValue.paceThresholdHours
       : DEFAULT_PACE_THRESHOLD_HOURS;
 
+  // Anything but a known source falls back to the file. That direction matters:
+  // no upgrade path, and no half-written storage, may leave an install with no
+  // queue at all.
+  const queueSource: QueueSourceName =
+    autonomousWorkValue.queueSource === 'jira' ? 'jira' : DEFAULT_QUEUE_SOURCE;
+
+  const jiraProjectKey =
+    typeof autonomousWorkValue.jiraProjectKey === 'string'
+      ? autonomousWorkValue.jiraProjectKey.trim().toUpperCase()
+      : DEFAULT_JIRA_PROJECT_KEY;
+
+  const jiraStatusNames = normaliseJiraStatusNames(autonomousWorkValue.jiraStatusNames);
+
   return {
     notificationsEnabled:
       typeof notificationsEnabled === 'boolean'
@@ -139,6 +199,27 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       maxPromptDurationHours,
       appendToAllPrompts,
       paceThresholdHours,
+      queueSource,
+      jiraProjectKey,
+      jiraStatusNames,
     },
   };
+}
+
+/**
+ * Keep only real renames: a known column key mapped to a non-empty name.
+ *
+ * A blank entry is not a rename, and storing one would send the Jira source
+ * looking for a column called "" rather than for the name the board actually
+ * has.
+ */
+function normaliseJiraStatusNames(stored: unknown): JiraStatusNames {
+  if (typeof stored !== 'object' || stored === null) return {};
+  const names: JiraStatusNames = {};
+  for (const [key, value] of Object.entries(stored)) {
+    if (!JIRA_COLUMN_KEYS.includes(key)) continue;
+    if (typeof value !== 'string' || value.trim() === '') continue;
+    names[key as JiraColumnKey] = value.trim();
+  }
+  return names;
 }

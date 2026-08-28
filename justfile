@@ -458,6 +458,52 @@ test-usage-host:
 test-autonomous-work:
     @uv run --script backend/tests/run_tests.py
 
+### The queue as a Jira board — see plans/work-queue-as-a-jira-board.md
+
+jira_script := "backend/queue_source_jira.py"
+
+# Credential, project, statuses and the board URL. Safe to re-run: it creates
+# only what is missing, and leaves an existing project and board entirely alone.
+
+# Set the queue up on a Jira board
+[no-exit-message]
+install-jira-queue project_key="":
+    @python3 {{ jira_script }} --install {{ project_key }}
+
+# Atlassian caps every API token at one year, so this is an annual errand.
+
+# Rotate the API token, without touching anything else
+[no-exit-message]
+set-jira-credentials:
+    @python3 {{ jira_script }} --set-credentials
+
+# Site, project, credential, days to expiry, column health and queue depth
+[no-exit-message]
+jira-status:
+    @python3 {{ jira_script }} --status
+
+# Which queue the next run will read, and whether it can be read at all
+[no-exit-message]
+queue-source:
+    @python3 {{ jira_script }} --source
+
+# What the next run would pick up, in rank order
+[no-exit-message]
+queue-list:
+    @python3 {{ jira_script }} --list
+
+# One-shot migration of prompts.txt onto the board (the file is left untouched)
+[no-exit-message]
+import-prompts-to-jira:
+    @python3 {{ jira_script }} --import-prompts
+
+# Creates one card on the real site, reads it back through v3 and v2, deletes it.
+
+# Measure what a real prompt survives as through Jira's document model
+[no-exit-message]
+probe-jira-adf:
+    @python3 {{ jira_script }} --probe-adf
+
 # Zip dist/ for a Chrome Web Store upload
 package: build
     rm -f claude-usage-optimizer.zip

@@ -39,6 +39,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
+# The credential half of the Jira queue source, for the daily probe below. It is
+# stdlib-only and 3.9-compatible for exactly this reason — see
+# plans/work-queue-as-a-jira-board.md §5.4.
+import queue_source_jira  # noqa: E402  (same)
 
 HOST_DIRECTORY = Path(__file__).resolve().parent
 SNAPSHOT_FILE = HOST_DIRECTORY / "claude-usage.json"
@@ -76,6 +80,9 @@ MESSAGE_TYPE_SET_SETTINGS = "setAutonomousWorkSettings"
 MESSAGE_TYPE_TAIL_RUN = "tailAutonomousRun"
 MESSAGE_TYPE_CANCEL_WORK = "cancelAutonomousWork"
 MESSAGE_TYPE_PRIME_FOLDERS = "primeFolderAccess"
+# What the last credential probe found. A read of a local file — the probe itself
+# rides the snapshot message, below.
+MESSAGE_TYPE_JIRA_STATUS = "getJiraStatus"
 
 # A stat loop rather than a filesystem-watch API: stdlib-only and 3.9-compatible
 # is non-negotiable here, and kqueue plumbing would be an order of magnitude more
@@ -477,13 +484,18 @@ def apply_autonomous_work_settings(message):
     # popup was showing.
     log_message(
         "Settings updated: run at {}, new projects in {}, model {}, max {}h per prompt, "
-        "pace threshold {}h, {} chars appended to prompts, ({})".format(
+        "pace threshold {}h, {} chars appended to prompts, queue in {}, ({})".format(
             settings.describe_schedule(),
             settings.new_projects_directory,
             settings.model,
             settings.max_prompt_duration_hours,
             settings.pace_threshold_hours,
             len(settings.append_to_all_prompts),
+            (
+                "Jira {}".format(settings.jira_project_key or "(no project key)")
+                if settings.queue_source == autonomous_work_settings.QUEUE_SOURCE_JIRA
+                else "prompts.txt"
+            ),
             result.detail,
         )
     )
@@ -494,6 +506,37 @@ def apply_autonomous_work_settings(message):
         "detail": result.detail,
         "scheduledFor": settings.describe_schedule(),
     }
+
+
+def probe_jira_credential():
+    # type: () -> dict | None
+    """Ask Jira once a day whether the credential still works.
+
+    **The run is the wrong thing to discover a broken credential.** It fires at
+    2 AM, and only when the week is behind pace, which may be never for a
+    fortnight. This host is spawned every five minutes for as long as Chrome is
+    open — that is the reliable clock, and it is one somebody is awake for.
+
+    Synchronous, and on the message loop, which is only defensible because
+    `refresh_status_if_due` throttles it to one call a day: 287 of every 288
+    snapshots pay nothing at all. A thread would be the obvious alternative and
+    is the wrong one — Chrome tears this process down as soon as it has the
+    reply to a `sendNativeMessage`, so a probe running in the background would
+    simply be killed part way through.
+
+    Never raises. A credential check is not worth losing a snapshot write over,
+    and being offline — which is most nights a laptop is shut — is not a fault.
+    """
+    settings = autonomous_work_settings.read_settings()
+    if settings.queue_source != autonomous_work_settings.QUEUE_SOURCE_JIRA:
+        return None
+    try:
+        return queue_source_jira.refresh_status_if_due(
+            project_key=settings.jira_project_key, log=log_message
+        )
+    except Exception as error:  # noqa: BLE001 - see the docstring
+        log_message("Jira credential probe failed unexpectedly: {!r}".format(error))
+        return None
 
 
 def handle_message(message):
@@ -522,9 +565,14 @@ def handle_message(message):
         log_message("Started folder-access prompts on request from the popup")
         return result
 
+    if message_type == MESSAGE_TYPE_JIRA_STATUS:
+        return {"ok": True, "status": queue_source_jira.read_status()}
+
     if message_type == MESSAGE_TYPE_SNAPSHOT:
         write_snapshot(message.get("snapshot"))
-        return {"ok": True, "path": str(SNAPSHOT_FILE)}
+        # Snapshot first, probe second: the file the scheduler reads must not
+        # wait on a network call to Atlassian.
+        return {"ok": True, "path": str(SNAPSHOT_FILE), "jira": probe_jira_credential()}
 
     log_message("Ignoring unknown message type {!r}".format(message_type))
     return {"ok": False, "error": "unknown message type"}

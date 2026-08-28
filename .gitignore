@@ -28,3 +28,10 @@ backend/autonomous-work.jsonl
 backend/autonomous-run-events.jsonl
 # The pending resume a run scheduled for itself, per-machine and per-night
 backend/autonomous-work-resume.json
+
+# The Jira API token, mode 0600. Never tracked, and never mirrored through the
+# settings file the host rewrites — see plans/work-queue-as-a-jira-board.md §5.3
+backend/jira-credentials.json
+# What the daily credential probe found, and outcomes a run could not write
+backend/jira-status.json
+backend/jira-pending-writes.jsonl

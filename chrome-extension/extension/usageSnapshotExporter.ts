@@ -1,6 +1,7 @@
 import { buildUsageSnapshotExport } from '@/lib/usageSnapshotExport';
 import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
 import type { UsageSnapshot } from '@/lib/usageTypes';
+import type { JiraCredentialStatus } from '@/lib/jiraCredentialWarning';
 
 /**
  * Hands each usage snapshot to a native-messaging host, which writes it to
@@ -37,6 +38,7 @@ const SNAPSHOT_MESSAGE_TYPE = 'snapshot';
 const RUN_WORK_MESSAGE_TYPE = 'runAutonomousWork';
 const PRIME_FOLDER_ACCESS_MESSAGE_TYPE = 'primeFolderAccess';
 const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
+const JIRA_STATUS_MESSAGE_TYPE = 'getJiraStatus';
 
 export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Date): Promise<void> {
   try {
@@ -178,5 +180,30 @@ export async function syncAutonomousWorkSettings(
     return { saved: false, launchAgentUpdated: false, error: 'Host sent no reply' };
   } catch (error) {
     return { saved: false, launchAgentUpdated: false, error: String(error) };
+  }
+}
+
+/**
+ * What the host's last daily probe found about the Jira credential.
+ *
+ * A read of a local file, not a network call: the probe itself rides the
+ * snapshot message, once a day, because that is the message the host is already
+ * spawned for. Null whenever there is nothing to say — no host, no credential,
+ * or a queue that lives in a file.
+ */
+export async function readJiraCredentialStatus(): Promise<JiraCredentialStatus | null> {
+  try {
+    const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
+      type: JIRA_STATUS_MESSAGE_TYPE,
+    });
+
+    if (typeof response !== 'object' || response === null) return null;
+    const { status } = response as { status?: unknown };
+    if (typeof status !== 'object' || status === null) return null;
+    return status as JiraCredentialStatus;
+  } catch {
+    // A missing host is the ordinary case, and it is already logged once per
+    // worker lifetime by the snapshot export above.
+    return null;
   }
 }

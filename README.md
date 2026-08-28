@@ -340,6 +340,10 @@ delete it with the **−** button, then press Grant folder access.
 
 ### Editing the queue
 
+The queue is either a file or a Jira board — see [Keeping the queue on a Jira
+board](#keeping-the-queue-on-a-jira-board) for the second option. The file is the
+default, and everything below describes it.
+
 `prompts.txt` at the repository root is meant to be edited by hand — it is the
 one file in this whole setup you touch regularly, which is why it sits at the
 top level rather than in `backend/`. It is **gitignored**, since it is
@@ -400,6 +404,66 @@ Like `error` and `draft`, an `unmerged:` entry is skipped on later runs. Unlike
 `error`, it means the work is done and sitting somewhere specific: review the
 branch, merge or discard it, and then mark the entry `completed` — or put it
 back to `todo` with the answer written into the prompt.
+
+### Keeping the queue on a Jira board
+
+A file at the repository root means that adding a prompt, reordering the queue,
+or reading what last night's run did all mean being at that Mac — the wrong
+constraint for a queue whose whole purpose is to be worked through while you are
+asleep or elsewhere. So the queue can live on a **Jira board** instead: five
+columns — Draft, To Do, In Progress, In Review, Done — in a project called
+**Free Claude Prompts** that the setup recipe creates for you. Jira Cloud's free
+plan covers this comfortably.
+
+What that buys, over a file in a synced folder:
+
+- **Reordering is a drag.** Rank is a first-class field in Jira and dragging is
+  the gesture for it in every client, phone apps included. The run reads the
+  To Do column top-down, so dragging a card to the top changes what runs next
+  and nothing else has to happen anywhere.
+- **Re-queueing a failed prompt is also a drag** — from In Review back to To Do,
+  rather than editing a `STATUS:` line.
+- **Nothing is synced**, so there is no merge, no conflict window, and no
+  second copy that can go stale.
+- **Each card explains itself.** After every attempt the run comments with
+  Claude's own account of what it did, so over breakfast the board *is* the
+  morning-after summary — last night's work in Done, anything needing you in
+  In Review — and Jira's phone app can tell you it is there.
+
+```sh
+just install-jira-queue     # credential, project, statuses, board URL
+just jira-status            # site, project, credential, columns, queue depth
+just queue-list             # what the next run would pick up, in rank order
+just import-prompts-to-jira # move an existing prompts.txt across
+```
+
+Then set **Queue source** to *A Jira board* in the popup's Settings screen. The
+install recipe ends by printing the two columns you have to add by hand — Jira
+Cloud has no API for board configuration, so Draft and In Review are two clicks
+each, once.
+
+A prompt's card works the same way a file section does: the **description is the
+prompt** (or the summary, if the description is empty, so a one-line prompt needs
+one field), and a `REPO:` line at the top of the description does what it does in
+the file. Work left on a branch and a failed prompt both land in **In Review** —
+the column means *your turn* — told apart by a `claude-unmerged` or
+`claude-error` label, with the branch named in the comment.
+
+**The API token needs replacing once a year.** Atlassian caps every token at
+twelve months and there is no way around it, so the extension watches the clock
+for you: it checks the credential once a day whenever Chrome is open, mentions
+the expiry in Settings from 30 days out, puts a banner on the popup at 14, and a
+badge on the toolbar icon at 7 — the same badge it uses if the token is revoked,
+the project disappears or permission is lost. `just set-jira-credentials`
+replaces it. Being offline raises nothing, since a laptop usually is.
+
+The token itself lives in `backend/jira-credentials.json`, mode `0600`,
+gitignored, and never travels through the browser.
+
+If Jira is unreachable at 2 AM the run **does nothing and says why** — it never
+quietly falls back to `prompts.txt`, because that file may hold work you deleted
+from the board weeks ago, and running it is the one failure that costs work
+rather than just time.
 
 ### Scheduling and new projects
 
@@ -606,7 +670,7 @@ about supervision, below, not about reach.
 
 Nor can the extension make Claude do anything new: the native host answers a
 fixed set of messages, with no path for arbitrary commands, and the work comes
-from `prompts.txt`, which you write by hand.
+from `prompts.txt` or your Jira board, which you write by hand.
 
 What genuinely differs is supervision. An interactive session has you reading
 the stream with Esc under your thumb; a 2 AM run has nobody. `-p` has no turn

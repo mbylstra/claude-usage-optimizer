@@ -448,25 +448,25 @@ class ParseQueueTests(unittest.TestCase):
 class FindNextTodoTests(unittest.TestCase):
     def test_returns_first_todo_with_a_prompt(self):
         entries = [
-            work.QueueEntry(status="completed", status_line_index=0, repository_path=None, prompt="done"),
-            work.QueueEntry(status="todo", status_line_index=1, repository_path=None, prompt=""),
-            work.QueueEntry(status="todo", status_line_index=2, repository_path=None, prompt="do this"),
+            work.QueueEntry(status="completed", handle=0, repository_path=None, prompt="done"),
+            work.QueueEntry(status="todo", handle=1, repository_path=None, prompt=""),
+            work.QueueEntry(status="todo", handle=2, repository_path=None, prompt="do this"),
         ]
         found = work.find_next_todo(entries)
         self.assertIs(found, entries[2])
 
     def test_none_when_no_todo(self):
         entries = [
-            work.QueueEntry(status="completed", status_line_index=0, repository_path=None, prompt="done"),
+            work.QueueEntry(status="completed", handle=0, repository_path=None, prompt="done"),
         ]
         self.assertIsNone(work.find_next_todo(entries))
 
     def test_draft_is_skipped_in_favour_of_a_later_todo(self):
         entries = [
             work.QueueEntry(
-                status=work.STATUS_DRAFT, status_line_index=0, repository_path=None, prompt="still writing"
+                status=work.STATUS_DRAFT, handle=0, repository_path=None, prompt="still writing"
             ),
-            work.QueueEntry(status="todo", status_line_index=1, repository_path=None, prompt="do this"),
+            work.QueueEntry(status="todo", handle=1, repository_path=None, prompt="do this"),
         ]
         self.assertIs(work.find_next_todo(entries), entries[1])
 
@@ -474,11 +474,11 @@ class FindNextTodoTests(unittest.TestCase):
         entries = [
             work.QueueEntry(
                 status="unmerged:add-widget",
-                status_line_index=0,
+                handle=0,
                 repository_path=None,
                 prompt="waiting on an answer",
             ),
-            work.QueueEntry(status="todo", status_line_index=1, repository_path=None, prompt="do this"),
+            work.QueueEntry(status="todo", handle=1, repository_path=None, prompt="do this"),
         ]
         self.assertIs(work.find_next_todo(entries), entries[1])
 
@@ -486,7 +486,7 @@ class FindNextTodoTests(unittest.TestCase):
         entries = [
             work.QueueEntry(
                 status="unmerged:add-widget",
-                status_line_index=0,
+                handle=0,
                 repository_path=None,
                 prompt="waiting on an answer",
             ),
@@ -496,7 +496,7 @@ class FindNextTodoTests(unittest.TestCase):
     def test_none_when_only_drafts_remain(self):
         entries = [
             work.QueueEntry(
-                status=work.STATUS_DRAFT, status_line_index=0, repository_path=None, prompt="still writing"
+                status=work.STATUS_DRAFT, handle=0, repository_path=None, prompt="still writing"
             ),
         ]
         self.assertIsNone(work.find_next_todo(entries))
@@ -1004,8 +1004,10 @@ class ScheduleResumeIfWarrantedTests(unittest.TestCase):
 class WriteQueueStatusTests(unittest.TestCase):
     """The one place the queue file is written, exercised against a real file.
 
-    `work.QUEUE_FILE` points into this module's temp directory — see the
-    environment set up at the top — so nothing here touches the real queue.
+    Goes through `work.QUEUE`, which is a `FileQueueSource` here because no
+    queue source is configured — the same object `main` writes through. Its file
+    is `work.QUEUE_FILE`, pointed into this module's temp directory by the
+    environment set up at the top, so nothing here touches the real queue.
     """
 
     def _write_queue(self, *lines: str) -> None:
@@ -1014,12 +1016,21 @@ class WriteQueueStatusTests(unittest.TestCase):
     def _queue_lines(self) -> list[str]:
         return work.QUEUE_FILE.read_text(encoding="utf-8").split("\n")
 
+    def _record(self, status_line_index: int, new_status: str) -> str:
+        entry = work.QueueEntry(
+            status=work.STATUS_TODO,
+            handle=status_line_index,
+            repository_path=None,
+            prompt="Do it.",
+        )
+        return work.record_outcome(entry, new_status)
+
     def tearDown(self):
         work.QUEUE_FILE.unlink(missing_ok=True)
 
     def test_writes_the_status_and_reports_it_back(self):
         self._write_queue("===", "STATUS: todo", "Do it.")
-        left_as = work.write_queue_status(1, work.STATUS_COMPLETED)
+        left_as = self._record(1, work.STATUS_COMPLETED)
         self.assertEqual(left_as, work.STATUS_COMPLETED)
         self.assertEqual(self._queue_lines()[1], "STATUS: completed")
 
@@ -1027,26 +1038,26 @@ class WriteQueueStatusTests(unittest.TestCase):
         # The run is the only party that can have written this, and it is the
         # only one that knows where it left the work.
         self._write_queue("===", "STATUS: unmerged:Add-Widget", "Do it.")
-        left_as = work.write_queue_status(1, work.STATUS_COMPLETED)
+        left_as = self._record(1, work.STATUS_COMPLETED)
         self.assertEqual(left_as, "unmerged:Add-Widget")
         self.assertEqual(self._queue_lines()[1], "STATUS: unmerged:Add-Widget")
 
     def test_an_unmerged_status_outranks_an_error_too(self):
         self._write_queue("===", "STATUS: unmerged:add-widget", "Do it.")
-        self.assertEqual(work.write_queue_status(1, work.STATUS_ERROR), "unmerged:add-widget")
+        self.assertEqual(self._record(1, work.STATUS_ERROR), "unmerged:add-widget")
 
     def test_a_shifted_index_leaves_the_file_alone(self):
         # A run that inserted a line above its own entry: the index still lands
         # inside the file, but on a line of somebody's prompt.
         self._write_queue("===", "A note added mid-run.", "STATUS: todo", "Do it.")
-        left_as = work.write_queue_status(1, work.STATUS_COMPLETED)
+        left_as = self._record(1, work.STATUS_COMPLETED)
         self.assertEqual(left_as, work.STATUS_COMPLETED)
         self.assertEqual(self._queue_lines()[1], "A note added mid-run.")
         self.assertEqual(self._queue_lines()[2], "STATUS: todo")
 
     def test_a_missing_queue_file_reports_the_status_it_was_asked_for(self):
         work.QUEUE_FILE.unlink(missing_ok=True)
-        self.assertEqual(work.write_queue_status(1, work.STATUS_COMPLETED), work.STATUS_COMPLETED)
+        self.assertEqual(self._record(1, work.STATUS_COMPLETED), work.STATUS_COMPLETED)
 
 
 class UnmergedBranchAfterRunTests(unittest.TestCase):

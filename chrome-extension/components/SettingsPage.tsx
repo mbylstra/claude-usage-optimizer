@@ -28,7 +28,18 @@ import {
   parseScheduleTimeInputValue,
   type ScheduleTime,
 } from '@/lib/scheduleTime';
-import { DEFAULT_NEW_PROJECTS_DIRECTORY, type AutonomousWorkSettings } from '@/lib/settingsTypes';
+import {
+  DEFAULT_NEW_PROJECTS_DIRECTORY,
+  JIRA_COLUMNS,
+  type AutonomousWorkSettings,
+  type JiraColumnKey,
+  type QueueSourceName,
+} from '@/lib/settingsTypes';
+import {
+  warningReaches,
+  NO_JIRA_WARNING,
+  type JiraCredentialWarning,
+} from '@/lib/jiraCredentialWarning';
 
 /** Clamped so a stray edit cannot save an interval that would never trigger the watchdog. */
 const MIN_MAX_PROMPT_DURATION_HOURS = 0.5;
@@ -67,6 +78,13 @@ export interface SettingsPageProps {
   folderAccessStatus: FolderAccessStatus;
   /** Raises the macOS folder dialogs now, rather than at 2 AM where they cannot be answered. */
   onPrimeFolderAccess: () => void;
+  /**
+   * What the native host's daily probe last found about the Jira credential.
+   *
+   * The quietest of the four surfaces §5.4 escalates through, and the first: a
+   * token 30 days from expiring says so here and nowhere else.
+   */
+  jiraWarning?: JiraCredentialWarning;
   onBack: () => void;
 }
 
@@ -83,6 +101,7 @@ export function SettingsPage({
   onOpenRunLog,
   folderAccessStatus,
   onPrimeFolderAccess,
+  jiraWarning = NO_JIRA_WARNING,
   onBack,
 }: SettingsPageProps) {
   const autonomousWorkMessage = describeAutonomousWorkStatus(autonomousWorkStatus);
@@ -130,6 +149,21 @@ export function SettingsPage({
       paceThresholdHours: parsedHours,
     });
   };
+
+  const handleJiraStatusNameChange = (column: JiraColumnKey, value: string) => {
+    // A blank field is not a rename — it means "the name the board was created
+    // with" — so it is removed rather than stored as an empty string, which
+    // would send the run looking for a column called "".
+    const jiraStatusNames = { ...autonomousWorkSettings.jiraStatusNames };
+    if (value.trim() === '') {
+      delete jiraStatusNames[column];
+    } else {
+      jiraStatusNames[column] = value;
+    }
+    onAutonomousWorkSettingsChange({ ...autonomousWorkSettings, jiraStatusNames });
+  };
+
+  const usesJira = autonomousWorkSettings.queueSource === 'jira';
 
   return (
     <PopupFrame>
@@ -257,6 +291,104 @@ export function SettingsPage({
               The Claude model to use when running queued prompts automatically.
             </p>
           </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="queue-source-select" className="text-sm">
+              Queue source
+            </label>
+            <SelectPrimitive.Root
+              value={autonomousWorkSettings.queueSource}
+              onValueChange={(value: string) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  queueSource: value as QueueSourceName,
+                })
+              }
+            >
+              <SelectTrigger id="queue-source-select">
+                <SelectPrimitive.Value />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="file">prompts.txt (no account needed)</SelectItem>
+                <SelectItem value="jira">A Jira board</SelectItem>
+              </SelectContent>
+            </SelectPrimitive.Root>
+            <p className="text-muted-foreground text-xs">
+              Where the queue lives. A board can be reordered by dragging a card, from a phone; a
+              file needs no account, no network and no third party. The two are alternatives —
+              nothing is copied between them.
+            </p>
+          </div>
+
+          {usesJira && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="jira-project-key" className="text-sm">
+                Jira project key
+              </label>
+              <Input
+                id="jira-project-key"
+                type="text"
+                className="w-28"
+                spellCheck={false}
+                placeholder="FCP"
+                value={autonomousWorkSettings.jiraProjectKey}
+                onChange={(event) =>
+                  onAutonomousWorkSettingsChange({
+                    ...autonomousWorkSettings,
+                    jiraProjectKey: event.target.value.toUpperCase(),
+                  })
+                }
+              />
+              <p className="text-muted-foreground text-xs">
+                Set up by <code>just install-jira-queue</code>. The API token lives in a{' '}
+                <code>0600</code> file that never comes through here —{' '}
+                <code>just set-jira-credentials</code> writes it.
+              </p>
+            </div>
+          )}
+
+          {usesJira && (
+            <details className="flex flex-col gap-1">
+              <summary className="cursor-pointer text-sm">Renamed columns</summary>
+              <div className="mt-2 flex flex-col gap-2">
+                {JIRA_COLUMNS.map((column) => (
+                  <div key={column.key} className="flex items-center justify-between gap-3">
+                    <label htmlFor={`jira-status-${column.key}`} className="text-xs">
+                      {column.defaultName}
+                    </label>
+                    <Input
+                      id={`jira-status-${column.key}`}
+                      type="text"
+                      className="w-40"
+                      spellCheck={false}
+                      placeholder={column.defaultName}
+                      value={autonomousWorkSettings.jiraStatusNames[column.key] ?? ''}
+                      onChange={(event) =>
+                        handleJiraStatusNameChange(column.key, event.target.value)
+                      }
+                    />
+                  </div>
+                ))}
+                <p className="text-muted-foreground text-xs">
+                  Only fill these in if you renamed a column in Jira. Statuses are matched by name,
+                  ignoring case; anything left blank uses the name above.
+                </p>
+              </div>
+            </details>
+          )}
+
+          {usesJira && warningReaches(jiraWarning, 'settings') && (
+            <p
+              role="status"
+              className={
+                warningReaches(jiraWarning, 'badge')
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+            >
+              {jiraWarning.message}
+            </p>
+          )}
 
           <div className="flex flex-col gap-1">
             <label htmlFor="append-to-all-prompts" className="text-sm">

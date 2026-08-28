@@ -404,6 +404,9 @@ def main() -> int:
                         "maxPromptDurationHours": 5.0,
                         "appendToAllPrompts": "",
                         "paceThresholdHours": 0.0,
+                        "queueSource": "file",
+                        "jiraProjectKey": "",
+                        "jiraStatusNames": {},
                     },
                 )
             )

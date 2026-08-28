@@ -22,7 +22,7 @@ summaries/           what each night's run actually did, one file per day.
 ```
 
 `justfile` and `CLAUDE.md` stay at the repository root, as does `prompts.txt`
-(explained below) — everything else that is specific to one side lives inside
+(explained below — though the queue can also live on a Jira board instead) — everything else that is specific to one side lives inside
 its directory. `summaries/` is at the top level for the same reason
 `prompts.txt` is: the queue and the report on it are the two files here meant to
 be read and edited by hand, so neither is buried in `backend/`.
@@ -232,6 +232,14 @@ just autonomous-running          # is a run in flight?
 just cancel-autonomous-work      # stop an in-flight run, and clear its resume
 
 just run-log-preview             # the run-log window UI, on fixtures, no extension
+
+just queue-source                # which queue the next run reads, and can it be read
+just queue-list                  # what the next run would pick up, in rank order
+just install-jira-queue          # credential, project, statuses, board URL
+just set-jira-credentials        # rotate the API token
+just jira-status                 # site, project, credential, columns, queue depth
+just import-prompts-to-jira      # one-shot migration of prompts.txt
+just probe-jira-adf              # what a real prompt survives as through Jira
 ```
 
 **Following a run live** is why `claude` is invoked with `--output-format
@@ -465,7 +473,9 @@ extension Chrome derives that ID from the absolute load path, which
 silently breaks the connection. Re-run `just install-usage-host` if that happens,
 or pass an explicit ID as an argument.
 
-**Editing the queue.** `prompts.txt` at the repository root is user-editable —
+**Editing the queue.** This describes the file source, which is the default and
+what a fresh clone gets; the alternative is a Jira board, below.
+`prompts.txt` at the repository root is user-editable —
 deliberately at the top level rather than in `backend/`, being the only
 file here meant for regular hand-editing. Sections split on a line of `===`;
 each has a required `STATUS: todo|completed|error|draft|unmerged:<branch>`, an
@@ -639,6 +649,135 @@ branch name — the one thing that status exists to carry. That path also made
 only that the index is in range: a run that edits `prompts.txt` shifts every
 line index taken before it started, and the old guard would have overwritten a
 line of somebody's prompt.
+
+## Two queues behind one interface
+
+The queue is either `prompts.txt` or **a Jira board**, and
+`run-autonomous-work.py` cannot tell which. Design and rationale:
+`plans/work-queue-as-a-jira-board.md`.
+
+```
+queue_source.py        the vocabulary, the QueueEntry, the protocol, FileQueueSource
+queue_source_jira.py   JiraQueueSource, the credential, the probe, and the CLI
+```
+
+`QUEUE` is built once at import by `build_queue_source()`, from the `queueSource`
+setting or `AUTONOMOUS_WORK_QUEUE_SOURCE`. **A `jira` source missing its project
+key or its credential file falls back to the file with a logged warning**, so no
+upgrade path can leave an install with no queue at all.
+
+**`QueueEntry.handle` is opaque** — a line index for the file, an issue key for
+Jira — and nothing outside a `QueueSource` may look inside it. The moment
+anything does, the seam has leaked. Ordering is the source's business too:
+`next_todo` returns the next entry and the caller never asks why it was next.
+
+**The status vocabulary is shared and it is `queue_source`'s.**
+`determine_outcome`, `queue_status_for_outcome`, `unmerged_branch_after_run` and
+the summary writer all keep working in `STATUS_*` strings; `JiraQueueSource`
+translates at its own boundary. That is what keeps the session-limit rule, the
+cancelled rule and the unmerged rule in one place rather than once per source.
+**The `:detail` convention does not cross that boundary**: `unmerged:<branch>`
+exists because a text file has one field to carry both, and a board has columns,
+labels *and* comments — so the status name picks the column and the branch goes
+in the comment.
+
+**Never mirror one into the other.** Two copies means a sync direction and a
+merge rule, and worse: a stale mirror is indistinguishable from a real queue, so
+the run would happily execute a prompt deleted from the board yesterday. The two
+are alternatives, never both live. For the same reason **a failed read runs
+nothing and never falls back** — `QueueUnavailable` is deliberately a different
+answer from "the queue is empty", and reaches the run log as
+`queueUnavailable` rather than `emptyQueue`.
+
+Three methods exist only for a source with a "running" state, and are no-ops on
+the file: `start` (into In Progress), `abandon` (its inverse, from the
+cancellation handler) and `sweep_stale`. **A card in In Progress at the start of
+a run is stale by definition** — launchd will not run two instances of one
+label, so no second run can be in flight — and the sweep is the backstop for a
+hard kill the cancellation handler could not survive.
+
+### The Jira half
+
+Five columns: Draft, To Do, In Progress, In Review, Done, in a **team-managed**
+Jira Software project, because there the board's columns *are* its statuses and
+adding one is a single gesture with no workflow, issue-type or screen scheme in
+between. `just install-jira-queue` creates the project by API and then **prints
+the two columns a human has to add**, Jira Cloud exposing no documented REST
+route for board configuration — the same way `just setup` ends by printing the
+one thing it cannot do itself. Status names are **discovered, not hard-coded**,
+matched case-insensitively with per-column overrides in settings.
+
+**The prompt is the description, or the summary when the description is empty.**
+Jira forces a summary and this is what stops that from being double entry.
+
+**Descriptions arrive as Atlassian Document Format** — a JSON tree, not text —
+and `flatten_adf` walks it. The saving grace is that **the run only ever reads
+descriptions and never writes them**, so this is a one-way conversion that
+cannot corrupt anything; the worst case is a prompt that reads slightly
+differently, never a card rewritten. `just probe-jira-adf` measures it against a
+real prompt on a real site, and `/rest/api/2/` (wiki markup) is the documented
+fallback if it turns out lossy.
+
+**In Review holds both endings that need a human**, told apart by the labels
+`claude-unmerged` and `claude-error`: the column means *your turn*, and both an
+unmerged branch and a failed prompt are. Picking a card up clears both labels, so
+re-queueing stays a single gesture — drag it back to To Do and nothing else.
+One comment per attempt, carrying Claude's own closing message, so a card
+re-queued three times reads as three attempts with three accounts.
+
+**A write that fails after a prompt has run is the expensive failure**, because
+an unrecorded outcome means the prompt runs again tomorrow. It is retried three
+times, then appended to `backend/jira-pending-writes.jsonl` and replayed at the
+start of the next run. `OutcomeWrite` is a serialisable plan for exactly that
+reason.
+
+**REST, not MCP.** MCP is a protocol for giving a *model* tools, and the
+scheduler is not a model: picking the top-ranked To Do card is a deterministic
+query with one right answer. It would also break the stdlib-only rule in the one
+place it is hardest, since `usage-host.py` imports the credential half of
+`queue_source_jira.py`. MCP's place is *inside* the run, where there is a model —
+and there the rule is that a prompt may read and comment on its own card but
+never transition it, enforced by the tool set rather than by instruction. Not
+built; it depends on an unmeasured admin toggle and nothing needs it.
+
+### The credential, and the warning system that justifies it
+
+An **Atlassian API token**, not OAuth. Atlassian caps every token at one year and
+there is no indefinite one — but that expiry is a *scheduled event with a date
+known at creation time*, where OAuth's failure modes (a refresh token raced by
+three processes here, a grant revocable without notice) announce themselves not
+at all.
+
+**The credential does not travel the settings mirror path.** That file is a
+plaintext mirror the host rewrites and logs around, and a credential has no
+business in `chrome.storage`. It lives in `backend/jira-credentials.json`, mode
+**0600**, written by `just set-jira-credentials`. A file mode rather than the
+Keychain, deliberately: whether a LaunchAgent can read the Keychain at 2 AM
+without a dialog is an unmeasured unknown, and this project has already lost a
+morning to an invisible dialog in front of an unattended job.
+
+**The extension's clock drives the credential probe, not the run's.** This is the
+section's real content. A run fires at 2 AM and only when the week is behind
+pace — which may be never for a fortnight — while the native host is spawned
+every five minutes for as long as Chrome is open. So `probe_jira_credential` in
+`usage-host.py` does one `GET /rest/api/3/myself` a day, on the snapshot message,
+after the snapshot is written, and records the answer in `backend/jira-status.json`.
+Synchronous and on the message loop, which is only defensible because it is
+throttled to once a day: **a thread would be killed part way through**, since
+Chrome tears the process down as soon as it has the reply.
+
+`deriveJiraCredentialWarning` escalates from there — 30 days, a line in Settings;
+14 days, a banner on the popup; 7 days or any failed probe, **the toolbar badge**;
+expired or a 401, the run stops. The badge is the point, and it is the one badge
+this extension has: a percentage over the icon is a permanent alarm for an
+unremarkable number, but a credential with a deadline is exactly what a toolbar
+is for. **A connection error raises nothing at all** — a laptop is offline most
+nights it is shut, and alarming for that would train somebody to ignore the one
+that matters.
+
+**The recorded expiry warns but never blocks.** It is typed in by hand and cannot
+be read back from any API, so a mistyped date would refuse to run against a token
+that works. Jira's own 401 is what stops a run.
 
 ## Tech Stack
 

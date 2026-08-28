@@ -3,6 +3,11 @@ import { formatTimeAgo } from '@/lib/formatDuration';
 import { SUGGESTED_MODEL_LABELS, type SuggestedModel } from '@/lib/suggestedModel';
 import type { UsagePopupData } from '@/lib/usagePopupData';
 import type { UsageErrorInfo } from '@/lib/usageTypes';
+import {
+  warningReaches,
+  NO_JIRA_WARNING,
+  type JiraCredentialWarning,
+} from '@/lib/jiraCredentialWarning';
 import { PopupFrame } from './PopupFrame';
 import { UsageWindowCard } from './UsageWindowCard';
 import { Button } from './ui/button';
@@ -22,6 +27,14 @@ export interface UsagePopupProps {
   onRefresh: () => void;
   onOpenClaude: () => void;
   onOpenSettings: () => void;
+  /**
+   * The Jira credential's health, when the queue lives on a board.
+   *
+   * Shown here from 14 days out, because the token's expiry is the one failure
+   * this design cannot engineer away — only warn about early enough that it is a
+   * calendar reminder rather than a run that did not happen.
+   */
+  jiraWarning?: JiraCredentialWarning;
 }
 
 const CLAUDE_URL = 'https://claude.ai';
@@ -110,6 +123,15 @@ function errorGuidance(error: UsageErrorInfo): string {
   }
 }
 
+function JiraCredentialBanner({ warning }: { warning: JiraCredentialWarning }) {
+  return (
+    <div className="border-pace-ahead/40 bg-pace-ahead-surface text-pace-ahead flex items-start gap-1.5 rounded-md border px-2.5 py-1.5 text-xs">
+      <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+      <span>{warning.message}</span>
+    </div>
+  );
+}
+
 function OpenClaudeButton({ onOpenClaude }: { onOpenClaude: () => void }) {
   return (
     <Button variant="outline" size="sm" onClick={onOpenClaude}>
@@ -149,7 +171,9 @@ export function UsagePopup({
   onRefresh,
   onOpenClaude,
   onOpenSettings,
+  jiraWarning = NO_JIRA_WARNING,
 }: UsagePopupProps) {
+  const showsJiraBanner = warningReaches(jiraWarning, 'banner');
   if (data.state === 'loading') {
     return (
       <PopupFrame>
@@ -191,6 +215,8 @@ export function UsagePopup({
           </span>
         }
       />
+
+      {showsJiraBanner && <JiraCredentialBanner warning={jiraWarning} />}
 
       {data.refreshError !== null && (
         <div className="border-pace-ahead/40 bg-pace-ahead-surface text-pace-ahead flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs">

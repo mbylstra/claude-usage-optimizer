@@ -67,6 +67,9 @@ class ParseSettingsTests(unittest.TestCase):
                 "maxPromptDurationHours": 2.5,
                 "appendToAllPrompts": "Keep changes small.",
                 "paceThresholdHours": -2.5,
+                "queueSource": "jira",
+                "jiraProjectKey": "fcp",
+                "jiraStatusNames": {"todo": "Next up"},
             }
         )
         self.assertEqual(result.schedule_hour, 3)
@@ -76,6 +79,31 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
         self.assertEqual(result.append_to_all_prompts, "Keep changes small.")
         self.assertEqual(result.pace_threshold_hours, -2.5)
+        self.assertEqual(result.queue_source, "jira")
+        # Upper-cased: Jira project keys are, and a lower-cased one in the
+        # settings screen would otherwise build a JQL query that matches nothing.
+        self.assertEqual(result.jira_project_key, "FCP")
+        self.assertEqual(result.jira_status_names, {"todo": "Next up"})
+
+    def test_an_unknown_queue_source_falls_back_to_the_file(self):
+        # The fallback direction that matters: no upgrade path may leave an
+        # install with no queue at all.
+        result = settings_module.parse_settings({"queueSource": "postgres"})
+        self.assertEqual(result.queue_source, settings_module.QUEUE_SOURCE_FILE)
+
+    def test_a_missing_queue_source_is_the_file(self):
+        self.assertEqual(
+            settings_module.parse_settings({}).queue_source, settings_module.QUEUE_SOURCE_FILE
+        )
+
+    def test_blank_and_non_string_status_names_are_dropped(self):
+        result = settings_module.parse_settings(
+            {"jiraStatusNames": {"todo": "  ", "inReview": 3, "done": " Shipped "}}
+        )
+        self.assertEqual(result.jira_status_names, {"done": "Shipped"})
+
+    def test_a_non_dict_status_names_field_is_ignored(self):
+        self.assertEqual(settings_module.parse_settings({"jiraStatusNames": "Done"}).jira_status_names, {})
 
     def test_out_of_range_hour_falls_back_to_default(self):
         result = settings_module.parse_settings({"scheduleHour": 24})
@@ -184,6 +212,9 @@ class SettingsRoundTripTests(unittest.TestCase):
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",
             pace_threshold_hours=-3.5,
+            queue_source="jira",
+            jira_project_key="FCP",
+            jira_status_names={"todo": "Next up"},
         )
         settings_module.write_settings(settings)
         self.assertEqual(settings_module.read_settings(), settings)

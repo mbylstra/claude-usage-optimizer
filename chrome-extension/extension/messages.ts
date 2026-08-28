@@ -1,4 +1,5 @@
 import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
+import type { JiraCredentialStatus } from '@/lib/jiraCredentialWarning';
 import type { UsageCacheEntry } from './usageStorage';
 
 /**
@@ -65,13 +66,27 @@ export interface SyncAutonomousWorkSettingsMessage {
   settings: AutonomousWorkSettings;
 }
 
+export const READ_JIRA_STATUS_MESSAGE = 'READ_JIRA_STATUS' as const;
+
+/**
+ * Ask for the Jira credential's health, as the host's last daily probe left it.
+ *
+ * Through the service worker rather than straight from the popup, like every
+ * other host call except the run-log stream: this one is a plain
+ * request-and-reply, which is exactly what that rule is for.
+ */
+export interface ReadJiraStatusMessage {
+  type: typeof READ_JIRA_STATUS_MESSAGE;
+}
+
 export type ExtensionMessage =
   | RefreshUsageMessage
   | TestNotificationMessage
   | RunAutonomousWorkMessage
   | OpenRunLogMessage
   | PrimeFolderAccessMessage
-  | SyncAutonomousWorkSettingsMessage;
+  | SyncAutonomousWorkSettingsMessage
+  | ReadJiraStatusMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
 
@@ -102,6 +117,19 @@ export interface SyncAutonomousWorkSettingsResponse {
    */
   launchAgentUpdated: boolean;
   error?: string;
+}
+
+/** The probe's last answer, or null when there is nothing to say about it. */
+export interface ReadJiraStatusResponse {
+  status: JiraCredentialStatus | null;
+}
+
+export function isReadJiraStatusMessage(message: unknown): message is ReadJiraStatusMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === READ_JIRA_STATUS_MESSAGE
+  );
 }
 
 export function isRefreshUsageMessage(message: unknown): message is RefreshUsageMessage {

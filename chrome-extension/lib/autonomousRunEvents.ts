@@ -16,7 +16,8 @@
  */
 export type RunOutcome = 'completed' | 'error' | 'timeout' | 'cancelled' | 'sessionLimit';
 
-export type RunSkipReason = 'onPace' | 'emptyQueue' | 'noSnapshot' | 'fiveHourExhausted';
+export type RunSkipReason =
+  'onPace' | 'emptyQueue' | 'queueUnavailable' | 'noSnapshot' | 'fiveHourExhausted';
 
 /** Everything the header needs, known before `claude` is invoked. */
 export interface RunStartedEvent {
@@ -106,6 +107,7 @@ const RUN_OUTCOMES: readonly string[] = [
 const RUN_SKIP_REASONS: readonly string[] = [
   'onPace',
   'emptyQueue',
+  'queueUnavailable',
   'noSnapshot',
   'fiveHourExhausted',
 ];

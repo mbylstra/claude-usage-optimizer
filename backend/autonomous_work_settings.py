@@ -31,7 +31,7 @@ import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
@@ -62,6 +62,22 @@ DEFAULT_APPEND_TO_ALL_PROMPTS = ""
 # weekly burn still counts as on pace. `run-autonomous-work.py` is the one
 # place that converts to milliseconds.
 DEFAULT_PACE_THRESHOLD_HOURS = 0.0
+
+# Where the queue lives. `file` is `prompts.txt` at the repository root, which
+# needs no account, no network and no third party, and is what a fresh clone
+# works with; `jira` is a board — see plans/work-queue-as-a-jira-board.md. The
+# two are alternatives and never both live: mirroring one into the other would
+# make a stale copy indistinguishable from a real queue, and the run would
+# happily execute a prompt deleted from the board yesterday.
+QUEUE_SOURCE_FILE = "file"
+QUEUE_SOURCE_JIRA = "jira"
+QUEUE_SOURCE_NAMES = (QUEUE_SOURCE_FILE, QUEUE_SOURCE_JIRA)
+DEFAULT_QUEUE_SOURCE = QUEUE_SOURCE_FILE
+DEFAULT_JIRA_PROJECT_KEY = ""
+# Per-column overrides for anyone who renamed a column in Jira. Empty means "the
+# five names the plan creates". The *credential* deliberately does not travel
+# this path — see `queue_source_jira.CREDENTIALS_FILE`.
+DEFAULT_JIRA_STATUS_NAMES = {}
 
 
 def environment_path(name: str, default: Path) -> Path:
@@ -106,6 +122,11 @@ class AutonomousWorkSettings:
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
     append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
     pace_threshold_hours: float = DEFAULT_PACE_THRESHOLD_HOURS
+    queue_source: str = DEFAULT_QUEUE_SOURCE
+    jira_project_key: str = DEFAULT_JIRA_PROJECT_KEY
+    """Column key (`todo`, `inReview`, …) to the status name in Jira, where the
+    user renamed one. Only the columns actually renamed appear here."""
+    jira_status_names: dict = dataclass_field(default_factory=dict)
 
     @property
     def new_projects_path(self) -> Path:
@@ -185,6 +206,31 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         else DEFAULT_APPEND_TO_ALL_PROMPTS
     )
 
+    queue_source_value = settings_data.get("queueSource")
+    queue_source = (
+        queue_source_value
+        if isinstance(queue_source_value, str) and queue_source_value in QUEUE_SOURCE_NAMES
+        else DEFAULT_QUEUE_SOURCE
+    )
+
+    project_key_value = settings_data.get("jiraProjectKey")
+    jira_project_key = (
+        project_key_value.strip().upper()
+        if isinstance(project_key_value, str) and project_key_value.strip()
+        else DEFAULT_JIRA_PROJECT_KEY
+    )
+
+    status_names_value = settings_data.get("jiraStatusNames")
+    jira_status_names = (
+        {
+            column: name.strip()
+            for column, name in status_names_value.items()
+            if isinstance(column, str) and isinstance(name, str) and name.strip()
+        }
+        if isinstance(status_names_value, dict)
+        else dict(DEFAULT_JIRA_STATUS_NAMES)
+    )
+
     return AutonomousWorkSettings(
         schedule_hour=_coerce_hour_or_minute(
             settings_data.get("scheduleHour"), DEFAULT_SCHEDULE_HOUR, 23
@@ -201,6 +247,9 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         pace_threshold_hours=_coerce_signed_hours(
             settings_data.get("paceThresholdHours"), DEFAULT_PACE_THRESHOLD_HOURS
         ),
+        queue_source=queue_source,
+        jira_project_key=jira_project_key,
+        jira_status_names=jira_status_names,
     )
 
 
@@ -226,6 +275,9 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
         "appendToAllPrompts": settings.append_to_all_prompts,
         "paceThresholdHours": settings.pace_threshold_hours,
+        "queueSource": settings.queue_source,
+        "jiraProjectKey": settings.jira_project_key,
+        "jiraStatusNames": dict(settings.jira_status_names),
     }
 
     temporary_path = None
@@ -408,6 +460,11 @@ def main() -> int:
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))
+    print("Queue source:       {}".format(settings.queue_source))
+    if settings.queue_source == QUEUE_SOURCE_JIRA:
+        print("Jira project:       {}".format(settings.jira_project_key or "(not set)"))
+        if settings.jira_status_names:
+            print("Renamed columns:    {}".format(settings.jira_status_names))
     print("Settings file:      {}".format(SETTINGS_FILE))
     print(
         "Launch agent:       {}".format(
