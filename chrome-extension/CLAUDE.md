@@ -97,3 +97,20 @@ Relatedly, `syncAutonomousWorkSettings` **spreads the settings object** rather
 than naming each field. Fields were dropped twice by a hand-written payload that
 someone forgot to extend; only `scheduleTime` is spelled out, since it is the one
 field whose shape differs from the mirrored file's.
+
+## Chrome usage
+
+Do not use the Chrome MCP unless I explicitly request it in my prompt.
+
+In particular, do not proactively use Chrome for:
+
+- visual verification
+- UI inspection
+- checking whether a design looks correct
+- testing the running application in the browser
+
+Prefer source code, tests, terminal output, and other non-browser tools.
+
+When I explicitly say things such as "use Chrome", "review this in Chrome",
+"check the design in Chrome", or "visually inspect this in Chrome", you may use
+Chrome for that task.
