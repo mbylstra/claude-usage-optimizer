@@ -5,7 +5,6 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Switch } from './ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import {
   describeAutonomousWorkStatus,
   isAutonomousWorkStatusError,
@@ -47,6 +46,14 @@ const MAX_MAX_PROMPT_DURATION_HOURS = 24;
 /** Clamped to a week either way — the weekly window itself bounds what a threshold could mean. */
 const MIN_PACE_THRESHOLD_HOURS = -168;
 const MAX_PACE_THRESHOLD_HOURS = 168;
+
+/**
+ * The queue-source and model selectors are native `<select>` elements, so they
+ * get a border here rather than inheriting one from a component — enough to read
+ * as a field next to the `Input`s around them without the Radix portal trouble.
+ */
+const SELECT_CLASS_NAME =
+  'border-input bg-background h-8 rounded-md border px-2 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]';
 
 /**
  * The settings screen, shown inside the popup in place of the usage view.
@@ -268,24 +275,21 @@ export function SettingsPage({
             <label htmlFor="model-select" className="text-sm">
               Model for autonomous runs
             </label>
-            <Select
+            <select
+              id="model-select"
+              className={SELECT_CLASS_NAME}
               value={autonomousWorkSettings.model}
-              onValueChange={(value: string) =>
+              onChange={(event) =>
                 onAutonomousWorkSettingsChange({
                   ...autonomousWorkSettings,
-                  model: value as 'haiku' | 'sonnet' | 'opus',
+                  model: event.target.value as 'haiku' | 'sonnet' | 'opus',
                 })
               }
             >
-              <SelectTrigger id="model-select">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="haiku">Haiku (fastest, cheapest)</SelectItem>
-                <SelectItem value="sonnet">Sonnet (balanced)</SelectItem>
-                <SelectItem value="opus">Opus (most capable)</SelectItem>
-              </SelectContent>
-            </Select>
+              <option value="haiku">Haiku (fastest, cheapest)</option>
+              <option value="sonnet">Sonnet (balanced)</option>
+              <option value="opus">Opus (most capable)</option>
+            </select>
             <p className="text-muted-foreground text-xs">
               The Claude model to use when running queued prompts automatically.
             </p>
@@ -295,23 +299,20 @@ export function SettingsPage({
             <label htmlFor="queue-source-select" className="text-sm">
               Queue source
             </label>
-            <Select
+            <select
+              id="queue-source-select"
+              className={SELECT_CLASS_NAME}
               value={autonomousWorkSettings.queueSource}
-              onValueChange={(value: string) =>
+              onChange={(event) =>
                 onAutonomousWorkSettingsChange({
                   ...autonomousWorkSettings,
-                  queueSource: value as QueueSourceName,
+                  queueSource: event.target.value as QueueSourceName,
                 })
               }
             >
-              <SelectTrigger id="queue-source-select">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="file">prompts.txt (no account needed)</SelectItem>
-                <SelectItem value="jira">A Jira board</SelectItem>
-              </SelectContent>
-            </Select>
+              <option value="file">prompts.txt (no account needed)</option>
+              <option value="jira">A Jira board</option>
+            </select>
             <p className="text-muted-foreground text-xs">
               Where the queue lives. A board can be reordered by dragging a card, from a phone; a
               file needs no account, no network and no third party. The two are alternatives —
