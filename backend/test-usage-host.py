@@ -407,6 +407,7 @@ def main() -> int:
                         "queueSource": "file",
                         "jiraProjectKey": "",
                         "jiraStatusNames": {},
+                        "repositories": [],
                     },
                 )
             )

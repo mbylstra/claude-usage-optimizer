@@ -1,5 +1,6 @@
 import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
 import type { JiraCredentialStatus } from '@/lib/jiraCredentialWarning';
+import type { RepositorySyncResult } from '@/lib/autonomousWorkSettingsStatus';
 import type { UsageCacheEntry } from './usageStorage';
 
 /**
@@ -116,6 +117,12 @@ export interface SyncAutonomousWorkSettingsResponse {
    * never installed — the settings are still saved, but nothing is scheduled.
    */
   launchAgentUpdated: boolean;
+  /**
+   * What the host made of the repository list, or null when this save had no
+   * Jira half to do. The one setting that has to land somewhere other than this
+   * machine, so a save that quietly did not send it is worth saying out loud.
+   */
+  repositorySync?: RepositorySyncResult | null;
   error?: string;
 }
 

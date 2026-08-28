@@ -308,10 +308,14 @@ export function PopupRoot() {
           setAutonomousWorkSettingsStatus({ kind: 'failed', error: response.error ?? '' });
           return;
         }
+        // `?? null` rather than passing it through: a reply from a host older
+        // than the repository picker carries no such key, and "nothing to say"
+        // is the same outcome as a save with no Jira half to do.
+        const repositorySync = response.repositorySync ?? null;
         setAutonomousWorkSettingsStatus(
           response.launchAgentUpdated
-            ? { kind: 'scheduled', scheduleTime: autonomousWork.scheduleTime }
-            : { kind: 'savedWithoutSchedule' },
+            ? { kind: 'scheduled', scheduleTime: autonomousWork.scheduleTime, repositorySync }
+            : { kind: 'savedWithoutSchedule', repositorySync },
         );
       },
     );

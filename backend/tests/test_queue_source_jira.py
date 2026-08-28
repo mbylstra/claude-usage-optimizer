@@ -139,6 +139,52 @@ class FakeJiraState:
         self.purge_task_id = "task-1"
         self.purge_task_status = "COMPLETE"
 
+        # -- custom fields and screens -------------------------------------- #
+        # The site's custom fields, and per field its one auto-created (always
+        # global) context and that context's options.
+        self.fields = []  # type: list
+        self.field_contexts = {}  # type: dict  # field id -> context id
+        self.field_options = {}  # type: dict  # field id -> [{id, value, disabled}]
+        self._next_field_number = 10200
+        self._next_option_id = 10500
+
+        # The screen chain measured in company-managed-jira-project.md §0.6:
+        # issue type screen scheme -> screen scheme -> default screen -> tabs.
+        self.issue_type_screen_scheme_id = "10101"
+        self.screen_scheme_id = "10202"
+        self.screen_id = "10303"
+        self.screen_tab_id = "10404"
+        self.screen_tab_fields = ["summary", "description"]
+        # Forces the measured `400 ... already exists on the screen` on the next
+        # attach POST, the race the GET-before-POST cannot rule out.
+        self.force_field_already_on_screen = False
+        # Fails every call in the screen chain, standing in for the real site
+        # refusing it — which is what the live 405 on a mis-guessed endpoint did.
+        # Distinct from `next_status_code`, which is one-shot and would be eaten
+        # by whichever call happens to come first.
+        self.screen_chain_status_code = None
+
+    def add_field(self, name, field_id=None):
+        """A custom field, with the one global context Jira creates alongside it."""
+        self._next_field_number += 1
+        field_id = field_id or "customfield_{}".format(self._next_field_number)
+        self.fields.append({"id": field_id, "name": name, "custom": True})
+        self.field_contexts[field_id] = "ctx-{}".format(self._next_field_number)
+        self.field_options.setdefault(field_id, [])
+        return field_id
+
+    def add_field_option(self, field_id, value, disabled=False):
+        self._next_option_id += 1
+        option = {"id": str(self._next_option_id), "value": value, "disabled": disabled}
+        self.field_options.setdefault(field_id, []).append(option)
+        return option
+
+    def options_of(self, field_id):
+        """`{name: disabled}` — what the dropdown offers, and what is greyed out."""
+        return {
+            option["value"]: option["disabled"] for option in self.field_options.get(field_id, [])
+        }
+
     def add_site_status(self, name, category="TODO"):
         self._next_status_id += 1
         status_id = str(self._next_status_id)
@@ -201,6 +247,27 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(code, {"errorMessages": ["forced"]})
             return True
         return False
+
+    @staticmethod
+    def _field_context_route(path):
+        """`/rest/api/3/field/{id}/context` -> the field id, else None."""
+        parts = path.strip("/").split("/")
+        if len(parts) == 6 and parts[:4] == ["rest", "api", "3", "field"] and parts[5] == "context":
+            return parts[4]
+        return None
+
+    @staticmethod
+    def _field_option_route(path):
+        """`/rest/api/3/field/{id}/context/{cid}/option` -> (field id, context id)."""
+        parts = path.strip("/").split("/")
+        if (
+            len(parts) == 8
+            and parts[:4] == ["rest", "api", "3", "field"]
+            and parts[5] == "context"
+            and parts[7] == "option"
+        ):
+            return parts[4], parts[6]
+        return None
 
     # -- routes ------------------------------------------------------------- #
 
@@ -302,6 +369,87 @@ class _Handler(BaseHTTPRequestHandler):
         if parsed.path == "/rest/api/3/task/{}".format(state.purge_task_id):
             return self._reply(200, {"id": state.purge_task_id, "status": state.purge_task_status})
 
+        # -- custom field, its context and its options ---------------------- #
+
+        if parsed.path == "/rest/api/3/field":
+            return self._reply(200, list(state.fields))
+
+        option_route = self._field_option_route(parsed.path)
+        if option_route is not None:
+            field_id, _context_id = option_route
+            return self._reply(
+                200,
+                {"values": [dict(o) for o in state.field_options.get(field_id, [])], "isLast": True},
+            )
+
+        context_field_id = self._field_context_route(parsed.path)
+        if context_field_id is not None:
+            context_id = state.field_contexts.get(context_field_id)
+            if context_id is None:
+                return self._reply(404)
+            # Always global, and it cannot be narrowed — measured,
+            # plans/jira-repository-picker.md §0.2.
+            return self._reply(
+                200, {"values": [{"id": context_id, "isGlobalContext": True}], "isLast": True}
+            )
+
+        # -- the screen chain ----------------------------------------------- #
+
+        if parsed.path == "/rest/api/3/issuetypescreenscheme/project":
+            if state.screen_chain_status_code is not None:
+                return self._reply(
+                    state.screen_chain_status_code, {"errorMessages": ["forced"]}
+                )
+            return self._reply(
+                200,
+                {"values": [{
+                    "issueTypeScreenScheme": {"id": state.issue_type_screen_scheme_id},
+                    "projectIds": [PROJECT_ID],
+                }]},
+            )
+
+        # The real shape, measured against the site: a top-level path taking
+        # `issueTypeScreenSchemeId` as a query parameter. The sub-resource form
+        # `/{id}/mapping` — which this stub used to model, because the stub was
+        # written from the same guess as the code — answers 405 on the real API,
+        # so both agreed with each other and neither agreed with Jira.
+        if parsed.path == "/rest/api/3/issuetypescreenscheme/mapping":
+            if state.screen_chain_status_code is not None:
+                return self._reply(
+                    state.screen_chain_status_code, {"errorMessages": ["forced"]}
+                )
+            wanted = (query.get("issueTypeScreenSchemeId") or [None])[0]
+            if wanted != state.issue_type_screen_scheme_id:
+                return self._reply(200, {"values": [], "isLast": True})
+            return self._reply(
+                200,
+                {"values": [{
+                    "issueTypeScreenSchemeId": state.issue_type_screen_scheme_id,
+                    "issueTypeId": "default",
+                    "screenSchemeId": state.screen_scheme_id,
+                }], "isLast": True},
+            )
+
+        # Left deliberately unrouted so it 404s the way the real site 405s: a
+        # test that reached for the old path would fail rather than pass quietly.
+
+        if parsed.path == "/rest/api/3/screenscheme":
+            return self._reply(
+                200,
+                {"values": [{
+                    "id": state.screen_scheme_id,
+                    "screens": {"default": state.screen_id},
+                }]},
+            )
+
+        if parsed.path == "/rest/api/3/screens/{}/tabs/{}/fields".format(
+            state.screen_id, state.screen_tab_id
+        ):
+            return self._reply(200, [{"id": name} for name in state.screen_tab_fields])
+
+        if parsed.path == "/rest/api/3/screens/{}/tabs".format(state.screen_id):
+            return self._reply(200, [{"id": state.screen_tab_id, "name": "Field Tab"}])
+
         return self._reply(404)
 
     def do_POST(self):  # noqa: N802
@@ -369,6 +517,47 @@ class _Handler(BaseHTTPRequestHandler):
             state.project_deleted = True
             return self._reply(200, {"id": state.purge_task_id, "status": "RUNNING"})
 
+        if parsed.path == "/rest/api/3/field":
+            if any(f["name"].lower() == (body.get("name") or "").lower() for f in state.fields):
+                return self._reply(
+                    400, {"errors": {"fieldName": "A field with this name already exists."}}
+                )
+            field_id = state.add_field(body.get("name"))
+            return self._reply(
+                201,
+                {"id": field_id, "name": body.get("name"), "custom": True},
+            )
+
+        option_route = self._field_option_route(parsed.path)
+        if option_route is not None:
+            field_id, _context_id = option_route
+            created = []
+            for wanted in body.get("options") or []:
+                created.append(
+                    state.add_field_option(
+                        field_id, wanted.get("value"), bool(wanted.get("disabled"))
+                    )
+                )
+            return self._reply(200, {"options": [dict(o) for o in created]})
+
+        if parsed.path == "/rest/api/3/screens/{}/tabs/{}/fields".format(
+            state.screen_id, state.screen_tab_id
+        ):
+            field_id = body.get("fieldId")
+            if state.force_field_already_on_screen or field_id in state.screen_tab_fields:
+                state.force_field_already_on_screen = False
+                # The measured refusal — a specific validation error, not a wall.
+                return self._reply(
+                    400,
+                    {"errors": {
+                        "fieldId": "The field with id {} already exists on the screen.".format(
+                            field_id
+                        )
+                    }},
+                )
+            state.screen_tab_fields.append(field_id)
+            return self._reply(200, {"id": field_id, "name": jira.REPOSITORY_FIELD_NAME})
+
         return self._reply(404)
 
     def do_PUT(self):  # noqa: N802
@@ -396,6 +585,20 @@ class _Handler(BaseHTTPRequestHandler):
 
         if self._forced_failure() or (state.fail_writes and self._reply(500) is None):
             return
+
+        # Before the issue-key fall-through below, which would otherwise read
+        # "option" as an issue key.
+        option_route = self._field_option_route(parsed.path)
+        if option_route is not None:
+            field_id, _context_id = option_route
+            options = state.field_options.get(field_id, [])
+            for wanted in body.get("options") or []:
+                for option in options:
+                    if option["id"] == str(wanted.get("id")):
+                        option["disabled"] = bool(wanted.get("disabled"))
+                        if wanted.get("value"):
+                            option["value"] = wanted["value"]
+            return self._reply(200, {"options": body.get("options") or []})
 
         key = parsed.path.split("/")[-1]
         labels = state.issues[key]["fields"]["labels"]
@@ -603,6 +806,93 @@ class PromptFromIssueTests(unittest.TestCase):
         )
         self.assertIsNone(repository)
         self.assertIn("REPO: ~/code/thing", prompt)
+
+
+class PromptFromIssueRepositoryFieldTests(unittest.TestCase):
+    """The Repository dropdown, read back off a card.
+
+    The whole point of the picker is that it removes a chance to mistype, so the
+    cases that matter are the ones where the field and the `REPO:` line disagree.
+    """
+
+    FIELD_ID = "customfield_10210"
+    REPOSITORIES = [
+        {"name": "usage-optimizer", "path": "~/code/current/claude-usage-optimizer"},
+        {"name": "Notes", "path": "~/code/notes"},
+    ]
+
+    def _issue(self, summary, description=None, selected=None):
+        fields = {"summary": summary, "description": description}
+        if selected is not None:
+            fields[self.FIELD_ID] = {"value": selected}
+        return {"key": "FCP-1", "fields": fields}
+
+    def _prompt_from(self, issue):
+        return jira.prompt_from_issue(
+            issue, repository_field_id=self.FIELD_ID, repositories=self.REPOSITORIES
+        )
+
+    def test_the_selected_repository_resolves_to_its_configured_path(self):
+        prompt, repository = self._prompt_from(
+            self._issue("t", jira.adf_document("Do the thing."), selected="usage-optimizer")
+        )
+        self.assertEqual(prompt, "Do the thing.")
+        self.assertEqual(repository, Path("~/code/current/claude-usage-optimizer").expanduser())
+
+    def test_the_field_wins_over_a_repo_line(self):
+        # The deliberate, current-intent choice made on the board beats a text
+        # line that may predate the picker entirely.
+        _, repository = self._prompt_from(
+            self._issue(
+                "t", jira.adf_document("REPO: ~/code/stale\n\nDo the thing."), selected="Notes"
+            )
+        )
+        self.assertEqual(repository, Path("~/code/notes").expanduser())
+
+    def test_the_name_is_matched_ignoring_case(self):
+        _, repository = self._prompt_from(self._issue("t", None, selected="NOTES"))
+        self.assertEqual(repository, Path("~/code/notes").expanduser())
+
+    def test_an_unmatched_selection_falls_back_to_the_repo_line(self):
+        # A repository renamed or removed in Settings must not point a queued
+        # prompt at the wrong place, so "no match" behaves as "no field".
+        _, repository = self._prompt_from(
+            self._issue(
+                "t", jira.adf_document("REPO: ~/code/thing\n\nDo it."), selected="deleted-repo"
+            )
+        )
+        self.assertEqual(repository, Path("~/code/thing").expanduser())
+
+    def test_an_unmatched_selection_with_no_repo_line_starts_a_new_project(self):
+        # None is the new-project signal `resolve_working_directory` reads.
+        _, repository = self._prompt_from(
+            self._issue("t", jira.adf_document("Do it."), selected="deleted-repo")
+        )
+        self.assertIsNone(repository)
+
+    def test_an_unset_field_uses_the_repo_line(self):
+        _, repository = self._prompt_from(
+            self._issue("t", jira.adf_document("REPO: ~/code/thing\n\nDo it."))
+        )
+        self.assertEqual(repository, Path("~/code/thing").expanduser())
+
+    def test_a_configured_repository_with_no_path_yet_is_not_a_repository(self):
+        # A half-filled row in Settings is a draft, not somewhere to run work.
+        prompt, repository = jira.prompt_from_issue(
+            self._issue("t", jira.adf_document("Do it."), selected="drafty"),
+            repository_field_id=self.FIELD_ID,
+            repositories=[{"name": "drafty", "path": ""}],
+        )
+        self.assertEqual(prompt, "Do it.")
+        self.assertIsNone(repository)
+
+    def test_no_configured_repositories_leaves_the_repo_line_in_charge(self):
+        _, repository = jira.prompt_from_issue(
+            self._issue("t", jira.adf_document("REPO: ~/code/thing\n\nDo it."), selected="Notes"),
+            repository_field_id=self.FIELD_ID,
+            repositories=[],
+        )
+        self.assertEqual(repository, Path("~/code/thing").expanduser())
 
 
 class CredentialTests(unittest.TestCase):
@@ -1158,6 +1448,300 @@ class BoardColumnTests(StubJiraTestCase):
         self.assertTrue(any("Could not set board columns" in line for line in logged))
 
 
+class RepositoryFieldTests(StubJiraTestCase):
+    """Finding or creating the field itself — the id is per-site, never assumed."""
+
+    def _writes(self):
+        return [call for call in self.state.requests if call[0] in ("POST", "PUT")]
+
+    def test_the_field_is_created_with_the_measured_searcher_key(self):
+        field_id, context_id, created, _ = jira.ensure_repository_field(
+            self.source.client, PROJECT_ID, log=self.logged.append
+        )
+        self.assertTrue(created)
+        self.assertTrue(field_id)
+        self.assertTrue(context_id)
+
+        creation = [
+            call for call in self.state.requests
+            if call[0] == "POST" and call[1] == "/rest/api/3/field"
+        ]
+        self.assertEqual(len(creation), 1)
+        body = creation[0][2]
+        self.assertEqual(body["name"], jira.REPOSITORY_FIELD_NAME)
+        self.assertEqual(body["type"], jira.REPOSITORY_FIELD_TYPE)
+        # `selectsearcher` does not exist and 400s; this is the value measured to
+        # work on a single-select — plans/jira-repository-picker.md §0.1.
+        self.assertEqual(
+            body["searcherKey"],
+            "com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher",
+        )
+
+    def test_an_existing_field_is_found_rather_than_recreated(self):
+        existing_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        field_id, _, created, _ = jira.ensure_repository_field(self.source.client, PROJECT_ID)
+        self.assertEqual(field_id, existing_id)
+        self.assertFalse(created)
+        self.assertEqual(len(self.state.fields), 1)
+
+    def test_the_name_is_matched_ignoring_case(self):
+        existing_id = self.state.add_field("repository")
+        found = jira.find_repository_field(self.source.client)
+        self.assertIsNotNone(found)
+        self.assertEqual(found["id"], existing_id)
+
+    def test_an_unrelated_custom_field_is_not_mistaken_for_it(self):
+        self.state.add_field("Repository URL")
+        self.assertIsNone(jira.find_repository_field(self.source.client))
+
+    def test_a_second_call_writes_nothing_new(self):
+        jira.ensure_repository_field(self.source.client, PROJECT_ID)
+        before = len(self._writes())
+        jira.ensure_repository_field(self.source.client, PROJECT_ID)
+        self.assertEqual(len(self._writes()), before)
+
+
+class RepositoryFieldScreenAttachTests(StubJiraTestCase):
+    """The step plans/jira-repository-picker.md §3 printed as a manual instruction.
+
+    It is superseded: on a company-managed project the whole chain is reachable
+    over the public API (company-managed-jira-project.md §0.6), so these tests
+    stand over there being no manual step left.
+    """
+
+    def _attach_posts(self):
+        return [
+            call for call in self.state.requests
+            if call[0] == "POST" and call[1].endswith("/tabs/{}/fields".format(
+                self.state.screen_tab_id
+            ))
+        ]
+
+    def test_the_field_lands_on_the_default_screens_tab(self):
+        field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        attached = jira.attach_repository_field_to_screens(
+            self.source.client, PROJECT_ID, field_id, log=self.logged.append
+        )
+        self.assertTrue(attached)
+        self.assertIn(field_id, self.state.screen_tab_fields)
+
+    def test_a_second_call_issues_no_post_at_all(self):
+        # Not merely "survives a re-run": `configure_project` is called on every
+        # install and repair, and its idempotence test counts writes.
+        field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        jira.attach_repository_field_to_screens(self.source.client, PROJECT_ID, field_id)
+        before = len(self._attach_posts())
+        attached = jira.attach_repository_field_to_screens(
+            self.source.client, PROJECT_ID, field_id
+        )
+        self.assertFalse(attached)
+        self.assertEqual(len(self._attach_posts()), before)
+
+    def test_the_already_on_the_screen_400_is_treated_as_success(self):
+        # The measured refusal, reachable here only as a race: the tab's fields
+        # are read first, so this is the belt-and-braces branch.
+        field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.state.force_field_already_on_screen = True
+        attached = jira.attach_repository_field_to_screens(
+            self.source.client, PROJECT_ID, field_id
+        )
+        self.assertFalse(attached)
+
+    def test_a_refused_attach_degrades_rather_than_unwinding_the_sync(self):
+        # Measured the hard way against the real site: letting this raise made
+        # `sync_repository_field` report failure *after* creating the field, so
+        # every save retried the creation and Jira — which allows two custom
+        # fields to share a name — minted a duplicate each time. The field and
+        # its options are what must land; the layout is recoverable by hand.
+        field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.state.screen_chain_status_code = 405
+
+        attached = jira.attach_repository_field_to_screens(
+            self.source.client, PROJECT_ID, field_id, log=self.logged.append
+        )
+        self.assertFalse(attached)
+        self.assertTrue(any("card layout" in line for line in self.logged))
+
+    def test_a_failed_attach_still_leaves_the_options_synced(self):
+        self.state.screen_chain_status_code = 405
+        result = jira.sync_repository_field(
+            self.source.client, PROJECT_ID, [{"name": "alpha", "path": "~/a"}],
+            log=self.logged.append,
+        )
+        self.assertTrue(result.ok)
+        self.assertFalse(result.attached_to_screen)
+        self.assertEqual(result.added, ["alpha"])
+
+    def test_the_field_is_created_only_once_even_when_the_attach_keeps_failing(self):
+        # The duplicate-field bug, stood over directly.
+        self.state.screen_chain_status_code = 405
+        for _ in range(4):
+            jira.sync_repository_field(
+                self.source.client, PROJECT_ID, [{"name": "alpha", "path": "~/a"}]
+            )
+        creations = [
+            call for call in self.state.requests
+            if call[0] == "POST" and call[1] == "/rest/api/3/field"
+        ]
+        self.assertEqual(len(creations), 1)
+        self.assertEqual(len(self.state.fields), 1)
+
+    def test_losing_a_creation_race_adopts_the_other_processes_field(self):
+        # Chrome spawns a host process per message, so two rapid saves both find
+        # nothing and both create.
+        existing_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        original_find = jira.find_repository_field
+        calls = {"count": 0}
+
+        def find_once_blind(client):
+            # First look sees nothing (as the racing process's did), then the
+            # creation clashes and the re-read finds the winner's field.
+            calls["count"] += 1
+            return None if calls["count"] == 1 else original_find(client)
+
+        jira.find_repository_field = find_once_blind
+        try:
+            field_id, _, created, _ = jira.ensure_repository_field(
+                self.source.client, PROJECT_ID, log=self.logged.append
+            )
+        finally:
+            jira.find_repository_field = original_find
+
+        self.assertEqual(field_id, existing_id)
+        self.assertFalse(created)
+        self.assertEqual(len(self.state.fields), 1)
+
+
+class RepositoryOptionSyncTests(StubJiraTestCase):
+    def _sync(self, repositories):
+        return jira.sync_repository_field(
+            self.source.client, PROJECT_ID, repositories, log=self.logged.append
+        )
+
+    def test_missing_names_are_added_and_existing_ones_left_alone(self):
+        result = self._sync([{"name": "alpha", "path": "~/a"}])
+        self.assertTrue(result.ok)
+        self.assertEqual(result.added, ["alpha"])
+
+        second = self._sync([{"name": "alpha", "path": "~/a"}, {"name": "beta", "path": "~/b"}])
+        self.assertEqual(second.added, ["beta"])
+        self.assertEqual(self.state.options_of(result.field_id), {"alpha": False, "beta": False})
+
+    def test_a_removed_repository_is_disabled_and_never_deleted(self):
+        # Deleting an option blanks the field on every card that had it selected,
+        # silently turning "point this at repo X" into "point this at nothing".
+        result = self._sync([{"name": "alpha", "path": "~/a"}, {"name": "beta", "path": "~/b"}])
+        removed = self._sync([{"name": "alpha", "path": "~/a"}])
+
+        self.assertEqual(removed.disabled, ["beta"])
+        self.assertEqual(self.state.options_of(result.field_id), {"alpha": False, "beta": True})
+        self.assertEqual([call for call in self.state.requests if call[0] == "DELETE"], [])
+
+    def test_a_re_added_repository_re_enables_its_original_option(self):
+        first = self._sync([{"name": "alpha", "path": "~/a"}])
+        option_ids = [o["id"] for o in self.state.field_options[first.field_id]]
+
+        self._sync([])
+        back = self._sync([{"name": "alpha", "path": "~/a"}])
+
+        self.assertEqual(back.reenabled, ["alpha"])
+        self.assertEqual(back.added, [])
+        # The same option, not a duplicate — which is why the diff matches by name.
+        self.assertEqual([o["id"] for o in self.state.field_options[first.field_id]], option_ids)
+
+    def test_an_option_is_matched_by_name_ignoring_case(self):
+        field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.state.add_field_option(field_id, "Alpha")
+        result = self._sync([{"name": "alpha", "path": "~/a"}])
+        self.assertEqual(result.added, [])
+        self.assertEqual(result.disabled, [])
+        self.assertEqual(len(self.state.field_options[field_id]), 1)
+
+    def test_a_repository_with_no_name_is_not_sent_to_jira(self):
+        result = self._sync([{"name": "  ", "path": "~/a"}, {"name": "beta", "path": ""}])
+        self.assertEqual(result.added, ["beta"])
+
+    def test_a_second_identical_sync_writes_nothing(self):
+        repositories = [{"name": "alpha", "path": "~/a"}]
+        self._sync(repositories)
+        before = len([c for c in self.state.requests if c[0] in ("POST", "PUT")])
+        result = self._sync(repositories)
+        after = len([c for c in self.state.requests if c[0] in ("POST", "PUT")])
+        self.assertEqual(before, after)
+        self.assertFalse(result.changed)
+
+    def test_a_write_failure_is_reported_rather_than_raised(self):
+        # A settings save must land its schedule, model and pace whatever Jira is
+        # doing — an unreachable site is an ordinary state on a laptop.
+        self.state.fail_writes = True
+        result = self._sync([{"name": "alpha", "path": "~/a"}])
+        self.assertFalse(result.ok)
+        self.assertTrue(result.error)
+
+    def test_jira_being_gone_entirely_is_reported_rather_than_raised(self):
+        self.stop_jira()
+        result = self._sync([{"name": "alpha", "path": "~/a"}])
+        self.assertFalse(result.ok)
+        self.assertTrue(result.error)
+
+
+class RepositoryFieldReadBackTests(StubJiraTestCase):
+    """The queue reading a card's selection back, end to end through the source."""
+
+    def setUp(self):
+        super().setUp()
+        self.field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.source.repositories = [{"name": "alpha", "path": "~/code/alpha"}]
+
+    def test_a_card_with_the_field_set_runs_in_that_repository(self):
+        key = self.state.add_issue("Do the thing", jira.adf_document("Do the thing."))
+        self.state.issues[key]["fields"][self.field_id] = {"value": "alpha"}
+
+        entry = self.source.next_todo()
+        self.assertEqual(entry.handle, key)
+        self.assertEqual(entry.repository_path, Path("~/code/alpha").expanduser())
+
+    def test_the_field_is_asked_for_in_the_search_rather_than_a_second_call(self):
+        self.state.add_issue("Do the thing", jira.adf_document("Do the thing."))
+        self.source.next_todo()
+
+        searches = [
+            call for call in self.state.requests if call[1] == "/rest/api/3/search/jql"
+        ]
+        self.assertEqual(len(searches), 1)
+        self.assertIn(self.field_id, searches[0][2]["fields"][0])
+
+    def test_the_field_is_resolved_once_for_the_whole_run(self):
+        self.state.add_issue("One", jira.adf_document("One."))
+        self.state.add_issue("Two", jira.adf_document("Two."))
+        self.source.next_todo()
+        self.source.remaining_todo_prompts([])
+
+        lookups = [call for call in self.state.requests if call[1] == "/rest/api/3/field"]
+        self.assertEqual(len(lookups), 1)
+
+    def test_a_site_without_the_field_falls_back_to_the_repo_line(self):
+        self.state.fields = []
+        source = jira.JiraQueueSource(self.credentials, PROJECT_KEY, log=self.logged.append)
+        self.state.add_issue("t", jira.adf_document("REPO: ~/code/thing\n\nDo it."))
+
+        entry = source.next_todo()
+        self.assertEqual(entry.repository_path, Path("~/code/thing").expanduser())
+
+    def test_a_failed_field_lookup_does_not_take_the_queue_down(self):
+        # The picker is a convenience over a `REPO:` line that still works. A
+        # queue that refused to run because one lookup 500'd would be worse.
+        source = jira.JiraQueueSource(self.credentials, PROJECT_KEY, log=self.logged.append)
+        self.state.add_issue("t", jira.adf_document("REPO: ~/code/thing\n\nDo it."))
+        # Warm the status cache first, so the one forced failure lands on the
+        # field lookup rather than on the call before it.
+        source.statuses()
+        self.state.next_status_code = 500
+
+        entry = source.next_todo()
+        self.assertEqual(entry.repository_path, Path("~/code/thing").expanduser())
+
+
 class ConfigureProjectOrchestrationTests(StubJiraTestCase):
     def test_configure_project_leaves_all_five_columns_present(self):
         statuses = jira.configure_project(
@@ -1168,10 +1752,28 @@ class ConfigureProjectOrchestrationTests(StubJiraTestCase):
         names = [c["name"] for c in self.state.board_columns]
         self.assertEqual(names, ["Draft", "To Do", "In Progress", "In Review", "Done"])
 
+    def test_configure_project_creates_the_repository_field_and_attaches_it(self):
+        jira.configure_project(
+            self.source.client,
+            {"id": PROJECT_ID, "key": PROJECT_KEY},
+            log=self.logged.append,
+            repositories=[{"name": "alpha", "path": "~/code/alpha"}],
+        )
+        field = jira.find_repository_field(self.source.client)
+        self.assertIsNotNone(field)
+        # No manual step: the field is on the card layout by the time this returns.
+        self.assertIn(field["id"], self.state.screen_tab_fields)
+        self.assertEqual(self.state.options_of(field["id"]), {"alpha": False})
+
     def test_a_second_call_writes_nothing_new(self):
-        jira.configure_project(self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY})
+        repositories = [{"name": "alpha", "path": "~/code/alpha"}]
+        jira.configure_project(
+            self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY}, repositories=repositories
+        )
         writes_before = [c for c in self.state.requests if c[0] in ("POST", "PUT")]
-        jira.configure_project(self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY})
+        jira.configure_project(
+            self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY}, repositories=repositories
+        )
         writes_after = [c for c in self.state.requests if c[0] in ("POST", "PUT")]
         self.assertEqual(len(writes_before), len(writes_after))
 

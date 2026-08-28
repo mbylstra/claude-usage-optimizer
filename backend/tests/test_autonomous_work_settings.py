@@ -70,6 +70,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "queueSource": "jira",
                 "jiraProjectKey": "fcp",
                 "jiraStatusNames": {"todo": "Next up"},
+                "repositories": [{"name": "usage-optimizer", "path": "~/code/current/cuo"}],
             }
         )
         self.assertEqual(result.schedule_hour, 3)
@@ -84,6 +85,10 @@ class ParseSettingsTests(unittest.TestCase):
         # settings screen would otherwise build a JQL query that matches nothing.
         self.assertEqual(result.jira_project_key, "FCP")
         self.assertEqual(result.jira_status_names, {"todo": "Next up"})
+        self.assertEqual(
+            result.repositories,
+            [{"name": "usage-optimizer", "path": "~/code/current/cuo"}],
+        )
 
     def test_an_unknown_queue_source_falls_back_to_the_file(self):
         # The fallback direction that matters: no upgrade path may leave an
@@ -104,6 +109,36 @@ class ParseSettingsTests(unittest.TestCase):
 
     def test_a_non_dict_status_names_field_is_ignored(self):
         self.assertEqual(settings_module.parse_settings({"jiraStatusNames": "Done"}).jira_status_names, {})
+
+    def test_repositories_default_to_an_empty_list(self):
+        self.assertEqual(settings_module.parse_settings({}).repositories, [])
+
+    def test_wrongly_shaped_repositories_are_dropped_one_by_one(self):
+        # A member is dropped rather than the whole list rejected, the same
+        # tolerance `jiraStatusNames` gets: one bad row must not cost the rest.
+        result = settings_module.parse_settings(
+            {
+                "repositories": [
+                    {"name": " alpha ", "path": " ~/code/alpha "},
+                    {"name": "  ", "path": "~/code/blank"},
+                    {"path": "~/code/nameless"},
+                    "not a dict",
+                    {"name": 3, "path": "~/code/numeric"},
+                ]
+            }
+        )
+        self.assertEqual(result.repositories, [{"name": "alpha", "path": "~/code/alpha"}])
+
+    def test_a_repository_with_no_path_is_kept_as_a_draft_row(self):
+        # Half-filled is a draft, not an error — it simply resolves to no
+        # repository, exactly as an unset field on a card does.
+        result = settings_module.parse_settings({"repositories": [{"name": "alpha"}]})
+        self.assertEqual(result.repositories, [{"name": "alpha", "path": ""}])
+
+    def test_a_non_list_repositories_field_is_ignored(self):
+        self.assertEqual(
+            settings_module.parse_settings({"repositories": {"name": "alpha"}}).repositories, []
+        )
 
     def test_out_of_range_hour_falls_back_to_default(self):
         result = settings_module.parse_settings({"scheduleHour": 24})
@@ -215,6 +250,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             queue_source="jira",
             jira_project_key="FCP",
             jira_status_names={"todo": "Next up"},
+            repositories=[{"name": "alpha", "path": "~/code/alpha"}],
         )
         settings_module.write_settings(settings)
         self.assertEqual(settings_module.read_settings(), settings)

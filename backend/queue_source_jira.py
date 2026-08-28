@@ -145,6 +145,20 @@ COLUMN_FOR_STATUS = {
 # between the two sources by copy and paste.
 REPOSITORY_FIELD_PREFIX = queue_source.REPOSITORY_FIELD_PREFIX
 
+# The Jira custom field that does the same job by dropdown instead of by typing.
+# Not to be confused with REPOSITORY_FIELD_PREFIX above: that is the `REPO:` text
+# line, this is the single-select field a card can pick a repository from. When
+# both are set the field wins — see `prompt_from_issue`.
+REPOSITORY_FIELD_NAME = "Repository"
+REPOSITORY_FIELD_TYPE = "com.atlassian.jira.plugin.system.customfieldtypes:select"
+# Measured, not reasoned. The searcher Atlassian's own examples suggest for a
+# *single*-select — `selectsearcher` — does not exist and 400s; the multi-select
+# searcher is what works on a single-select field. See
+# plans/jira-repository-picker.md §0.1.
+REPOSITORY_FIELD_SEARCHER_KEY = (
+    "com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher"
+)
+
 REQUEST_TIMEOUT_SECONDS = 30
 # The probe runs inside the native host, on the message loop, so it is held to a
 # much shorter leash than the run's own calls: a host that sat for half a minute
@@ -594,9 +608,46 @@ def _split_repository_line(body):
     return "\n".join(remaining_lines).strip(), repository_path
 
 
-def prompt_from_issue(issue):
-    # type: (dict) -> tuple[str, Path | None]
-    """A card's prompt text and its `REPO:` path.
+def _selected_repository_path(fields, repository_field_id, repositories):
+    # type: (dict, str | None, list | None) -> Path | None
+    """The path behind the card's Repository dropdown, if it picked one we know.
+
+    Only the repository *name* is ever stored in Jira — a single-select option is
+    one string, and an absolute local path can carry a username or a company
+    name, so it stays in the settings mirror and is expanded here, on the machine
+    that runs the work. This is the same division `newProjectsDirectory` follows.
+
+    A selected name that matches nothing configured returns None, deliberately:
+    a repository renamed or removed in Settings must not point a queued prompt at
+    the wrong place, so "no match" has to behave exactly like "no field".
+    """
+    if not repository_field_id or not repositories:
+        return None
+
+    selection = fields.get(repository_field_id)
+    selected_name = (selection or {}).get("value") if isinstance(selection, dict) else None
+    if not isinstance(selected_name, str) or not selected_name.strip():
+        return None
+
+    wanted = selected_name.strip().lower()
+    for repository in repositories:
+        if not isinstance(repository, dict):
+            continue
+        name = repository.get("name")
+        path = repository.get("path")
+        if not isinstance(name, str) or name.strip().lower() != wanted:
+            continue
+        if isinstance(path, str) and path.strip():
+            return Path(os.path.expanduser(path.strip()))
+        # A name with no path yet is a half-filled row in Settings, not a
+        # repository — fall through as though nothing were selected.
+        return None
+    return None
+
+
+def prompt_from_issue(issue, repository_field_id=None, repositories=None):
+    # type: (dict, str | None, list | None) -> tuple[str, Path | None]
+    """A card's prompt text and the repository to run it in.
 
     **The prompt is the description, or the summary when the description says
     nothing more than a `REPO:` line.** Jira forces a summary, and that fallback
@@ -608,16 +659,23 @@ def prompt_from_issue(issue):
     one-sentence card at a repository is the obvious thing to want, and reading
     the result as an empty prompt made the card invisible to `next_todo` — a
     board with work on it reporting an empty queue.
+
+    **The Repository dropdown wins over a `REPO:` line when both are set.** The
+    field is the deliberate, current-intent choice made on the board; the text
+    line predates it and stays as the fallback, so cards written before the
+    picker existed keep working with no migration.
     """
     fields = issue.get("fields") or {}
+    selected_path = _selected_repository_path(fields, repository_field_id, repositories)
+
     prompt, repository_path = _split_repository_line(flatten_adf(fields.get("description")))
     if prompt:
-        return prompt, repository_path
+        return prompt, selected_path or repository_path
 
     summary_prompt, summary_repository = _split_repository_line(
         (fields.get("summary") or "").strip()
     )
-    return summary_prompt, repository_path or summary_repository
+    return summary_prompt, selected_path or repository_path or summary_repository
 
 
 @dataclass
@@ -779,6 +837,423 @@ def resolve_project_statuses(client, project_key, configured_names=None):
     return ProjectStatuses(by_column=by_column, missing=missing)
 
 
+# --------------------------------------------------------------------------- #
+# The Repository field
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class RepositoryFieldSync:
+    """What one sync of the Repository field's options did, or could not do.
+
+    Reported rather than raised, the same shape as `ProjectStatuses`: a settings
+    save must land its schedule, model and pace whatever Jira is doing, and a
+    site that is unreachable is an ordinary state on a laptop, not a fault.
+    """
+
+    ok: bool
+    field_id: "str | None" = None
+    created_field: bool = False
+    attached_to_screen: bool = False
+    added: "list[str]" = field(default_factory=list)
+    disabled: "list[str]" = field(default_factory=list)
+    reenabled: "list[str]" = field(default_factory=list)
+    error: "str | None" = None
+
+    @property
+    def changed(self):
+        # type: () -> bool
+        """Did this sync actually do anything worth telling somebody about?"""
+        return bool(
+            self.created_field
+            or self.attached_to_screen
+            or self.added
+            or self.disabled
+            or self.reenabled
+        )
+
+    def to_json(self):
+        # type: () -> dict
+        """camelCase, for the extension — the same contract as `JiraStatus.to_json`."""
+        return {
+            "ok": self.ok,
+            "fieldId": self.field_id,
+            "createdField": self.created_field,
+            "attachedToScreen": self.attached_to_screen,
+            "added": list(self.added),
+            "disabled": list(self.disabled),
+            "reenabled": list(self.reenabled),
+            "error": self.error,
+        }
+
+    def describe(self):
+        # type: () -> str
+        """One line for a log or a terminal."""
+        if not self.ok:
+            return "Repository field not synced: {}".format(self.error)
+        parts = []
+        if self.created_field:
+            parts.append("created the field")
+        if self.attached_to_screen:
+            parts.append("added it to the card layout")
+        if self.added:
+            parts.append("added {}".format(", ".join(self.added)))
+        if self.reenabled:
+            parts.append("re-enabled {}".format(", ".join(self.reenabled)))
+        if self.disabled:
+            parts.append("disabled {}".format(", ".join(self.disabled)))
+        if not parts:
+            return "Repository field already up to date"
+        return "Repository field: " + "; ".join(parts)
+
+
+def find_repository_field(client):
+    # type: (JiraClient) -> dict | None
+    """The Repository custom field, matched by name, case-insensitively.
+
+    Discovered rather than hard-coded for the same reason status IDs are: a
+    custom field's id is per-site and only knowable after it is created or looked
+    up, so `customfield_10210` is true of exactly one Jira site.
+    """
+    response = client.request("GET", "/rest/api/3/field")
+    wanted = REPOSITORY_FIELD_NAME.strip().lower()
+    for candidate in response if isinstance(response, list) else []:
+        if not isinstance(candidate, dict):
+            continue
+        name = candidate.get("name")
+        if isinstance(name, str) and name.strip().lower() == wanted:
+            return candidate
+    return None
+
+
+def _default_screen_ids(client, project_id):
+    # type: (JiraClient, str) -> list[str]
+    """Every distinct default screen the project's cards are laid out on.
+
+    The chain measured in plans/company-managed-jira-project.md §0.6:
+    issue type screen scheme → screen scheme → `screens.default`. A team-managed
+    project 400s at the first step and has no screen model at all, which is why
+    the queue project is company-managed.
+    """
+    schemes = client.request(
+        "GET", "/rest/api/3/issuetypescreenscheme/project", query={"projectId": project_id}
+    )
+    scheme_ids = []
+    for entry in (schemes or {}).get("values") or []:
+        scheme = (entry or {}).get("issueTypeScreenScheme") or {}
+        scheme_id = scheme.get("id")
+        if scheme_id is not None and str(scheme_id) not in scheme_ids:
+            scheme_ids.append(str(scheme_id))
+
+    screen_scheme_ids = []
+    for scheme_id in scheme_ids:
+        # A top-level path with a query parameter, **not** `/{id}/mapping` —
+        # measured against the real site, where the sub-resource form answers
+        # `405 Method Not Allowed`. Guessing it cost a round of duplicate fields:
+        # the attach failed, the sync unwound, and the field creation above it
+        # was retried on every save.
+        mappings = client.request(
+            "GET",
+            "/rest/api/3/issuetypescreenscheme/mapping",
+            query={"issueTypeScreenSchemeId": scheme_id, "maxResults": 100},
+        )
+        for mapping in (mappings or {}).get("values") or []:
+            screen_scheme_id = (mapping or {}).get("screenSchemeId")
+            if screen_scheme_id is not None and str(screen_scheme_id) not in screen_scheme_ids:
+                screen_scheme_ids.append(str(screen_scheme_id))
+
+    screen_ids = []
+    for screen_scheme_id in screen_scheme_ids:
+        screen_schemes = client.request(
+            "GET", "/rest/api/3/screenscheme", query={"id": screen_scheme_id}
+        )
+        for screen_scheme in (screen_schemes or {}).get("values") or []:
+            default_screen = ((screen_scheme or {}).get("screens") or {}).get("default")
+            if default_screen is not None and str(default_screen) not in screen_ids:
+                screen_ids.append(str(default_screen))
+    return screen_ids
+
+
+def _field_already_on_screen(error):
+    # type: (JiraError) -> bool
+    """Is this 400 Jira's "that field is already here" rather than a real refusal?
+
+    Measured in plans/company-managed-jira-project.md §0.6 — posting `labels` to a
+    tab that already had it answered
+    `400 {"fieldId": "The field with id labels already exists on the screen."}`.
+    Belt and braces: `attach_repository_field_to_screens` reads the tab's fields
+    first and does not post when the field is there, so this only catches a race.
+    """
+    return error.status_code == 400 and "already exists on the screen" in (
+        error.explanation or ""
+    )
+
+
+def attach_repository_field_to_screens(client, project_id, field_id, log=_ignore):
+    # type: (JiraClient, str, str, object) -> bool
+    """Put the field on the project's card layout. Returns whether anything changed.
+
+    This is the step plans/jira-repository-picker.md §3 printed as a manual
+    instruction. It is superseded: on a **company-managed** project the whole
+    chain is reachable over the public REST API
+    (plans/company-managed-jira-project.md §0.6), so there is no manual step.
+
+    The tab's existing fields are read before posting, rather than posting and
+    treating the "already exists" 400 as success, so that a re-run is genuinely
+    write-free — `configure_project` is called on every install and repair, and
+    "safe to re-run" here means issuing no writes, not merely surviving them.
+    """
+    try:
+        return _attach_repository_field_to_screens(client, project_id, field_id, log=log)
+    except JiraError as error:
+        # Degraded, not fatal — the same stance `ensure_board_columns` takes.
+        # The field and its options are the part that must land; a field that is
+        # not on the layout is invisible on a card but entirely recoverable, and
+        # letting this unwind the sync meant the *field creation above it* was
+        # retried on every save, minting a duplicate each time (Jira Cloud allows
+        # two custom fields to share a name).
+        log(
+            "Could not put '{}' on the card layout ({}): {}. The field and its "
+            "options are fine — add it to the layout by hand, or re-run once this "
+            "is fixed.".format(REPOSITORY_FIELD_NAME, error.cause, error)
+        )
+        return False
+
+
+def _attach_repository_field_to_screens(client, project_id, field_id, log=_ignore):
+    # type: (JiraClient, str, str, object) -> bool
+    attached = False
+    for screen_id in _default_screen_ids(client, project_id):
+        tabs = client.request("GET", "/rest/api/3/screens/{}/tabs".format(screen_id))
+        for tab in tabs if isinstance(tabs, list) else []:
+            tab_id = (tab or {}).get("id")
+            if tab_id is None:
+                continue
+            path = "/rest/api/3/screens/{}/tabs/{}/fields".format(screen_id, tab_id)
+            existing = client.request("GET", path)
+            existing_fields = existing if isinstance(existing, list) else []
+            present = any(
+                isinstance(candidate, dict) and str(candidate.get("id")) == str(field_id)
+                for candidate in existing_fields
+            )
+            if present:
+                continue
+            try:
+                client.request("POST", path, body={"fieldId": field_id})
+            except JiraError as error:
+                if not _field_already_on_screen(error):
+                    raise
+                continue
+            log("Added '{}' to screen {}".format(REPOSITORY_FIELD_NAME, screen_id))
+            attached = True
+            # One tab is enough — a field on two tabs of one screen is a
+            # duplicate on the card, not a second chance at being visible.
+            break
+    return attached
+
+
+def ensure_repository_field(client, project_id, log=_ignore):
+    # type: (JiraClient, str, object) -> tuple[str, str, bool, bool]
+    """Find or create the Repository field. Returns (id, context id, created, attached)."""
+    field = find_repository_field(client)
+    created = False
+    if field is None:
+        try:
+            field = client.request(
+                "POST",
+                "/rest/api/3/field",
+                body={
+                    "name": REPOSITORY_FIELD_NAME,
+                    "description": (
+                        "Which repository a queued prompt runs in. Managed from the "
+                        "Claude Usage Optimizer extension's Settings screen."
+                    ),
+                    "type": REPOSITORY_FIELD_TYPE,
+                    "searcherKey": REPOSITORY_FIELD_SEARCHER_KEY,
+                },
+            )
+            created = True
+            log("Created the '{}' field".format(REPOSITORY_FIELD_NAME))
+        except JiraError as error:
+            # Chrome spawns a *separate host process per message*, so two saves a
+            # second apart race here: both find nothing, both create. Jira Cloud
+            # happily accepts two custom fields with one name, so the loser of the
+            # race has to notice and adopt the winner's field rather than add to
+            # the pile. A name clash is the one failure worth re-reading for.
+            field = find_repository_field(client)
+            if field is None:
+                raise
+            log(
+                "Another process created the '{}' field first ({}) — using theirs".format(
+                    REPOSITORY_FIELD_NAME, error.cause
+                )
+            )
+
+    field_id = str((field or {}).get("id") or "")
+    if not field_id:
+        raise JiraError("Jira returned no id for the '{}' field".format(REPOSITORY_FIELD_NAME))
+
+    # A newly created field has exactly one context, made for it automatically,
+    # and it is always global: narrowing it to this project 400s with "the global
+    # context cannot be made non-global" (plans/jira-repository-picker.md §0.2).
+    contexts = client.request("GET", "/rest/api/3/field/{}/context".format(field_id))
+    context_values = (contexts or {}).get("values") or []
+    if not context_values:
+        raise JiraError("The '{}' field has no context to hold options".format(field_id))
+    context_id = str((context_values[0] or {}).get("id") or "")
+
+    attached = attach_repository_field_to_screens(client, project_id, field_id, log=log)
+    return field_id, context_id, created, attached
+
+
+def _repository_names(repositories):
+    # type: (list | None) -> list[str]
+    """The names worth sending to Jira, in order, without duplicates."""
+    names = []
+    seen = set()
+    for repository in repositories or []:
+        if not isinstance(repository, dict):
+            continue
+        name = repository.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if name.strip().lower() in seen:
+            continue
+        seen.add(name.strip().lower())
+        names.append(name.strip())
+    return names
+
+
+def sync_repository_field(client, project_id, repositories, log=_ignore):
+    # type: (JiraClient, str, list | None, object) -> RepositoryFieldSync
+    """Make the field's options match the configured repositories, by name.
+
+    **Options are soft-disabled, never deleted.** Deleting one blanks the field
+    on every card that had it selected, silently turning "point this at repo X"
+    into "point this at nothing" the moment X is removed from Settings — a worse
+    outcome than a stale, disabled entry nobody picks. Matching by name is what
+    lets a removed-then-re-added repository re-enable its original option rather
+    than accumulate a duplicate.
+
+    Never raises: every failure comes back as `ok=False` with the reason.
+    """
+    try:
+        field_id, context_id, created, attached = ensure_repository_field(
+            client, project_id, log=log
+        )
+
+        option_path = "/rest/api/3/field/{}/context/{}/option".format(field_id, context_id)
+        response = client.request("GET", option_path)
+        existing = [
+            option
+            for option in (response or {}).get("values") or []
+            if isinstance(option, dict) and isinstance(option.get("value"), str)
+        ]
+        existing_by_name = {option["value"].strip().lower(): option for option in existing}
+
+        wanted_names = _repository_names(repositories)
+        wanted_keys = {name.lower() for name in wanted_names}
+
+        added = []
+        reenabled = []
+        for name in wanted_names:
+            option = existing_by_name.get(name.lower())
+            if option is None:
+                client.request(
+                    "POST", option_path, body={"options": [{"value": name, "disabled": False}]}
+                )
+                added.append(name)
+            elif option.get("disabled"):
+                client.request(
+                    "PUT",
+                    option_path,
+                    body={
+                        "options": [
+                            {
+                                "id": str(option.get("id")),
+                                "value": option["value"],
+                                "disabled": False,
+                            }
+                        ]
+                    },
+                )
+                reenabled.append(option["value"])
+
+        disabled = []
+        for key, option in existing_by_name.items():
+            if key in wanted_keys or option.get("disabled"):
+                continue
+            client.request(
+                "PUT",
+                option_path,
+                body={
+                    "options": [
+                        {"id": str(option.get("id")), "value": option["value"], "disabled": True}
+                    ]
+                },
+            )
+            disabled.append(option["value"])
+
+        return RepositoryFieldSync(
+            ok=True,
+            field_id=field_id,
+            created_field=created,
+            attached_to_screen=attached,
+            added=added,
+            disabled=disabled,
+            reenabled=reenabled,
+        )
+    except WRITE_FAILURES as error:
+        return RepositoryFieldSync(ok=False, error=str(error))
+
+
+def sync_repositories_if_configured(settings, log=_ignore):
+    # type: (object, object) -> dict | None
+    """Push the settings' repository list to Jira, if there is anything to push to.
+
+    Reads the credential itself rather than taking one from the caller — the same
+    rule the credential follows everywhere else here: it is a 0600 file, and it
+    never travels the settings mirror. No credential or no project key is an
+    ordinary state on a fresh install, so it logs a line and returns None rather
+    than failing the save that called it.
+    """
+    try:
+        import autonomous_work_settings
+
+        if getattr(settings, "queue_source", None) != autonomous_work_settings.QUEUE_SOURCE_JIRA:
+            return None
+
+        project_key = (getattr(settings, "jira_project_key", "") or "").strip().upper()
+        if not project_key:
+            log("Repositories not synced: no Jira project key configured yet")
+            return None
+
+        credentials = read_credentials()
+        if credentials is None:
+            log("Repositories not synced: no Jira credential on this machine")
+            return None
+
+        client = JiraClient(credentials, log=log, timeout_seconds=PROBE_TIMEOUT_SECONDS)
+        project = find_project(client, DEFAULT_PROJECT_NAME, project_key)
+        if project is None:
+            log("Repositories not synced: no project {} on the site".format(project_key))
+            return RepositoryFieldSync(
+                ok=False, error="No project {} on the site".format(project_key)
+            ).to_json()
+
+        result = sync_repository_field(
+            client,
+            str(project.get("id") or ""),
+            getattr(settings, "repositories", []),
+            log=log,
+        )
+        log(result.describe())
+        return result.to_json()
+    except Exception as error:  # noqa: BLE001 - a save must never fail on this
+        log("Repositories not synced: {}".format(error))
+        return RepositoryFieldSync(ok=False, error=str(error)).to_json()
+
+
 class JiraQueueSource:
     """The To Do column, read `ORDER BY Rank ASC` — a `queue_source.QueueSource`.
 
@@ -787,14 +1262,23 @@ class JiraQueueSource:
     strings, and this class translates at the boundary.
     """
 
-    def __init__(self, credentials, project_key, status_names=None, log=_ignore):
-        # type: (JiraCredentials, str, dict | None, object) -> None
+    def __init__(
+        self, credentials, project_key, status_names=None, repositories=None, log=_ignore
+    ):
+        # type: (JiraCredentials, str, dict | None, list | None, object) -> None
         self.credentials = credentials
         self.project_key = project_key
         self.configured_status_names = status_names or {}
+        self.repositories = repositories or []
         self._log = log
         self.client = JiraClient(credentials, log=log)
         self._statuses = None  # type: ProjectStatuses | None
+        self._repository_field_id = None  # type: str | None
+        # Distinct from `_repository_field_id is None`, which cannot tell "not
+        # looked yet" from "looked, and there is no such field" — without this
+        # every card would re-ask, and a site without the field would pay for a
+        # round trip per card forever.
+        self._looked_for_repository_field = False
 
     # -- plumbing ----------------------------------------------------------- #
 
@@ -825,6 +1309,33 @@ class JiraQueueSource:
         # type: (str) -> str | None
         return self.statuses().name_for(column)
 
+    def repository_field_id(self):
+        # type: () -> str | None
+        """The Repository field's id on this site, resolved once per run.
+
+        Resolved lazily and cached the same way `statuses()` is, and for the same
+        reason: it is one call whose answer does not change mid-run, and the JQL
+        search needs it to ask for the field at all.
+
+        Unlike `statuses()`, a failure here is **not** raised. The picker is a
+        convenience over the `REPO:` line that still works without it, so a site
+        where the field is missing — or momentarily unreadable — falls back
+        rather than taking the whole queue down.
+        """
+        if not self._looked_for_repository_field:
+            self._looked_for_repository_field = True
+            try:
+                found = find_repository_field(self.client)
+            except JiraError as error:
+                self._log(
+                    "Could not look up the '{}' field ({}) — cards fall back to {}".format(
+                        REPOSITORY_FIELD_NAME, error.cause, REPOSITORY_FIELD_PREFIX
+                    )
+                )
+                found = None
+            self._repository_field_id = str(found.get("id")) if found else None
+        return self._repository_field_id
+
     def _search(self, column, limit=50):
         # type: (str, int) -> list[dict]
         status_name = self._status_name(column)
@@ -833,6 +1344,12 @@ class JiraQueueSource:
         jql = 'project = "{}" AND status = "{}" ORDER BY Rank ASC'.format(
             self.project_key, status_name
         )
+        # Asked for alongside the rest rather than in a second round trip per
+        # card — the same reason the status IDs are resolved once, not per issue.
+        wanted_fields = "summary,description,labels,status"
+        repository_field_id = self.repository_field_id()
+        if repository_field_id:
+            wanted_fields += "," + repository_field_id
         try:
             response = self.client.request(
                 "GET",
@@ -843,7 +1360,7 @@ class JiraQueueSource:
                 "/rest/api/3/search/jql",
                 query={
                     "jql": jql,
-                    "fields": "summary,description,labels,status",
+                    "fields": wanted_fields,
                     "maxResults": limit,
                 },
             )
@@ -856,7 +1373,11 @@ class JiraQueueSource:
 
     def _entry_from_issue(self, issue, status):
         # type: (dict, str) -> QueueEntry
-        prompt, repository_path = prompt_from_issue(issue)
+        prompt, repository_path = prompt_from_issue(
+            issue,
+            repository_field_id=self.repository_field_id(),
+            repositories=self.repositories,
+        )
         return QueueEntry(
             status=status,
             handle=issue.get("key"),
@@ -1998,6 +2519,14 @@ def _load_configured(require_credentials=True):
     return credentials, project_key
 
 
+def _configured_repositories():
+    # type: () -> list
+    """The repository list the extension mirrored, for the CLI paths."""
+    import autonomous_work_settings
+
+    return autonomous_work_settings.read_settings().repositories
+
+
 def _set_credentials():
     # type: () -> int
     import getpass
@@ -2058,9 +2587,9 @@ def _set_credentials():
     return 1
 
 
-def configure_project(client, project, log=print):
-    # type: (JiraClient, dict, object) -> ProjectStatuses
-    """Steps 5–7: issue type scheme, workflow statuses, board columns.
+def configure_project(client, project, log=print, repositories=()):
+    # type: (JiraClient, dict, object, list | tuple) -> ProjectStatuses
+    """Steps 5–8: issue type scheme, workflow statuses, board columns, Repository field.
 
     Re-run safe: every step is find-or-create / diff-and-patch, and a second
     call against an already-configured project issues zero writes. This is
@@ -2098,6 +2627,14 @@ def configure_project(client, project, log=print):
         log("Board columns set to Draft | To Do | In Progress | In Review | Done")
     else:
         log("Board columns already match")
+
+    # The Repository picker. plans/jira-repository-picker.md §3 printed the
+    # screen attach as a manual step, because a *team-managed* project exposes no
+    # screen model over the API at all. That premise is gone: the queue project
+    # is company-managed, where the whole chain is scriptable
+    # (plans/company-managed-jira-project.md §0.6), so nothing here is printed
+    # for a person to do by hand.
+    log(sync_repository_field(client, project_id, list(repositories), log=log).describe())
 
     return resolve_project_statuses(client, project_key)
 
@@ -2154,16 +2691,21 @@ def _install(project_key_argument=None):
 
     resolved_key = str(project.get("key") or DEFAULT_PROJECT_KEY)
 
-    print("Configuring the issue type scheme, workflow and board columns…")
+    # Read before configuring, not after: the Repository field's options are
+    # synced from whatever the settings mirror already holds.
+    settings = autonomous_work_settings.read_settings()
+
+    print("Configuring the issue type scheme, workflow, board columns and Repository field…")
     try:
-        statuses = configure_project(client, project, log=print)
+        statuses = configure_project(
+            client, project, log=print, repositories=settings.repositories
+        )
     except JiraError as error:
         print("Could not finish configuring the project ({}): {}".format(error.cause, error))
         if error.explanation:
             print("Jira said: {}".format(error.explanation))
         statuses = resolve_project_statuses(client, resolved_key)
 
-    settings = autonomous_work_settings.read_settings()
     autonomous_work_settings.write_settings(
         replace(
             settings,
@@ -2189,6 +2731,12 @@ def _install(project_key_argument=None):
         print()
     else:
         print("Done — all five columns are present on {}\n".format(board_url))
+
+    print("The '{}' field is on the card layout — no manual step for it.".format(
+        REPOSITORY_FIELD_NAME
+    ))
+    print("Add repositories in the extension's Settings and each save pushes them")
+    print("to its dropdown. Only the name goes to Jira; the path stays here.\n")
 
     print("One step is left, and it is not ours to do: point the extension at the")
     print("board. Click its toolbar icon in Chrome, open Settings, set 'Queue source'")
@@ -2240,7 +2788,9 @@ def _configure_project(project_key_argument=None, purge=False):
         return 0
 
     try:
-        statuses = configure_project(client, project, log=print)
+        statuses = configure_project(
+            client, project, log=print, repositories=_configured_repositories()
+        )
     except JiraError as error:
         print("Could not finish configuring the project ({}): {}".format(error.cause, error))
         if error.explanation:
@@ -2448,6 +2998,48 @@ def _queue_source_report():
     return 0
 
 
+def _sync_repositories():
+    # type: () -> int
+    """Push the configured repository list to the Repository field's dropdown.
+
+    The same work every settings save does, run by hand — `--probe-adf`'s role,
+    for the same reason: it is the only way to see what the real site made of it
+    without waiting for the extension to save something.
+    """
+    credentials, project_key = _load_configured()
+    if credentials is None or not project_key:
+        if credentials is not None:
+            print("No Jira project key configured — run `just install-jira-queue`.")
+        return 1
+
+    client = JiraClient(credentials, log=print)
+    project = find_project(client, DEFAULT_PROJECT_NAME, project_key)
+    if project is None:
+        print("No project with key {} on {}.".format(project_key, credentials.site_url))
+        return 1
+
+    repositories = _configured_repositories()
+    print("Syncing {} repositor{} to {} on {}\n".format(
+        len(repositories), "y" if len(repositories) == 1 else "ies", project_key, credentials.site_url
+    ))
+
+    result = sync_repository_field(client, str(project.get("id") or ""), repositories, log=print)
+    print()
+    print(result.describe())
+    if not result.ok:
+        return 1
+
+    print("Field:        {}".format(result.field_id))
+    for name in _repository_names(repositories):
+        print("  - {}".format(name))
+    if result.disabled:
+        # Never deleted: a deleted option blanks the field on every card that had
+        # it selected. A disabled one stays visible on those cards and simply
+        # cannot be picked again.
+        print("\nDisabled (not deleted): {}".format(", ".join(result.disabled)))
+    return 0
+
+
 def main():
     # type: () -> int
     import argparse
@@ -2465,6 +3057,11 @@ def main():
         "--configure-project",
         action="store_true",
         help="Repair an existing project's scheme, workflow and columns.",
+    )
+    modes.add_argument(
+        "--sync-repositories",
+        action="store_true",
+        help="Push the configured repository list to the Repository field's dropdown.",
     )
     parser.add_argument(
         "project_key",
@@ -2496,6 +3093,8 @@ def main():
             return _probe_adf()
         if arguments.configure_project:
             return _configure_project(arguments.project_key, purge=arguments.purge)
+        if arguments.sync_repositories:
+            return _sync_repositories()
     except (EOFError, KeyboardInterrupt):
         # Ctrl-C or Ctrl-D part way through the credential questions, which is a
         # perfectly ordinary way to change your mind. Nothing has been written

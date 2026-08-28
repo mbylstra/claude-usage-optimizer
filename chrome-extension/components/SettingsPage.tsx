@@ -1,4 +1,5 @@
-import { ArrowLeft, FolderLock, Play, ScrollText } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeft, FolderLock, Pencil, Play, ScrollText, X } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -29,15 +30,85 @@ import {
 import {
   DEFAULT_NEW_PROJECTS_DIRECTORY,
   JIRA_COLUMNS,
+  isRepositoryDraftComplete,
+  repositoryFromDraft,
   type AutonomousWorkSettings,
   type JiraColumnKey,
   type QueueSourceName,
+  type RepositoryDraft,
+  type RepositoryOption,
 } from '@/lib/settingsTypes';
 import {
   warningReaches,
   NO_JIRA_WARNING,
   type JiraCredentialWarning,
 } from '@/lib/jiraCredentialWarning';
+
+/**
+ * One repository being typed, with the button that commits it.
+ *
+ * Separate from the settings entirely until `onConfirm` — see `RepositoryDraft`
+ * for why a half-typed name must never become a setting. Enter confirms and
+ * Escape cancels, so the keyboard path does not force a reach for the mouse.
+ */
+function RepositoryDraftEditor({
+  draft,
+  confirmLabel,
+  onChange,
+  onConfirm,
+  onCancel,
+}: {
+  draft: RepositoryDraft;
+  confirmLabel: string;
+  onChange: (draft: RepositoryDraft) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const complete = isRepositoryDraftComplete(draft);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && complete) {
+      event.preventDefault();
+      onConfirm();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <div className="border-input flex flex-col gap-2 rounded-md border p-2">
+      <Input
+        aria-label="Repository name"
+        type="text"
+        autoFocus
+        spellCheck={false}
+        placeholder="Name, as it appears on the card"
+        value={draft.name}
+        onChange={(event) => onChange({ ...draft, name: event.target.value })}
+        onKeyDown={handleKeyDown}
+      />
+      <Input
+        aria-label="Repository path"
+        type="text"
+        spellCheck={false}
+        placeholder="~/code/thing"
+        value={draft.path}
+        onChange={(event) => onChange({ ...draft, path: event.target.value })}
+        onKeyDown={handleKeyDown}
+      />
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={!complete} onClick={onConfirm}>
+          {confirmLabel}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** Clamped so a stray edit cannot save an interval that would never trigger the watchdog. */
 const MIN_MAX_PROMPT_DURATION_HOURS = 0.5;
@@ -167,6 +238,40 @@ export function SettingsPage({
       jiraStatusNames[column] = value;
     }
     onAutonomousWorkSettingsChange({ ...autonomousWorkSettings, jiraStatusNames });
+  };
+
+  // The one piece of local state on this screen, and it earns its place: a
+  // half-typed repository must not reach the settings at all. Every settings
+  // change is pushed to the host 600ms after the last keystroke and turned into
+  // Jira dropdown options, and those options are soft-disabled rather than
+  // deleted — so typing a name through the settings would leave a permanent
+  // trail of `Claude Cod` behind every `Claude Code Optimizer`. Nothing here
+  // crosses that line until the row is confirmed.
+  const [repositoryDraft, setRepositoryDraft] = useState<RepositoryDraft | null>(null);
+
+  const setRepositories = (repositories: RepositoryOption[]) =>
+    onAutonomousWorkSettingsChange({ ...autonomousWorkSettings, repositories });
+
+  const handleCommitRepositoryDraft = () => {
+    if (repositoryDraft === null || !isRepositoryDraftComplete(repositoryDraft)) return;
+    const repository = repositoryFromDraft(repositoryDraft);
+    setRepositories(
+      repositoryDraft.index === null
+        ? [...autonomousWorkSettings.repositories, repository]
+        : autonomousWorkSettings.repositories.map((existing, position) =>
+            position === repositoryDraft.index ? repository : existing,
+          ),
+    );
+    setRepositoryDraft(null);
+  };
+
+  // Removing is a single deliberate click with nothing half-typed about it, so
+  // it commits immediately rather than going through a draft.
+  const handleRemoveRepository = (index: number) => {
+    setRepositoryDraft(null);
+    setRepositories(
+      autonomousWorkSettings.repositories.filter((_repository, position) => position !== index),
+    );
   };
 
   const usesJira = autonomousWorkSettings.queueSource === 'jira';
@@ -372,6 +477,86 @@ export function SettingsPage({
                 <p className="text-muted-foreground text-xs">
                   Only fill these in if you renamed a column in Jira. Statuses are matched by name,
                   ignoring case; anything left blank uses the name above.
+                </p>
+              </div>
+            </details>
+          )}
+
+          {usesJira && (
+            <details className="flex flex-col gap-1">
+              <summary className="cursor-pointer text-sm">Repositories</summary>
+              <div className="mt-2 flex flex-col gap-2">
+                {autonomousWorkSettings.repositories.map((repository, index) =>
+                  repositoryDraft?.index === index ? (
+                    <RepositoryDraftEditor
+                      key={index}
+                      draft={repositoryDraft}
+                      confirmLabel="Save"
+                      onChange={setRepositoryDraft}
+                      onConfirm={handleCommitRepositoryDraft}
+                      onCancel={() => setRepositoryDraft(null)}
+                    />
+                  ) : (
+                    <div key={index} className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-xs font-medium">{repository.name}</span>
+                        <span className="text-muted-foreground truncate text-xs">
+                          {repository.path === '' ? 'No path — will not resolve' : repository.path}
+                        </span>
+                      </div>
+                      <div className="flex shrink-0 items-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setRepositoryDraft({ index, ...repository })}
+                          aria-label={`Edit ${repository.name}`}
+                          title="Edit"
+                        >
+                          <Pencil className="size-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveRepository(index)}
+                          aria-label={`Remove ${repository.name}`}
+                          title="Remove"
+                        >
+                          <X className="size-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </div>
+                  ),
+                )}
+
+                {repositoryDraft?.index === null && (
+                  <RepositoryDraftEditor
+                    draft={repositoryDraft}
+                    confirmLabel="Add"
+                    onChange={setRepositoryDraft}
+                    onConfirm={handleCommitRepositoryDraft}
+                    onCancel={() => setRepositoryDraft(null)}
+                  />
+                )}
+
+                {repositoryDraft === null && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="self-start"
+                    onClick={() => setRepositoryDraft({ index: null, name: '', path: '' })}
+                  >
+                    Add repository
+                  </Button>
+                )}
+
+                <p className="text-muted-foreground text-xs">
+                  Each of these becomes an option in the card's <strong>Repository</strong>{' '}
+                  dropdown, so a queued prompt can be pointed at a repository without a{' '}
+                  <code>REPO:</code> line. Only the name is sent to Jira; the path stays on this
+                  machine and is expanded where the work runs. Nothing is sent until you press{' '}
+                  <strong>Add</strong> — a name only reaches Jira once you say it is finished.
+                  Removing one here disables its option rather than deleting it, so cards that
+                  already chose it keep showing it.
                 </p>
               </div>
             </details>

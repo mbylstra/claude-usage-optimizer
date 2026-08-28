@@ -550,6 +550,16 @@ queue-list:
 import-prompts-to-jira:
     @python3 {{ jira_script }} --import-prompts
 
+# The same work every settings save does, run by hand. Creates the Repository
+# field and puts it on the card layout if they are missing, then makes its
+# dropdown match the repositories set in the extension's Settings. Only the name
+# is sent; a removed repository's option is disabled, never deleted.
+
+# Push the configured repository list to the Jira card's Repository dropdown
+[no-exit-message]
+jira-sync-repositories:
+    @python3 {{ jira_script }} --sync-repositories
+
 # Creates one card on the real site, reads it back through v3 and v2, deletes it.
 
 # Measure what a real prompt survives as through Jira's document model

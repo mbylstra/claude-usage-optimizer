@@ -60,6 +60,59 @@ export interface AutonomousWorkSettings {
    * file the native host rewrites and logs around.
    */
   jiraStatusNames: JiraStatusNames;
+  /**
+   * The repositories a Jira card's `Repository` dropdown can point a prompt at.
+   * Pushed to Jira on every settings save; ignored for the file source, which
+   * has no UI to pick anything from and keeps `REPO:` as its only mechanism.
+   */
+  repositories: RepositoryOption[];
+}
+
+/**
+ * One row of the repository list: what Jira shows, and where it actually is.
+ *
+ * The split is the point. A single-select option in Jira is one string, and an
+ * absolute path can carry a username or a company name — so only `name` is ever
+ * sent, and `path` stays in the local settings mirror.
+ */
+export interface RepositoryOption {
+  /** Shown on the Jira card's dropdown. Never a path. */
+  name: string;
+  /**
+   * Expanded on the machine that runs the work, `~` and all — the same
+   * convention `newProjectsDirectory` follows. Never sent to Jira. May be empty:
+   * a name-only row is a draft, not yet somewhere work can run.
+   */
+  path: string;
+}
+
+/**
+ * A repository row being typed, before it is committed to the settings.
+ *
+ * A draft is deliberately **not** an `AutonomousWorkSettings` field. Every
+ * settings change is pushed to the native host 600ms after the last keystroke,
+ * and the host turns the repository list into Jira dropdown options — so a
+ * half-typed name reaching the settings at all would mint an option for
+ * `Claude Cod` on the way to `Claude Code Optimizer`. Options are soft-disabled
+ * and never deleted (a deleted one blanks the field on every card that chose
+ * it), which would make that litter permanent. Confirming a row is what turns a
+ * draft into a setting.
+ */
+export interface RepositoryDraft {
+  /** The row being edited, or null while adding a new one. */
+  index: number | null;
+  name: string;
+  path: string;
+}
+
+/** Is there enough here to commit? The name is what Jira's dropdown shows. */
+export function isRepositoryDraftComplete(draft: RepositoryDraft): boolean {
+  return draft.name.trim() !== '';
+}
+
+/** A draft as it will be stored — trimmed, and without the editing position. */
+export function repositoryFromDraft(draft: RepositoryDraft): RepositoryOption {
+  return { name: draft.name.trim(), path: draft.path.trim() };
 }
 
 export type QueueSourceName = 'file' | 'jira';
@@ -97,6 +150,7 @@ export const DEFAULT_APPEND_TO_ALL_PROMPTS = '';
 export const DEFAULT_PACE_THRESHOLD_HOURS = 0;
 export const DEFAULT_QUEUE_SOURCE: QueueSourceName = 'file';
 export const DEFAULT_JIRA_PROJECT_KEY = '';
+export const DEFAULT_REPOSITORIES: RepositoryOption[] = [];
 
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
@@ -108,6 +162,7 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   queueSource: DEFAULT_QUEUE_SOURCE,
   jiraProjectKey: DEFAULT_JIRA_PROJECT_KEY,
   jiraStatusNames: {},
+  repositories: DEFAULT_REPOSITORIES,
 };
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
@@ -142,6 +197,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     queueSource?: unknown;
     jiraProjectKey?: unknown;
     jiraStatusNames?: unknown;
+    repositories?: unknown;
   };
 
   const newProjectsDirectory =
@@ -187,6 +243,8 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
 
   const jiraStatusNames = normaliseJiraStatusNames(autonomousWorkValue.jiraStatusNames);
 
+  const repositories = normaliseRepositories(autonomousWorkValue.repositories);
+
   return {
     notificationsEnabled:
       typeof notificationsEnabled === 'boolean'
@@ -202,8 +260,33 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       queueSource,
       jiraProjectKey,
       jiraStatusNames,
+      repositories,
     },
   };
+}
+
+/**
+ * Keep only rows that could name something: a non-empty `name`.
+ *
+ * `path` is coerced rather than required, because a name-only row is a draft
+ * somebody is still filling in — the same tolerance `newProjectsDirectory` gives
+ * an empty string. A row with no name is not a draft, it is nothing: it is the
+ * string Jira's dropdown would show, and the one a card's selection is matched
+ * against.
+ */
+function normaliseRepositories(stored: unknown): RepositoryOption[] {
+  if (!Array.isArray(stored)) return [];
+  const repositories: RepositoryOption[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { name, path } = entry as { name?: unknown; path?: unknown };
+    if (typeof name !== 'string' || name.trim() === '') continue;
+    repositories.push({
+      name: name.trim(),
+      path: typeof path === 'string' ? path.trim() : '',
+    });
+  }
+  return repositories;
 }
 
 /**

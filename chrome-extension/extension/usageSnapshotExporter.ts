@@ -2,6 +2,7 @@ import { buildUsageSnapshotExport } from '@/lib/usageSnapshotExport';
 import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
 import type { UsageSnapshot } from '@/lib/usageTypes';
 import type { JiraCredentialStatus } from '@/lib/jiraCredentialWarning';
+import type { RepositorySyncResult } from '@/lib/autonomousWorkSettingsStatus';
 
 /**
  * Hands each usage snapshot to a native-messaging host, which writes it to
@@ -124,6 +125,12 @@ export async function requestFolderAccessPrompts(): Promise<{
 export interface AutonomousWorkSettingsSyncResult {
   saved: boolean;
   launchAgentUpdated: boolean;
+  /**
+   * What the host made of the Jira half of this save, or null when there was
+   * none to do. Passed through untouched — `describeAutonomousWorkSettingsStatus`
+   * is where it turns into words.
+   */
+  repositorySync?: RepositorySyncResult | null;
   error?: string;
 }
 
@@ -162,13 +169,18 @@ export async function syncAutonomousWorkSettings(
     });
 
     if (typeof response === 'object' && response !== null && 'ok' in response) {
-      const { ok, launchAgentUpdated, error } = response as {
+      const { ok, launchAgentUpdated, repositorySync, error } = response as {
         ok: unknown;
         launchAgentUpdated?: unknown;
+        repositorySync?: unknown;
         error?: unknown;
       };
       if (ok === true) {
-        return { saved: true, launchAgentUpdated: launchAgentUpdated === true };
+        return {
+          saved: true,
+          launchAgentUpdated: launchAgentUpdated === true,
+          repositorySync: readRepositorySync(repositorySync),
+        };
       }
       return {
         saved: false,
@@ -181,6 +193,38 @@ export async function syncAutonomousWorkSettings(
   } catch (error) {
     return { saved: false, launchAgentUpdated: false, error: String(error) };
   }
+}
+
+/**
+ * The host's repository-sync report, read defensively.
+ *
+ * `null` is a real answer here and not a missing one — it is what the host sends
+ * for a save with no Jira half to do — so a reply from an older host, which
+ * carries no such key at all, has to arrive as `null` too rather than as
+ * something the popup would try to describe.
+ */
+function readRepositorySync(value: unknown): RepositorySyncResult | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { ok, added, disabled, reenabled, error } = value as {
+    ok?: unknown;
+    added?: unknown;
+    disabled?: unknown;
+    reenabled?: unknown;
+    error?: unknown;
+  };
+  return {
+    ok: ok === true,
+    added: readNameList(added),
+    disabled: readNameList(disabled),
+    reenabled: readNameList(reenabled),
+    error: typeof error === 'string' ? error : null,
+  };
+}
+
+function readNameList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((name): name is string => typeof name === 'string')
+    : [];
 }
 
 /**

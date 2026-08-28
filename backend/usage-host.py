@@ -484,7 +484,8 @@ def apply_autonomous_work_settings(message):
     # popup was showing.
     log_message(
         "Settings updated: run at {}, new projects in {}, model {}, max {}h per prompt, "
-        "pace threshold {}h, {} chars appended to prompts, queue in {}, ({})".format(
+        "pace threshold {}h, {} chars appended to prompts, queue in {}, "
+        "{} repositories, ({})".format(
             settings.describe_schedule(),
             settings.new_projects_directory,
             settings.model,
@@ -496,15 +497,29 @@ def apply_autonomous_work_settings(message):
                 if settings.queue_source == autonomous_work_settings.QUEUE_SOURCE_JIRA
                 else "prompts.txt"
             ),
+            len(settings.repositories),
             result.detail,
         )
     )
+
+    # The Jira half of a save. The repository list is the one setting that has to
+    # land somewhere other than this machine, and it rides every save rather than
+    # only `install-jira-queue` because the list is a living thing edited in the
+    # popup. Best-effort by design: `sync_repositories_if_configured` never
+    # raises, and an unreachable Jira must not fail the schedule/model/pace half
+    # of the save — the same rule the credential probe follows.
+    repository_sync = None
+    if settings.queue_source == autonomous_work_settings.QUEUE_SOURCE_JIRA:
+        repository_sync = queue_source_jira.sync_repositories_if_configured(
+            settings, log=log_message
+        )
 
     return {
         "ok": True,
         "launchAgentUpdated": result.applied,
         "detail": result.detail,
         "scheduledFor": settings.describe_schedule(),
+        "repositorySync": repository_sync,
     }
 
 

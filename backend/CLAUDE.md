@@ -96,6 +96,7 @@ just install-jira-queue          # credential, company-managed project, scheme/w
 just jira-configure-project      # repair a project's scheme/workflow/columns (or --purge it)
 just set-jira-credentials        # rotate the API token
 just jira-status                 # site, project, credential, columns, queue depth
+just jira-sync-repositories      # push the repository list to the card's dropdown
 just import-prompts-to-jira      # one-shot migration of prompts.txt
 just probe-jira-adf              # what a real prompt survives as through Jira
 ```
@@ -591,6 +592,29 @@ trash, and those two objects outlive even the async cascade-delete endpoint,
 colliding by name with whatever a recreated project generates. Status names
 are **discovered, not hard-coded**, matched case-insensitively with
 per-column overrides in settings.
+
+**A card picks its repository from a dropdown, not from a typed path.** The
+`Repository` field — a single-select custom field — is created by
+`install-jira-queue` **and attached to the card layout**, which is only possible
+because the project is company-managed: a team-managed project exposes no screen
+model over the API at all, and the earlier plan printed that attach as a manual
+step (`plans/jira-repository-picker.md` §3, superseded by
+`plans/company-managed-jira-project.md` §0.6). Its options are the repository
+list in the extension's Settings, pushed on **every settings save** rather than
+only at install, because the list is a living thing edited in the popup;
+`just jira-sync-repositories` does the same by hand. **Only the repository name
+ever reaches Jira** — a single-select option is one string, and an absolute path
+can carry a username or a company name, so the path stays in the settings mirror
+and is expanded on the machine that runs the work, exactly as
+`newProjectsDirectory` is. **An option for a removed repository is disabled, not
+deleted**: deleting one blanks the field on every card that had it selected,
+silently turning "point this at repo X" into "point this at nothing", and
+re-adding the name later re-enables the original option rather than making a
+duplicate. The field wins over a `REPO:` line when both are set, and a selected
+name matching nothing configured behaves exactly like an unset field — a
+renamed entry in Settings must not point a queued prompt at the wrong place. A
+sync that cannot reach Jira is reported next to the save confirmation and never
+fails the save, the same rule the credential probe follows.
 
 **The prompt is the description, or the summary when the description says
 nothing more than a `REPO:` line.** Jira forces a summary and this is what stops

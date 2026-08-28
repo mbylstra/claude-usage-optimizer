@@ -818,6 +818,7 @@ def build_queue_source() -> object:
         credentials,
         project_key,
         status_names=_settings.jira_status_names,
+        repositories=_settings.repositories,
         log=log_message,
     )
 
