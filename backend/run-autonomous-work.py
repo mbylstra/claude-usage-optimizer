@@ -123,6 +123,24 @@ def environment_int_override(name: str) -> int | None:
         return None
 
 
+def environment_bool_override(name: str) -> bool | None:
+    """A boolean from the environment, or None for anything unrecognised.
+
+    None rather than a default, so the caller can fall through to the mirrored
+    setting — the same shape as `environment_int_override`. Only the obvious
+    spellings count; anything else is treated as "not set" rather than guessed.
+    """
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    normalised = raw_value.strip().lower()
+    if normalised in ("1", "true", "yes", "on"):
+        return True
+    if normalised in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
 # All tunable without rebuilding the extension or editing this file.
 # Written by the native-messaging host (`usage-host.py`), not by a download.
 USAGE_SNAPSHOT_FILE = environment_path(
@@ -205,6 +223,20 @@ _model_name = _MODEL_NAME_FORCED_BY_ENV or _settings.model
 # `build_prompt`. Naming and logging of the *queue entry* still use its own
 # prompt unappended; only the invocation sees this.
 APPEND_TO_ALL_PROMPTS = _settings.append_to_all_prompts
+# Whether a session that runs into the 5-hour window schedules its own resume
+# once that window is expected to refill. Off means the queue simply waits for
+# the next nightly run. Set in the extension's Settings screen and mirrored to
+# disk; the environment variable still wins, for a one-off run — same precedence
+# as the pace threshold above. Gates both the scheduling of a resume (see
+# `schedule_resume_if_warranted`) and the serving of one already scheduled (see
+# `main`'s `--resume` branch), so flipping it off after a resume is queued still
+# stops that resume.
+_resume_enabled_from_env = environment_bool_override("AUTONOMOUS_WORK_RESUME_ENABLED")
+RESUME_AFTER_FIVE_HOUR_RESET_ENABLED = (
+    _resume_enabled_from_env
+    if _resume_enabled_from_env is not None
+    else _settings.resume_after_five_hour_reset_enabled
+)
 # Appended after the user's optional `APPEND_TO_ALL_PROMPTS`, on every run,
 # with no way to turn it off — the scheduler works unattended, so every prompt
 # must carry the "branch, then merge if you're sure" contract whether or not
@@ -1617,6 +1649,7 @@ def queue_holds_a_todo() -> bool:
 def schedule_resume_if_warranted(
     reason: str,
     *,
+    resume_enabled: bool,
     limit_notice: str | None,
     snapshot_resets_at: datetime | None,
     forced: bool,
@@ -1632,6 +1665,9 @@ def schedule_resume_if_warranted(
 
     The guards, and why each is here rather than somewhere more convenient:
 
+    * **The resume-after-reset setting is off.** The user turned it off in the
+      extension's Settings screen (or via `AUTONOMOUS_WORK_RESUME_ENABLED`); a
+      session that hits the window then just waits for the next nightly run.
     * **A resumed run schedules nothing.** One resume is a second attempt at
       the night's work; a chain of them is a decision from 2 AM walking through
       the following day on the strength of one possibly-stale snapshot. This is
@@ -1647,6 +1683,10 @@ def schedule_resume_if_warranted(
     * **Only with work left queued.** Nothing to come back for otherwise.
     """
     now = now or datetime.now().astimezone()
+
+    if not resume_enabled:
+        log_message("Not scheduling a resume — the resume-after-reset setting is off")
+        return None
 
     if is_resume_run:
         log_message("Not scheduling a resume — this run is itself a resume")
@@ -1785,6 +1825,16 @@ def main() -> int:
         return 0
 
     if arguments.resume:
+        # The setting may have been switched off after this resume was scheduled
+        # — a plist is already installed and launchd fires it regardless — so the
+        # serve path is gated too, not just the scheduling one. The pending
+        # record is left as-is: cancelling the agent is `usage-host.py`'s job
+        # when the setting arrives, and a stray year-later fire is a no-op
+        # anyway. Exit 0; an honoured off-switch is not a failure.
+        if not RESUME_AFTER_FIVE_HOUR_RESET_ENABLED:
+            log_message("Resume run — the resume-after-reset setting is off, not resuming")
+            return 0
+
         # A resume is only legitimate if a run actually asked for one. Three
         # things make this a no-op — no state, one already served, and one whose
         # moment is long past — and each is a real situation rather than a bug:
@@ -1837,6 +1887,7 @@ def main() -> int:
                 session.resume_scheduled_for = resume_scheduled_for(
                     schedule_resume_if_warranted(
                         "fiveHourExhausted",
+                        resume_enabled=RESUME_AFTER_FIVE_HOUR_RESET_ENABLED,
                         limit_notice=None,
                         snapshot_resets_at=(
                             gate.snapshot.five_hour_resets_at if gate.snapshot else None
@@ -1925,6 +1976,7 @@ def main() -> int:
             session.resume_scheduled_for = resume_scheduled_for(
                 schedule_resume_if_warranted(
                     OUTCOME_SESSION_LIMIT,
+                    resume_enabled=RESUME_AFTER_FIVE_HOUR_RESET_ENABLED,
                     limit_notice=prompt_result.result_text,
                     snapshot_resets_at=(
                         gate.snapshot.five_hour_resets_at if gate.snapshot else None

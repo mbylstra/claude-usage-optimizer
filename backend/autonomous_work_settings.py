@@ -76,6 +76,12 @@ DEFAULT_APPEND_TO_ALL_PROMPTS = ""
 # place that converts to milliseconds.
 DEFAULT_PACE_THRESHOLD_HOURS = 0.0
 
+# Whether a session that runs into the 5-hour window schedules its own resume
+# once that window refills, rather than leaving the queue until the next nightly
+# run. On by default — turning it off is the extension's Settings toggle. See
+# `autonomous_work_resume.py` and `plans/resume-after-five-hour-reset.md`.
+DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED = True
+
 # Where the queue lives. `file` is `prompts.txt` at the repository root, which
 # needs no account, no network and no third party, and is what a fresh clone
 # works with; `jira` is a board — see plans/work-queue-as-a-jira-board.md. The
@@ -141,6 +147,7 @@ class AutonomousWorkSettings:
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
     append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
     pace_threshold_hours: float = DEFAULT_PACE_THRESHOLD_HOURS
+    resume_after_five_hour_reset_enabled: bool = DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED
     queue_source: str = DEFAULT_QUEUE_SOURCE
     jira_project_key: str = DEFAULT_JIRA_PROJECT_KEY
     """Column key (`todo`, `inReview`, …) to the status name in Jira, where the
@@ -244,6 +251,15 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         else DEFAULT_APPEND_TO_ALL_PROMPTS
     )
 
+    # A plain bool only — a truthy int or string is more likely a serialisation
+    # mistake than a considered "on", and the safe direction is the default.
+    resume_enabled_value = settings_data.get("resumeAfterFiveHourResetEnabled")
+    resume_after_five_hour_reset_enabled = (
+        resume_enabled_value
+        if isinstance(resume_enabled_value, bool)
+        else DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED
+    )
+
     queue_source_value = settings_data.get("queueSource")
     queue_source = (
         queue_source_value
@@ -304,6 +320,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         pace_threshold_hours=_coerce_signed_hours(
             settings_data.get("paceThresholdHours"), DEFAULT_PACE_THRESHOLD_HOURS
         ),
+        resume_after_five_hour_reset_enabled=resume_after_five_hour_reset_enabled,
         queue_source=queue_source,
         jira_project_key=jira_project_key,
         jira_status_names=jira_status_names,
@@ -333,6 +350,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
         "appendToAllPrompts": settings.append_to_all_prompts,
         "paceThresholdHours": settings.pace_threshold_hours,
+        "resumeAfterFiveHourResetEnabled": settings.resume_after_five_hour_reset_enabled,
         "queueSource": settings.queue_source,
         "jiraProjectKey": settings.jira_project_key,
         "jiraStatusNames": dict(settings.jira_status_names),
@@ -519,6 +537,11 @@ def main() -> int:
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))
+    print(
+        "Resume after reset: {}".format(
+            "yes" if settings.resume_after_five_hour_reset_enabled else "no"
+        )
+    )
     print("Queue source:       {}".format(settings.queue_source))
     if settings.queue_source == QUEUE_SOURCE_JIRA:
         print("Jira project:       {}".format(settings.jira_project_key or "(not set)"))

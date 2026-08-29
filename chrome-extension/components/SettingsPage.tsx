@@ -353,6 +353,29 @@ export function SettingsPage({
             </p>
           </div>
 
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-0.5">
+              <label htmlFor="resume-after-five-hour-reset" className="text-sm">
+                Resume after limit reset
+              </label>
+              <p className="text-muted-foreground text-xs">
+                When a run hits the 5-hour usage limit, schedule it to pick the queue back up
+                shortly after that window refills, rather than waiting for the next nightly run.
+                Turning this off also cancels any resume already scheduled.
+              </p>
+            </div>
+            <Switch
+              id="resume-after-five-hour-reset"
+              checked={autonomousWorkSettings.resumeAfterFiveHourResetEnabled}
+              onCheckedChange={(checked) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  resumeAfterFiveHourResetEnabled: checked,
+                })
+              }
+            />
+          </div>
+
           <div className="flex flex-col gap-1">
             <label htmlFor="new-projects-directory" className="text-sm">
               New projects folder

@@ -121,6 +121,16 @@ exits 0.
 Also: no resume is scheduled when the queue holds no `todo` entry. There is
 nothing to come back for.
 
+**The whole feature is opt-out.** A later change added
+`resumeAfterFiveHourResetEnabled` — a toggle in the extension's Settings screen,
+default on, mirrored to `autonomous-work-settings.json`, overridable for one run
+with `AUTONOMOUS_WORK_RESUME_ENABLED`. Off, `schedule_resume_if_warranted`
+returns before scheduling (its first guard) and a `--resume` run that a
+still-installed agent fires anyway exits 0 without consuming its state. Because
+turning it off is also a settings save, `usage-host.py` clears a resume an
+earlier run already scheduled, so the one-shot agent is unloaded rather than
+left to fire into that second guard hours later.
+
 ## 4. Mechanism: a third launch agent, fired once
 
 ```

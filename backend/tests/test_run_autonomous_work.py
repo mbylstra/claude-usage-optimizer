@@ -950,6 +950,7 @@ class ScheduleResumeIfWarrantedTests(unittest.TestCase):
 
     def _schedule(self, **overrides):
         arguments = {
+            "resume_enabled": True,
             "limit_notice": self.SESSION_LIMIT_NOTICE,
             "snapshot_resets_at": None,
             "forced": False,
@@ -959,6 +960,12 @@ class ScheduleResumeIfWarrantedTests(unittest.TestCase):
         }
         arguments.update(overrides)
         return work.schedule_resume_if_warranted("sessionLimit", **arguments)
+
+    def test_the_toggle_switched_off_schedules_nothing(self):
+        # The GUI switch (mirrored as resumeAfterFiveHourResetEnabled) and its
+        # AUTONOMOUS_WORK_RESUME_ENABLED override both land here.
+        self.assertIsNone(self._schedule(resume_enabled=False))
+        self.assertFalse(work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.exists())
 
     def test_a_session_limit_with_work_queued_schedules_one(self):
         pending = self._schedule()
