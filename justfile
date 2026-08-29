@@ -10,7 +10,7 @@ install:
     pnpm install
 
 # Everything a fresh clone needs, in one go. Safe to re-run.
-setup: install build install-private-uv install-usage-host install-autonomous-work
+setup: install install-shadcn-components build install-private-uv install-usage-host install-autonomous-work
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f prompts.txt ]; then
@@ -37,10 +37,49 @@ setup: install build install-private-uv install-usage-host install-autonomous-wo
     echo
     echo "Then put some work in prompts.txt and try: just autonomous-dry-run"
     echo
+    echo "Prefer to queue work from your phone? The queue can live on a Jira"
+    echo "board instead of prompts.txt — reorder it by dragging a card, and read"
+    echo "what each run did in the card's comments. It needs a free Atlassian"
+    echo "account, and setup is not run here because it has to ask you things:"
+    echo "       just install-jira-queue"
+    echo
     echo "If your prompts will read ~/Documents, ~/Desktop or ~/Downloads: click"
     echo "the extension's toolbar icon in Chrome, open Settings, press 'Grant"
     echo "folder access', and allow the macOS dialogs that appear."
     echo "To check afterwards: just check-folder-access"
+
+# The UI primitives that come from shadcn rather than being hand-written. Listed
+# here because the recipe below only manages these — the rest of components/ui/
+# predates shadcn being wired up and is ours to maintain.
+shadcn_components := "select"
+
+# Adds only what is missing, and never overwrites — so it is safe to re-run at
+# any point, like every other install-* recipe. `refresh-shadcn-components` is
+# the deliberate way to take upstream's newer version of one.
+
+# Fetch any shadcn component this project uses but does not have
+[working-directory('chrome-extension')]
+install-shadcn-components:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for component in {{ shadcn_components }}; do
+      if [ -f "components/ui/$component.tsx" ]; then
+        echo "shadcn $component already present — left alone"
+      else
+        echo "Adding shadcn $component…"
+        pnpm exec shadcn add "$component" --yes
+      fi
+    done
+
+# Re-fetch them from upstream, discarding any local edits. Rarely what you want.
+[working-directory('chrome-extension')]
+refresh-shadcn-components:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "This overwrites components/ui/ from upstream shadcn, so any local edit"
+    echo "to one of these is lost: {{ shadcn_components }}"
+    echo "Check 'git diff' afterwards before committing."
+    pnpm exec shadcn add {{ shadcn_components }} --overwrite --yes
 
 # Vite dev server for the popup UI (no chrome.* APIs available)
 [working-directory('chrome-extension')]
@@ -457,6 +496,78 @@ test-usage-host:
 [no-exit-message]
 test-autonomous-work:
     @uv run --script backend/tests/run_tests.py
+
+### The queue as a Jira board — see plans/work-queue-as-a-jira-board.md
+### and plans/company-managed-jira-project.md
+
+jira_script := "backend/queue_source_jira.py"
+
+# Credential, a company-managed project, its issue type scheme (defaults to
+# Task), workflow statuses (with global transitions), board columns — all five —
+# and the Repository and Model card dropdowns, scripted end to end. Safe to
+# re-run: it creates only what is missing, and leaves an existing project
+# entirely alone (use jira-configure-project to re-apply config against one).
+
+# Set the queue up on a Jira board
+[no-exit-message]
+install-jira-queue project_key="":
+    @python3 {{ jira_script }} --install {{ project_key }}
+
+# Re-applies the scheme/workflow/column config and the Repository/Model card
+# dropdowns against an existing project — the repair path when it has drifted
+# from a hand edit, and how an existing board picks up newly added card fields.
+# Touches neither the credential nor the settings mirror. --purge cascade-deletes
+# the project and the workflow scheme/workflow Jira's own soft delete leaves
+# behind, instead.
+
+# Repair a project's scheme, workflow, columns and card fields (or --purge to delete it)
+[no-exit-message]
+jira-configure-project project_key="" *flags="":
+    @python3 {{ jira_script }} --configure-project {{ project_key }} {{ flags }}
+
+# Atlassian caps every API token at one year, so this is an annual errand.
+
+# Rotate the API token, without touching anything else
+[no-exit-message]
+set-jira-credentials:
+    @python3 {{ jira_script }} --set-credentials
+
+# Site, project, credential, days to expiry, column health and queue depth
+[no-exit-message]
+jira-status:
+    @python3 {{ jira_script }} --status
+
+# Which queue the next run will read, and whether it can be read at all
+[no-exit-message]
+queue-source:
+    @python3 {{ jira_script }} --source
+
+# What the next run would pick up, in rank order
+[no-exit-message]
+queue-list:
+    @python3 {{ jira_script }} --list
+
+# One-shot migration of prompts.txt onto the board (the file is left untouched)
+[no-exit-message]
+import-prompts-to-jira:
+    @python3 {{ jira_script }} --import-prompts
+
+# The same work every settings save does, run by hand. Creates the Repository
+# field and puts it on the card layout if they are missing, then makes its
+# dropdown match the repositories set in the extension's Settings. Only the name
+# is sent; a removed repository's option is disabled, never deleted.
+
+# Push the configured repository list to the Jira card's Repository dropdown
+[no-exit-message]
+jira-sync-repositories:
+    @python3 {{ jira_script }} --sync-repositories
+
+# Creates one card on the real site, reads it back through v3 and v2, deletes it.
+
+# Measure what a real prompt survives as through Jira's document model
+[no-exit-message]
+probe-jira-adf:
+    @python3 {{ jira_script }} --probe-adf
 
 # Zip dist/ for a Chrome Web Store upload
 package: build

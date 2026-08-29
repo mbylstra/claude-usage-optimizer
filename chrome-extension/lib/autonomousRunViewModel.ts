@@ -366,6 +366,9 @@ const FINISHED_TONES: Record<RunOutcome, RunTimelineTone> = {
 const SKIP_LABELS = {
   onPace: 'Skipped — on pace',
   emptyQueue: 'Skipped — nothing queued',
+  // Distinct from "nothing queued" on purpose: we do not know what is in the
+  // queue, which is why the run touched nothing rather than falling back.
+  queueUnavailable: 'Skipped — the queue could not be read',
   noSnapshot: 'Skipped — no usage snapshot',
   fiveHourExhausted: 'Skipped — the 5-hour session window is spent',
 } as const;

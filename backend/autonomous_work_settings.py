@@ -31,7 +31,7 @@ import json
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
@@ -50,6 +50,19 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
 DEFAULT_MODEL = "opus"
+# The Claude models a run may be pinned to. The one home both the settings
+# screen's validation and the Jira board's per-card `Model` dropdown
+# (`queue_source_jira.MODEL_FIELD_NAME`) check against, so the two cannot drift.
+# The mapping from these names to concrete model ids lives in
+# `run-autonomous-work.py` — the queue never needs it.
+#
+# Haiku is deliberately absent. Auto permission mode — which the scheduler runs
+# `claude -p` under — requires Opus 4.6+ / Sonnet 4.6+ / Fable 5; on any other
+# model Claude Code silently starts in Manual mode, and a headless Manual run
+# denies every file edit and shell command, so a Haiku session just asks a
+# question into the void and gets nothing done. A stored `"haiku"` is coerced
+# to `"sonnet"` in `parse_settings` rather than rejected.
+VALID_MODEL_NAMES = ("opus", "sonnet")
 # Hours, not seconds: the settings screen speaks in hours, and
 # `run-autonomous-work.py` is the one place that converts to seconds. A cap on a
 # single `claude` call, not on the nightly session — a session can run many
@@ -62,6 +75,28 @@ DEFAULT_APPEND_TO_ALL_PROMPTS = ""
 # weekly burn still counts as on pace. `run-autonomous-work.py` is the one
 # place that converts to milliseconds.
 DEFAULT_PACE_THRESHOLD_HOURS = 0.0
+
+# Where the queue lives. `file` is `prompts.txt` at the repository root, which
+# needs no account, no network and no third party, and is what a fresh clone
+# works with; `jira` is a board — see plans/work-queue-as-a-jira-board.md. The
+# two are alternatives and never both live: mirroring one into the other would
+# make a stale copy indistinguishable from a real queue, and the run would
+# happily execute a prompt deleted from the board yesterday.
+QUEUE_SOURCE_FILE = "file"
+QUEUE_SOURCE_JIRA = "jira"
+QUEUE_SOURCE_NAMES = (QUEUE_SOURCE_FILE, QUEUE_SOURCE_JIRA)
+DEFAULT_QUEUE_SOURCE = QUEUE_SOURCE_FILE
+DEFAULT_JIRA_PROJECT_KEY = ""
+# Per-column overrides for anyone who renamed a column in Jira. Empty means "the
+# five names the plan creates". The *credential* deliberately does not travel
+# this path — see `queue_source_jira.CREDENTIALS_FILE`.
+DEFAULT_JIRA_STATUS_NAMES = {}
+# The repositories a Jira card's `Repository` dropdown can point a prompt at,
+# each `{"name": ..., "path": ...}`. Only the **name** is ever sent to Jira — a
+# single-select option is one string, and an absolute path can carry a username
+# or a company name, so it stays here and is expanded on the machine that runs
+# the work, exactly like `new_projects_directory`.
+DEFAULT_REPOSITORIES = []
 
 
 def environment_path(name: str, default: Path) -> Path:
@@ -106,6 +141,16 @@ class AutonomousWorkSettings:
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
     append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
     pace_threshold_hours: float = DEFAULT_PACE_THRESHOLD_HOURS
+    queue_source: str = DEFAULT_QUEUE_SOURCE
+    jira_project_key: str = DEFAULT_JIRA_PROJECT_KEY
+    """Column key (`todo`, `inReview`, …) to the status name in Jira, where the
+    user renamed one. Only the columns actually renamed appear here."""
+    jira_status_names: dict = dataclass_field(default_factory=dict)
+    """`{"name": ..., "path": ...}` per repository, in the order Settings lists
+    them. Kept as plain dicts rather than a nested dataclass, the same choice
+    `jira_status_names` makes: this whole object is a JSON round trip, and a
+    second shape for the file format to know about buys nothing."""
+    repositories: list = dataclass_field(default_factory=list)
 
     @property
     def new_projects_path(self) -> Path:
@@ -159,6 +204,16 @@ def _coerce_signed_hours(value: object, default: float) -> float:
     return float(value)
 
 
+def _coerce_repository_path(value: object) -> str:
+    """A repository's local path, kept as the text the user typed.
+
+    `~` and all — it is expanded on the machine that runs the work, not here,
+    the same convention `new_projects_directory` follows. Anything that is not a
+    string becomes empty rather than being guessed at.
+    """
+    return value.strip() if isinstance(value, str) else ""
+
+
 def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     """Build settings from decoded JSON, falling back per field rather than wholesale."""
     if not isinstance(settings_data, dict):
@@ -172,17 +227,65 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     )
 
     model_value = settings_data.get("model")
-    model = (
-        model_value
-        if isinstance(model_value, str) and model_value in ("haiku", "sonnet", "opus")
-        else DEFAULT_MODEL
-    )
+    if model_value == "haiku":
+        # Haiku is no longer offered (see VALID_MODEL_NAMES). An install that had
+        # it selected lands on the nearest still-valid model rather than jumping
+        # to the DEFAULT_MODEL, which is the most expensive one.
+        model = "sonnet"
+    elif isinstance(model_value, str) and model_value in VALID_MODEL_NAMES:
+        model = model_value
+    else:
+        model = DEFAULT_MODEL
 
     append_to_all_prompts_value = settings_data.get("appendToAllPrompts")
     append_to_all_prompts = (
         append_to_all_prompts_value
         if isinstance(append_to_all_prompts_value, str)
         else DEFAULT_APPEND_TO_ALL_PROMPTS
+    )
+
+    queue_source_value = settings_data.get("queueSource")
+    queue_source = (
+        queue_source_value
+        if isinstance(queue_source_value, str) and queue_source_value in QUEUE_SOURCE_NAMES
+        else DEFAULT_QUEUE_SOURCE
+    )
+
+    project_key_value = settings_data.get("jiraProjectKey")
+    jira_project_key = (
+        project_key_value.strip().upper()
+        if isinstance(project_key_value, str) and project_key_value.strip()
+        else DEFAULT_JIRA_PROJECT_KEY
+    )
+
+    status_names_value = settings_data.get("jiraStatusNames")
+    jira_status_names = (
+        {
+            column: name.strip()
+            for column, name in status_names_value.items()
+            if isinstance(column, str) and isinstance(name, str) and name.strip()
+        }
+        if isinstance(status_names_value, dict)
+        else dict(DEFAULT_JIRA_STATUS_NAMES)
+    )
+
+    # A row is only usable if it has a name — that is the string Jira's dropdown
+    # shows, and the one the run matches a card's selection against. A blank path
+    # is tolerated, because a half-filled row in Settings is a draft rather than
+    # an error; it simply resolves to no repository, exactly as an unset field
+    # does. Members are dropped one by one rather than the whole list rejected,
+    # the same tolerance `jiraStatusNames` above gets.
+    repositories_value = settings_data.get("repositories")
+    repositories = (
+        [
+            {"name": entry["name"].strip(), "path": _coerce_repository_path(entry.get("path"))}
+            for entry in repositories_value
+            if isinstance(entry, dict)
+            and isinstance(entry.get("name"), str)
+            and entry["name"].strip()
+        ]
+        if isinstance(repositories_value, list)
+        else list(DEFAULT_REPOSITORIES)
     )
 
     return AutonomousWorkSettings(
@@ -201,6 +304,10 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         pace_threshold_hours=_coerce_signed_hours(
             settings_data.get("paceThresholdHours"), DEFAULT_PACE_THRESHOLD_HOURS
         ),
+        queue_source=queue_source,
+        jira_project_key=jira_project_key,
+        jira_status_names=jira_status_names,
+        repositories=repositories,
     )
 
 
@@ -226,6 +333,10 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
         "appendToAllPrompts": settings.append_to_all_prompts,
         "paceThresholdHours": settings.pace_threshold_hours,
+        "queueSource": settings.queue_source,
+        "jiraProjectKey": settings.jira_project_key,
+        "jiraStatusNames": dict(settings.jira_status_names),
+        "repositories": [dict(repository) for repository in settings.repositories],
     }
 
     temporary_path = None
@@ -408,6 +519,17 @@ def main() -> int:
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))
+    print("Queue source:       {}".format(settings.queue_source))
+    if settings.queue_source == QUEUE_SOURCE_JIRA:
+        print("Jira project:       {}".format(settings.jira_project_key or "(not set)"))
+        if settings.jira_status_names:
+            print("Renamed columns:    {}".format(settings.jira_status_names))
+        for index, repository in enumerate(settings.repositories):
+            print("{:<20}{} -> {}".format(
+                "Repositories:" if index == 0 else "",
+                repository.get("name", ""),
+                repository.get("path") or "(no path yet)",
+            ))
     print("Settings file:      {}".format(SETTINGS_FILE))
     print(
         "Launch agent:       {}".format(

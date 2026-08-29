@@ -1,4 +1,6 @@
 import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
+import type { JiraCredentialStatus } from '@/lib/jiraCredentialWarning';
+import type { RepositorySyncResult } from '@/lib/autonomousWorkSettingsStatus';
 import type { UsageCacheEntry } from './usageStorage';
 
 /**
@@ -65,13 +67,27 @@ export interface SyncAutonomousWorkSettingsMessage {
   settings: AutonomousWorkSettings;
 }
 
+export const READ_JIRA_STATUS_MESSAGE = 'READ_JIRA_STATUS' as const;
+
+/**
+ * Ask for the Jira credential's health, as the host's last daily probe left it.
+ *
+ * Through the service worker rather than straight from the popup, like every
+ * other host call except the run-log stream: this one is a plain
+ * request-and-reply, which is exactly what that rule is for.
+ */
+export interface ReadJiraStatusMessage {
+  type: typeof READ_JIRA_STATUS_MESSAGE;
+}
+
 export type ExtensionMessage =
   | RefreshUsageMessage
   | TestNotificationMessage
   | RunAutonomousWorkMessage
   | OpenRunLogMessage
   | PrimeFolderAccessMessage
-  | SyncAutonomousWorkSettingsMessage;
+  | SyncAutonomousWorkSettingsMessage
+  | ReadJiraStatusMessage;
 
 export type RefreshUsageResponse = UsageCacheEntry;
 
@@ -101,7 +117,26 @@ export interface SyncAutonomousWorkSettingsResponse {
    * never installed — the settings are still saved, but nothing is scheduled.
    */
   launchAgentUpdated: boolean;
+  /**
+   * What the host made of the repository list, or null when this save had no
+   * Jira half to do. The one setting that has to land somewhere other than this
+   * machine, so a save that quietly did not send it is worth saying out loud.
+   */
+  repositorySync?: RepositorySyncResult | null;
   error?: string;
+}
+
+/** The probe's last answer, or null when there is nothing to say about it. */
+export interface ReadJiraStatusResponse {
+  status: JiraCredentialStatus | null;
+}
+
+export function isReadJiraStatusMessage(message: unknown): message is ReadJiraStatusMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === READ_JIRA_STATUS_MESSAGE
+  );
 }
 
 export function isRefreshUsageMessage(message: unknown): message is RefreshUsageMessage {

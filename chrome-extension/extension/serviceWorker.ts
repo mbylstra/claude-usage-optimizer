@@ -10,15 +10,22 @@ import {
   type UsageLimitWarning,
 } from '@/lib/usageLimitWarnings';
 import { isRepeatOfLastNotification, type ShownNotification } from '@/lib/notificationSuppression';
+import {
+  deriveJiraCredentialWarning,
+  warningReaches,
+  type JiraCredentialStatus,
+} from '@/lib/jiraCredentialWarning';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
 import {
   isOpenRunLogMessage,
+  isReadJiraStatusMessage,
   isRefreshUsageMessage,
   isPrimeFolderAccessMessage,
   isRunAutonomousWorkMessage,
   isSyncAutonomousWorkSettingsMessage,
   isTestNotificationMessage,
   type OpenRunLogResponse,
+  type ReadJiraStatusResponse,
   type RefreshUsageResponse,
   type PrimeFolderAccessResponse,
   type RunAutonomousWorkResponse,
@@ -27,6 +34,7 @@ import {
 import { openRunLogWindow, trackRunLogWindowClosure } from './runLogWindow';
 import {
   exportUsageSnapshot,
+  readJiraCredentialStatus,
   requestAutonomousWorkRun,
   requestFolderAccessPrompts,
   syncAutonomousWorkSettings,
@@ -62,6 +70,34 @@ async function applyToolbarTitle(snapshot: UsageSnapshot | null): Promise<void> 
   await chrome.action.setTitle({
     title: snapshot === null ? DEFAULT_TOOLBAR_TITLE : deriveToolbarTitle(snapshot),
   });
+}
+
+/**
+ * Paint — or clear — the one badge this extension uses.
+ *
+ * The toolbar icon deliberately carries no *number*: a percentage over the icon
+ * is a permanent alarm for a figure that is usually unremarkable, and the pace
+ * story lives in the popup. A credential about to expire is the opposite case.
+ * It is rare, it is actionable, it has a deadline, and the toolbar is the thing
+ * somebody looks at all day — which is exactly why the API token's annual expiry
+ * was an acceptable cost in the first place.
+ *
+ * Only at `badge` level and above: 30 and 14 days out are quieter surfaces, and
+ * escalating early would train somebody to ignore the one that matters.
+ */
+async function applyJiraCredentialBadge(): Promise<void> {
+  const settings = await readExtensionSettings();
+  const status = await readJiraCredentialStatus();
+  const warning = deriveJiraCredentialWarning(status, settings.autonomousWork.queueSource);
+
+  if (!warningReaches(warning, 'badge')) {
+    await chrome.action.setBadgeText({ text: '' });
+    return;
+  }
+
+  await chrome.action.setBadgeBackgroundColor({ color: '#b91c1c' });
+  await chrome.action.setBadgeText({ text: '!' });
+  await chrome.action.setTitle({ title: warning.message });
 }
 
 /**
@@ -215,6 +251,11 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
     await writeUsageLimitWarningState(newLimitWarningState);
     await notifyUsageLimitWarnings(warnings);
 
+    // After `applyToolbarTitle`, which is the other writer of the tooltip: a
+    // credential about to expire outranks the usage figure, and doing this first
+    // would let the ordinary title overwrite it.
+    await applyJiraCredentialBadge();
+
     return entry;
   } catch (error) {
     const previous = await readUsageCache();
@@ -308,8 +349,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (isSyncAutonomousWorkSettingsMessage(message)) {
-    void syncAutonomousWorkSettings(message.settings).then((result) =>
-      sendResponse(result satisfies SyncAutonomousWorkSettingsResponse),
+    void syncAutonomousWorkSettings(message.settings).then((result) => {
+      sendResponse(result satisfies SyncAutonomousWorkSettingsResponse);
+      // Switching the queue source changes whether the credential matters at
+      // all, so the badge is reconsidered on every save rather than waiting for
+      // the next five-minute refresh.
+      void applyJiraCredentialBadge();
+    });
+    return true;
+  }
+
+  if (isReadJiraStatusMessage(message)) {
+    void readJiraCredentialStatus().then((status: JiraCredentialStatus | null) =>
+      sendResponse({ status } satisfies ReadJiraStatusResponse),
     );
     return true;
   }
@@ -332,6 +384,7 @@ chrome.windows.onRemoved.addListener(trackRunLogWindowClosure);
 // A worker that was woken for any other reason still ought to have its alarm.
 ensureRefreshAlarm();
 
-// Earlier versions painted a percentage over the toolbar icon. Chrome keeps a
-// badge until something clears it, so an upgrade has to wipe it explicitly.
-void chrome.action.setBadgeText({ text: '' });
+// Chrome keeps a badge until something clears it — across a restart, and across
+// an upgrade from the versions that painted a usage percentage there. This both
+// wipes that and puts up the credential warning if one is due.
+void applyJiraCredentialBadge();

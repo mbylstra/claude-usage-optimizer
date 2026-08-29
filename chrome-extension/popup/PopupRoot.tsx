@@ -19,6 +19,8 @@ import {
   type PrimeFolderAccessResponse,
   type RunAutonomousWorkResponse,
   type SyncAutonomousWorkSettingsResponse,
+  READ_JIRA_STATUS_MESSAGE,
+  type ReadJiraStatusResponse,
 } from '@/extension/messages';
 import { IDLE_AUTONOMOUS_WORK_STATUS, type AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
 import { IDLE_FOLDER_ACCESS_STATUS, type FolderAccessStatus } from '@/lib/folderAccessStatus';
@@ -32,6 +34,10 @@ import {
   writeExtensionSettings,
 } from '@/extension/settingsStorage';
 import { readUsageCache, USAGE_CACHE_CHANGE_KEY } from '@/extension/usageStorage';
+import {
+  deriveJiraCredentialWarning,
+  type JiraCredentialStatus,
+} from '@/lib/jiraCredentialWarning';
 
 /**
  * The only component allowed to talk to the extension layer.
@@ -90,6 +96,7 @@ export function PopupRoot() {
   // and regrow. Tracking the tallest height any view has needed and enforcing
   // it as a floor keeps the popup a constant size without hard-coding one.
   const contentRef = useRef<HTMLDivElement>(null);
+  const [jiraStatus, setJiraStatus] = useState<JiraCredentialStatus | null>(null);
   const [minContentHeightPx, setMinContentHeightPx] = useState<number | undefined>(undefined);
 
   useLayoutEffect(() => {
@@ -222,6 +229,22 @@ export function PopupRoot() {
     };
   }, []);
 
+  // What the host's last daily probe found. A read of a local file, so it costs
+  // nothing to ask on every open — and the popup is where the two quieter halves
+  // of the warning (the settings line and the banner) are shown.
+  useEffect(() => {
+    let isMounted = true;
+
+    chrome.runtime.sendMessage({ type: READ_JIRA_STATUS_MESSAGE }, (response) => {
+      if (chrome.runtime.lastError !== undefined || !isMounted) return;
+      setJiraStatus((response as ReadJiraStatusResponse | undefined)?.status ?? null);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Pick up refreshes triggered by the alarm, and settings changes from another
   // copy of the popup, while this one happens to be open.
   useEffect(() => {
@@ -285,10 +308,14 @@ export function PopupRoot() {
           setAutonomousWorkSettingsStatus({ kind: 'failed', error: response.error ?? '' });
           return;
         }
+        // `?? null` rather than passing it through: a reply from a host older
+        // than the repository picker carries no such key, and "nothing to say"
+        // is the same outcome as a save with no Jira half to do.
+        const repositorySync = response.repositorySync ?? null;
         setAutonomousWorkSettingsStatus(
           response.launchAgentUpdated
-            ? { kind: 'scheduled', scheduleTime: autonomousWork.scheduleTime }
-            : { kind: 'savedWithoutSchedule' },
+            ? { kind: 'scheduled', scheduleTime: autonomousWork.scheduleTime, repositorySync }
+            : { kind: 'savedWithoutSchedule', repositorySync },
         );
       },
     );
@@ -336,6 +363,7 @@ export function PopupRoot() {
   // Before the cache read resolves we genuinely know nothing — show the loading
   // state rather than flashing "no data yet".
   const data = buildUsagePopupData(hasLoadedCache ? cacheEntry : null, now);
+  const jiraWarning = deriveJiraCredentialWarning(jiraStatus, settings.autonomousWork.queueSource);
 
   return (
     <div
@@ -356,6 +384,7 @@ export function PopupRoot() {
           folderAccessStatus={folderAccessStatus}
           onPrimeFolderAccess={primeFolderAccess}
           onOpenRunLog={openRunLog}
+          jiraWarning={jiraWarning}
           onBack={closeSettings}
         />
       ) : (
@@ -366,6 +395,7 @@ export function PopupRoot() {
           onRefresh={requestRefresh}
           onOpenClaude={openClaude}
           onOpenSettings={openSettings}
+          jiraWarning={jiraWarning}
         />
       )}
     </div>

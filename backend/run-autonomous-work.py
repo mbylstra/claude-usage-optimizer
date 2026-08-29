@@ -40,32 +40,35 @@ sys.path.insert(0, str(SCRIPT_DIRECTORY))
 import autonomous_work_resume  # noqa: E402  (same)
 import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
 import autonomous_work_summary  # noqa: E402  (same)
+import queue_source  # noqa: E402  (same)
+import queue_source_jira  # noqa: E402  (same)
 
 MILLISECONDS_PER_HOUR = 3_600_000
 
-STATUS_TODO = "todo"
-STATUS_COMPLETED = "completed"
-STATUS_ERROR = "error"
-# A prompt still being written, so not ready to run. Skipped without any special
-# casing — `find_next_todo` picks up `todo` and nothing else — and named here
-# only so the queue's vocabulary is stated in one place.
-STATUS_DRAFT = "draft"
+# The queue's vocabulary, owned by `queue_source` because every source speaks it:
+# `determine_outcome`, `queue_status_for_outcome` and the summary writer all work
+# in these strings, and the Jira source translates them into columns and labels
+# at its own boundary. Aliased rather than spelled again so the two can never
+# drift apart.
+STATUS_TODO = queue_source.STATUS_TODO
+STATUS_COMPLETED = queue_source.STATUS_COMPLETED
+STATUS_ERROR = queue_source.STATUS_ERROR
+# A prompt still being written, so not ready to run — skipped without any
+# special casing, since `find_next_todo` picks up `todo` and nothing else.
+STATUS_DRAFT = queue_source.STATUS_DRAFT
 # Work that finished but is sitting on a branch rather than in main, because the
 # run had a question it could not answer for itself. Always carries the branch
-# name after a colon — `unmerged:add-widget` — since a status that did not say
-# where the work went would be worse than no status at all. Skipped by
-# `find_next_todo` like any status that is not `todo`.
-STATUS_UNMERGED = "unmerged"
-# Separates a status from its detail, so far only `unmerged`'s branch name.
-STATUS_DETAIL_SEPARATOR = ":"
+# name after a colon — `unmerged:add-widget`.
+STATUS_UNMERGED = queue_source.STATUS_UNMERGED
+STATUS_DETAIL_SEPARATOR = queue_source.STATUS_DETAIL_SEPARATOR
 
 # Aliased from the summary module rather than spelled again, so the run-event
 # stream the viewer reads and the day's summary can never disagree about it.
 OUTCOME_SESSION_LIMIT = autonomous_work_summary.OUTCOME_SESSION_LIMIT
 
-SECTION_SEPARATOR_PREFIX = "==="
-STATUS_FIELD_PREFIX = "STATUS:"
-REPOSITORY_FIELD_PREFIX = "REPO:"
+SECTION_SEPARATOR_PREFIX = queue_source.SECTION_SEPARATOR_PREFIX
+STATUS_FIELD_PREFIX = queue_source.STATUS_FIELD_PREFIX
+REPOSITORY_FIELD_PREFIX = queue_source.REPOSITORY_FIELD_PREFIX
 
 # Printed by the Claude Code CLI itself (not this repo) when a turn is still
 # waiting on a background task past CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS. The
@@ -189,26 +192,65 @@ CLAUDE_MAX_PROMPT_DURATION_SECONDS = environment_int_override(
 # run to Haiku. The whole point is to spend the weekly window, so the model this
 # job runs on should not be a side effect of an unrelated interactive preference.
 # Only the main thread is pinned — a subagent that names its own model keeps it.
-_model_name = os.environ.get("AUTONOMOUS_WORK_MODEL") or _settings.model
+#
+# A queued entry can name its own model too (a Jira card's `Model` dropdown —
+# `QueueEntry.model_name`), and that wins over this session default. The one
+# thing it does *not* beat is `AUTONOMOUS_WORK_MODEL`: an env override is an
+# explicit "run everything on X" for the whole session, the same precedence
+# `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` and the pace threshold follow. So the order
+# is env var > per-entry > settings > opus. See `claude_model_id_for`.
+_MODEL_NAME_FORCED_BY_ENV = os.environ.get("AUTONOMOUS_WORK_MODEL") or None
+_model_name = _MODEL_NAME_FORCED_BY_ENV or _settings.model
 # Tacked onto every queued prompt before it reaches `claude -p` — see
 # `build_prompt`. Naming and logging of the *queue entry* still use its own
 # prompt unappended; only the invocation sees this.
 APPEND_TO_ALL_PROMPTS = _settings.append_to_all_prompts
+# No "haiku" entry: the scheduler runs `claude -p --permission-mode auto`, and
+# auto mode requires Opus 4.6+ / Sonnet 4.6+ / Fable 5 — on Haiku it silently
+# falls back to Manual, which headless denies every edit and shell call. A name
+# that isn't here (a leftover Jira "haiku" option, or `AUTONOMOUS_WORK_MODEL=haiku`)
+# falls through: an entry to `CLAUDE_MODEL`, the session default to opus.
 _MODEL_ID_MAP = {
-    "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-5",
     "opus": "claude-opus-5",
 }
 CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
+
+
+def claude_model_id_for(entry: "QueueEntry") -> str:
+    """The concrete model id this entry runs on.
+
+    `entry.model_name` — set only by the Jira source, from a card's `Model`
+    dropdown — wins, unless `AUTONOMOUS_WORK_MODEL` is pinning the whole session,
+    in which case that wins over everything. An entry that names nothing, or
+    something unrecognised, falls through to `CLAUDE_MODEL` (the env var or the
+    settings model or opus).
+    """
+    if _MODEL_NAME_FORCED_BY_ENV:
+        return CLAUDE_MODEL
+    entry_model_name = getattr(entry, "model_name", None)
+    return _MODEL_ID_MAP.get(entry_model_name, CLAUDE_MODEL)
+
+
+def claude_arguments_for(entry: "QueueEntry") -> list[str]:
+    """The `claude` flags for one prompt: its `--model`, then the shared base.
+
+    Split out so the model pin has a test that does not spawn anything — losing
+    it off the front of `CLAUDE_BASE_ARGUMENTS` is exactly the regression the
+    line-190 comment records having already shipped once.
+    """
+    return ["--model", claude_model_id_for(entry), *CLAUDE_BASE_ARGUMENTS]
+
 
 # Deliberately *not* `--bare`, which would authenticate with ANTHROPIC_API_KEY
 # instead of the subscription session — spending the wrong budget defeats the
 # whole point. A plain run keeps subscription auth and its CLAUDE.md context.
 # `stream-json` (which requires `--verbose`) emits an event per step, so the log
 # can be followed live. Plain `json` would withhold everything until the end.
+#
+# `--model` is *not* here — `claude_arguments_for` prepends it per prompt, since
+# a queued entry may override the session default.
 CLAUDE_BASE_ARGUMENTS = [
-    "--model",
-    CLAUDE_MODEL,
     "--permission-mode",
     "auto",
     "--output-format",
@@ -333,6 +375,7 @@ class RunEventStream:
         is_new_project: bool,
         prompt: str,
         forced: bool,
+        model: str = CLAUDE_MODEL,
     ) -> None:
         self.emit(
             "runStarted",
@@ -341,7 +384,9 @@ class RunEventStream:
             projectName=working_directory.name,
             isNewProject=is_new_project,
             prompt=prompt,
-            model=CLAUDE_MODEL,
+            # The model this prompt actually runs on — a queued entry may have
+            # overridden the session default, so this is not always CLAUDE_MODEL.
+            model=model,
         )
 
     def claude_event(self, event: dict) -> None:
@@ -746,200 +791,104 @@ def choose_resume_time(
 # --------------------------------------------------------------------------- #
 
 
-@dataclass(frozen=True)
-class QueueEntry:
-    # The status as `normalise_status` leaves it, so it may carry a `:detail`.
-    # Compare against `status_name`, never against the raw string.
-    status: str
-    """Index into the file's line list, so the status can be rewritten in place."""
-    status_line_index: int
-    """The REPO: line as a path, or None to start a new project — see `resolve_working_directory`."""
-    repository_path: Path | None
-    prompt: str
-
-    @property
-    def status_name(self) -> str:
-        """The status word on its own — `unmerged` out of `unmerged:add-widget`."""
-        return status_name_of(self.status)
+# Re-exported from `queue_source`, which owns the queue's shape and its
+# vocabulary. Nothing below this line knows whether the queue is a file or a
+# board — `QUEUE.next_todo()` returns the next entry, and the caller never asks
+# why it was next: line order for the file, LexoRank for Jira.
+QueueEntry = queue_source.QueueEntry
+QueueUnavailable = queue_source.QueueUnavailable
+status_name_of = queue_source.status_name_of
+normalise_status = queue_source.normalise_status
+unmerged_status = queue_source.unmerged_status
+parse_queue = queue_source.parse_queue
+find_next_todo = queue_source.find_next_todo
+status_on_line = queue_source.status_on_line
+rewrite_status_line = queue_source.rewrite_status_line
 
 
-def status_name_of(status: str) -> str:
-    return status.partition(STATUS_DETAIL_SEPARATOR)[0]
+# Matches the quietest step of the extension's own escalation, so the log and the
+# popup start saying the same thing on the same day.
+JIRA_EXPIRY_WARNING_DAYS = queue_source_jira.EXPIRY_WARNING_DAYS
 
 
-def normalise_status(status_text: str) -> str:
-    """A STATUS field's value, lowercased — but with any `:detail` left as written.
+def build_queue_source() -> object:
+    """The queue this machine is configured to work through.
 
-    `unmerged:Add-Widget` names a git branch, and branch names are
-    case-sensitive, so only the word before the colon can be folded. A colon
-    with nothing after it is dropped rather than kept, so `unmerged:` reads as
-    the plain status it looks like rather than as one with an empty branch.
+    `file` is the default and stays the default for a fresh clone: it needs no
+    account, no network and no third party, and `just setup` changes not at all.
+    A `jira` source missing its project key or its credential file **falls back
+    to the file with a logged warning**, so no upgrade path can leave an install
+    with no queue at all.
+
+    Environment variables win over the mirrored settings, the same way
+    `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` does, which is what lets the tests point
+    the whole transport at a local stub.
     """
-    status_name, separator, detail = status_text.partition(STATUS_DETAIL_SEPARATOR)
-    status_name = status_name.strip().lower()
-    detail = detail.strip()
-    if not separator or not detail:
-        return status_name
-    return f"{status_name}{STATUS_DETAIL_SEPARATOR}{detail}"
+    file_queue = queue_source.FileQueueSource(QUEUE_FILE, log=log_message)
 
+    configured = os.environ.get("AUTONOMOUS_WORK_QUEUE_SOURCE") or _settings.queue_source
+    if configured != autonomous_work_settings.QUEUE_SOURCE_JIRA:
+        return file_queue
 
-def unmerged_status(branch_name: str) -> str:
-    return f"{STATUS_UNMERGED}{STATUS_DETAIL_SEPARATOR}{branch_name}"
+    project_key = os.environ.get("AUTONOMOUS_WORK_JIRA_PROJECT") or _settings.jira_project_key
+    credentials = queue_source_jira.read_credentials()
+    if not project_key:
+        log_message("Queue source is 'jira' but no project key is set — using the file queue")
+        return file_queue
+    if credentials is None:
+        log_message(
+            "Queue source is 'jira' but there is no credential at {} — using the file queue "
+            "(run `just set-jira-credentials`)".format(queue_source_jira.CREDENTIALS_FILE)
+        )
+        return file_queue
 
+    days_until_expiry = credentials.days_until_expiry()
+    if days_until_expiry is not None and days_until_expiry <= JIRA_EXPIRY_WARNING_DAYS:
+        # Said, never acted on. The date is typed in by hand at paste time and
+        # cannot be read back from any API, so a mistyped one would otherwise
+        # refuse to run against a token that works perfectly. Jira's own 401 is
+        # the thing that stops a run, and it is never wrong about it.
+        log_message(
+            "The Jira API token {} — run `just set-jira-credentials`".format(
+                "expired {} days ago".format(-days_until_expiry)
+                if days_until_expiry < 0
+                else "expires in {} days".format(days_until_expiry)
+            )
+        )
 
-def _parse_section(first_line_index: int, section_lines: list[str]) -> QueueEntry | None:
-    status: str | None = None
-    status_line_index = -1
-    repository_text: str | None = None
-    prompt_lines: list[str] = []
-
-    for offset, line in enumerate(section_lines):
-        stripped_line = line.strip()
-
-        if status is None:
-            if not stripped_line:
-                continue
-            if not stripped_line.startswith(STATUS_FIELD_PREFIX):
-                return None  # A section without a STATUS header is not a work item.
-            status = normalise_status(stripped_line[len(STATUS_FIELD_PREFIX) :])
-            status_line_index = first_line_index + offset
-            continue
-
-        # REPO is only a header while it precedes the prompt body.
-        if (
-            repository_text is None
-            and not prompt_lines
-            and stripped_line.startswith(REPOSITORY_FIELD_PREFIX)
-        ):
-            repository_text = stripped_line[len(REPOSITORY_FIELD_PREFIX) :].strip()
-            continue
-
-        prompt_lines.append(line)
-
-    if status is None:
-        return None
-
-    prompt = "\n".join(prompt_lines).strip()
-    repository_path = Path(os.path.expanduser(repository_text)) if repository_text else None
-
-    return QueueEntry(
-        status=status,
-        status_line_index=status_line_index,
-        repository_path=repository_path,
-        prompt=prompt,
+    return queue_source_jira.JiraQueueSource(
+        credentials,
+        project_key,
+        status_names=_settings.jira_status_names,
+        repositories=_settings.repositories,
+        log=log_message,
     )
 
 
-def parse_queue(lines: list[str]) -> list[QueueEntry]:
-    """Split the queue into entries, remembering where each STATUS line lives."""
-    entries: list[QueueEntry] = []
-    section_start_index = 0
-    section_lines: list[str] = []
-
-    def flush_section() -> None:
-        if not section_lines:
-            return
-        entry = _parse_section(section_start_index, section_lines)
-        if entry is not None:
-            entries.append(entry)
-
-    for line_index, line in enumerate(lines):
-        if line.startswith(SECTION_SEPARATOR_PREFIX):
-            flush_section()
-            section_lines = []
-            section_start_index = line_index + 1
-        else:
-            section_lines.append(line)
-
-    flush_section()
-    return entries
+# Built once at import, and doing no I/O to do it: which queue this is cannot
+# change part-way through a session, and a source that reached the network here
+# would make every `--dry-run` and every unit test depend on it.
+QUEUE = build_queue_source()
 
 
-def read_queue_lines() -> list[str] | None:
-    if not QUEUE_FILE.exists():
-        log_message(f"No prompt queue at {QUEUE_FILE}")
-        return None
-    try:
-        return QUEUE_FILE.read_text(encoding="utf-8").split("\n")
-    except OSError as error:
-        log_message(f"Could not read prompt queue: {error}")
-        return None
+def record_outcome(
+    entry: QueueEntry,
+    new_status: str,
+    report: queue_source_jira.OutcomeReport | None = None,
+) -> str:
+    """Write a finished prompt's status back to the queue.
 
+    Returns the status the entry is left holding, which is not always the one
+    asked for: a file entry the run itself marked `unmerged:<branch>` keeps that,
+    since only the run can have put it there and overwriting it with `completed`
+    would throw away the branch name.
 
-def find_next_todo(entries: list[QueueEntry]) -> QueueEntry | None:
-    for entry in entries:
-        if entry.status_name == STATUS_TODO and entry.prompt:
-            return entry
-    return None
-
-
-def status_on_line(lines: list[str], status_line_index: int) -> str | None:
-    """The status that line holds, or None if it is not a STATUS line at all.
-
-    Checking the line still *is* a STATUS field, rather than only that the index
-    is in range, is what keeps a queue edited during the run from having a line
-    of its prompt overwritten: a run that adds or removes lines above its own
-    entry shifts every index taken before it started.
+    `report` is Claude's own account of the prompt, which the file source ignores
+    entirely — a STATUS line has nowhere to put it — and the Jira source turns
+    into the card's comment. Passed as one object so the file source can keep
+    ignoring it as more is added to it.
     """
-    if not 0 <= status_line_index < len(lines):
-        return None
-    stripped_line = lines[status_line_index].strip()
-    if not stripped_line.startswith(STATUS_FIELD_PREFIX):
-        return None
-    return normalise_status(stripped_line[len(STATUS_FIELD_PREFIX) :])
-
-
-def rewrite_status_line(lines: list[str], status_line_index: int, new_status: str) -> list[str] | None:
-    """The queue lines with one STATUS line replaced, or None if the index no longer lines up.
-
-    Pure line-rewriting, split out from the file I/O around it. Targeting the
-    line by index rather than by string replacement keeps the update correct
-    even when a prompt body happens to contain the word STATUS.
-    """
-    if status_on_line(lines, status_line_index) is None:
-        return None
-    updated_lines = list(lines)
-    updated_lines[status_line_index] = f"{STATUS_FIELD_PREFIX} {new_status}"
-    return updated_lines
-
-
-def write_queue_status(status_line_index: int, new_status: str) -> str:
-    """Rewrite one STATUS line, replacing the file atomically. Returns the status
-    the entry is left holding, which is what the run event and the day's summary
-    then report.
-
-    The temp-file swap means a queue edited mid-run is never left truncated.
-
-    An `unmerged:<branch>` already on the line wins over anything this run would
-    write. Only the run itself can have put it there — it is the one party that
-    knows it left work on a branch — and overwriting it with `completed` would
-    throw away the branch name, the single thing that status exists to carry.
-    """
-    lines = read_queue_lines()
-    if lines is None:
-        return new_status
-
-    status_already_there = status_on_line(lines, status_line_index)
-    if status_already_there is not None and status_name_of(status_already_there) == STATUS_UNMERGED:
-        log_message(f"Queue entry already marked '{status_already_there}' by the run itself")
-        return status_already_there
-
-    updated_lines = rewrite_status_line(lines, status_line_index, new_status)
-    if updated_lines is None:
-        log_message(f"Queue changed while running; not updating status to {new_status}")
-        return new_status
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=QUEUE_FILE.parent, delete=False
-        ) as temp_handle:
-            temp_handle.write("\n".join(updated_lines))
-            temporary_path = Path(temp_handle.name)
-        os.replace(temporary_path, QUEUE_FILE)
-        log_message(f"Queue entry marked '{new_status}'")
-    except OSError as error:
-        log_message(f"Could not update prompt queue: {error}")
-    return new_status
+    return QUEUE.record_outcome(entry, new_status, report)
 
 
 # --------------------------------------------------------------------------- #
@@ -1411,7 +1360,10 @@ def run_claude(
 ) -> PromptRunResult:
     """Execute one queued prompt, and report how it went."""
     prompt_text = build_prompt(entry.prompt)
-    events.started(working_directory, is_new_project, prompt_text, forced)
+    claude_arguments = claude_arguments_for(entry)
+    events.started(
+        working_directory, is_new_project, prompt_text, forced, claude_model_id_for(entry)
+    )
     started_at = datetime.now()
     output = ClaudeOutputCollector()
     # Taken before the directory is prepared, so a new project reads as the empty
@@ -1459,6 +1411,11 @@ def run_claude(
     def record_cancellation(signal_number: int, _frame: object) -> None:
         events.finished("cancelled", -signal_number)
         log_message("Cancelled (SIGTERM) — the queue entry is left as todo")
+        # Undo whatever picking the entry up did — the move into In Progress on
+        # a board, nothing at all for a file. Not a status change: a cancelled
+        # prompt never really ran, so the entry goes back exactly as it was. The
+        # sweep at the next run's start is the backstop if this does not land.
+        QUEUE.abandon(entry)
         # A cancelled night is one of the nights you most want a record of, so
         # the summary is written from here too — with the entry's real status,
         # `todo`, rather than the one a completed run would have left.
@@ -1490,7 +1447,7 @@ def run_claude(
             # `stream-json` emits an event per step. stderr is merged in so
             # nothing is lost or deadlocks on a second unread pipe.
             process = subprocess.Popen(
-                ["claude", "-p", prompt_text, *CLAUDE_BASE_ARGUMENTS],
+                ["claude", "-p", prompt_text, *claude_arguments],
                 cwd=working_directory,
                 # Without this `claude` spends three seconds waiting on an
                 # inherited stdin that is never going to produce anything, and
@@ -1610,6 +1567,19 @@ def run_claude(
 # --------------------------------------------------------------------------- #
 
 
+def drain_pending_queue_writes() -> None:
+    """Replay outcomes an earlier run finished but could not record.
+
+    The expensive failure this whole design has: a token that expired between
+    2:00 and 2:40 fails the *write*, not the read, and an unrecorded outcome
+    means the prompt runs again tomorrow. So a failed write is set aside rather
+    than dropped, and this is where it is picked back up.
+    """
+    written = QUEUE.drain_pending_writes()
+    if written:
+        log_message(f"Recorded {written} outcome(s) held over from an earlier run")
+
+
 def remaining_todo_prompts(already_attempted: list[str]) -> list[str]:
     """Queue entries still marked `todo`, in the order they would be picked up.
 
@@ -1618,22 +1588,12 @@ def remaining_todo_prompts(already_attempted: list[str]) -> list[str]:
     Each belongs in the summary as the prompt that was cut short, not a second
     time as one that was never reached.
     """
-    queue_lines = read_queue_lines()
-    if queue_lines is None:
-        return []
-    return [
-        entry.prompt
-        for entry in parse_queue(queue_lines)
-        if entry.status_name == STATUS_TODO and entry.prompt and entry.prompt not in already_attempted
-    ]
+    return QUEUE.remaining_todo_prompts(already_attempted)
 
 
 def queue_holds_a_todo() -> bool:
     """Is there anything to come back for?"""
-    queue_lines = read_queue_lines()
-    if queue_lines is None:
-        return False
-    return find_next_todo(parse_queue(queue_lines)) is not None
+    return QUEUE.holds_a_todo()
 
 
 def schedule_resume_if_warranted(
@@ -1788,19 +1748,22 @@ def main() -> int:
         if not check_pace_gate(arguments.force).ok:
             return 0
 
-        queue_lines = read_queue_lines()
-        if queue_lines is None:
-            log_message(f"No prompt queue at {QUEUE_FILE}")
+        try:
+            next_entry = QUEUE.next_todo()
+        except QueueUnavailable as error:
+            log_message(str(error))
             return 0
 
-        next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
-            log_message("No todo prompts in queue (all completed, errored, unmerged, draft or empty)")
+            log_message(f"Nothing marked todo in {QUEUE.describe()}")
             return 0
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
-        log_message(f"Dry run — would execute in {destination}:\n{build_prompt(next_entry.prompt)}")
+        log_message(
+            f"Dry run — would execute in {destination} "
+            f"on model {claude_model_id_for(next_entry)}:\n{build_prompt(next_entry.prompt)}"
+        )
         return 0
 
     if arguments.resume:
@@ -1821,6 +1784,14 @@ def main() -> int:
     # `--force` is a single explicit run — the pace gate it bypasses is exactly
     # what this loop exists to keep re-checking, so it executes one prompt and
     # stops rather than draining the queue unattended.
+    log_message(f"Working through the queue in {QUEUE.describe()}")
+    # A card stranded in In Progress can only be the wreckage of an earlier run —
+    # launchd will not run two instances of one label, so no second run can be in
+    # flight. The cancellation handler already returns its own card on the way
+    # out; this is the backstop for a hard kill. A no-op for the file queue.
+    QUEUE.sweep_stale()
+    drain_pending_queue_writes()
+
     prompts_run = 0
     final_exit_code = 0
     # Accumulated across every prompt in the session, and written out once at the
@@ -1859,28 +1830,47 @@ def main() -> int:
                 )
             break
 
-        queue_lines = read_queue_lines()
-        if queue_lines is None:
-            events.skipped("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
-            session.stop("emptyQueue", f"No prompt queue at {QUEUE_FILE}")
+        try:
+            next_entry = QUEUE.next_todo()
+        except QueueUnavailable as error:
+            # Not "the queue is empty" — we do not know what is in it. Run
+            # nothing, say why, and above all never fall back to another source:
+            # a stale queue would happily execute a prompt deleted days ago,
+            # which is the one failure that costs work rather than time.
+            log_message(str(error))
+            events.skipped("queueUnavailable", str(error))
+            session.stop("queueUnavailable", str(error))
             break
 
-        next_entry = find_next_todo(parse_queue(queue_lines))
         if next_entry is None:
-            log_message("No todo prompts in queue (all completed, errored, unmerged, draft or empty)")
-            events.skipped("emptyQueue", "No todo prompts in queue (all completed, errored, unmerged, draft or empty)")
+            nothing_queued = f"Nothing marked todo in {QUEUE.describe()}"
+            log_message(nothing_queued)
+            events.skipped("emptyQueue", nothing_queued)
             session.stop("emptyQueue")
             break
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
+        # Where the source has a "running" state, this is what puts the entry in
+        # it — the move into In Progress on a board, and nothing at all for a
+        # file, which has no such column and deliberately leaves the STATUS line
+        # alone until the outcome is known.
+        QUEUE.start(next_entry)
         prompt_result = run_claude(
             next_entry, working_directory, is_new_project, events, arguments.force, session
         )
-        # The status the file is left holding, which is not always the one asked
+        # The status the queue is left holding, which is not always the one asked
         # for: a run that marked itself `unmerged:<branch>` keeps that.
-        queue_status = write_queue_status(
-            next_entry.status_line_index,
+        queue_status = record_outcome(
+            next_entry,
             queue_status_for_outcome(prompt_result.outcome, prompt_result.unmerged_branch),
+            queue_source_jira.OutcomeReport(
+                result_text=prompt_result.result_text,
+                exit_code=prompt_result.exit_code,
+                turns=prompt_result.turns,
+                cost_usd=prompt_result.cost_usd,
+                working_directory=str(working_directory),
+                unmerged_branch=prompt_result.unmerged_branch,
+            ),
         )
         # Last, so the terminal event is only written once the queue reflects the
         # outcome the viewer is about to show.

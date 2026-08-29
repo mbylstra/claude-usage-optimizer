@@ -1,6 +1,8 @@
 import { buildUsageSnapshotExport } from '@/lib/usageSnapshotExport';
 import type { AutonomousWorkSettings } from '@/lib/settingsTypes';
 import type { UsageSnapshot } from '@/lib/usageTypes';
+import type { JiraCredentialStatus } from '@/lib/jiraCredentialWarning';
+import type { RepositorySyncResult } from '@/lib/autonomousWorkSettingsStatus';
 
 /**
  * Hands each usage snapshot to a native-messaging host, which writes it to
@@ -37,6 +39,7 @@ const SNAPSHOT_MESSAGE_TYPE = 'snapshot';
 const RUN_WORK_MESSAGE_TYPE = 'runAutonomousWork';
 const PRIME_FOLDER_ACCESS_MESSAGE_TYPE = 'primeFolderAccess';
 const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
+const JIRA_STATUS_MESSAGE_TYPE = 'getJiraStatus';
 
 export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Date): Promise<void> {
   try {
@@ -122,6 +125,12 @@ export async function requestFolderAccessPrompts(): Promise<{
 export interface AutonomousWorkSettingsSyncResult {
   saved: boolean;
   launchAgentUpdated: boolean;
+  /**
+   * What the host made of the Jira half of this save, or null when there was
+   * none to do. Passed through untouched — `describeAutonomousWorkSettingsStatus`
+   * is where it turns into words.
+   */
+  repositorySync?: RepositorySyncResult | null;
   error?: string;
 }
 
@@ -160,13 +169,18 @@ export async function syncAutonomousWorkSettings(
     });
 
     if (typeof response === 'object' && response !== null && 'ok' in response) {
-      const { ok, launchAgentUpdated, error } = response as {
+      const { ok, launchAgentUpdated, repositorySync, error } = response as {
         ok: unknown;
         launchAgentUpdated?: unknown;
+        repositorySync?: unknown;
         error?: unknown;
       };
       if (ok === true) {
-        return { saved: true, launchAgentUpdated: launchAgentUpdated === true };
+        return {
+          saved: true,
+          launchAgentUpdated: launchAgentUpdated === true,
+          repositorySync: readRepositorySync(repositorySync),
+        };
       }
       return {
         saved: false,
@@ -178,5 +192,62 @@ export async function syncAutonomousWorkSettings(
     return { saved: false, launchAgentUpdated: false, error: 'Host sent no reply' };
   } catch (error) {
     return { saved: false, launchAgentUpdated: false, error: String(error) };
+  }
+}
+
+/**
+ * The host's repository-sync report, read defensively.
+ *
+ * `null` is a real answer here and not a missing one — it is what the host sends
+ * for a save with no Jira half to do — so a reply from an older host, which
+ * carries no such key at all, has to arrive as `null` too rather than as
+ * something the popup would try to describe.
+ */
+function readRepositorySync(value: unknown): RepositorySyncResult | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { ok, added, disabled, reenabled, error } = value as {
+    ok?: unknown;
+    added?: unknown;
+    disabled?: unknown;
+    reenabled?: unknown;
+    error?: unknown;
+  };
+  return {
+    ok: ok === true,
+    added: readNameList(added),
+    disabled: readNameList(disabled),
+    reenabled: readNameList(reenabled),
+    error: typeof error === 'string' ? error : null,
+  };
+}
+
+function readNameList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((name): name is string => typeof name === 'string')
+    : [];
+}
+
+/**
+ * What the host's last daily probe found about the Jira credential.
+ *
+ * A read of a local file, not a network call: the probe itself rides the
+ * snapshot message, once a day, because that is the message the host is already
+ * spawned for. Null whenever there is nothing to say — no host, no credential,
+ * or a queue that lives in a file.
+ */
+export async function readJiraCredentialStatus(): Promise<JiraCredentialStatus | null> {
+  try {
+    const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
+      type: JIRA_STATUS_MESSAGE_TYPE,
+    });
+
+    if (typeof response !== 'object' || response === null) return null;
+    const { status } = response as { status?: unknown };
+    if (typeof status !== 'object' || status === null) return null;
+    return status as JiraCredentialStatus;
+  } catch {
+    // A missing host is the ordinary case, and it is already logged once per
+    // worker lifetime by the snapshot export above.
+    return null;
   }
 }

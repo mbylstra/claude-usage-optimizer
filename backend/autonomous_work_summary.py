@@ -44,6 +44,11 @@ OUTCOME_SESSION_LIMIT = "sessionLimit"
 # than paraphrasing it a second time.
 STOP_REASON_DESCRIPTIONS = {
     "emptyQueue": "Ran out of queued work — nothing left marked `todo`.",
+    "queueUnavailable": (
+        "The queue could not be read at all, so nothing ran. Deliberately not treated as an "
+        "empty queue: falling back to another source would risk running work that had been "
+        "deleted from this one."
+    ),
     "onPace": "Caught back up to pace — running more would have spent above an even weekly burn.",
     "fiveHourExhausted": (
         "The 5-hour session window was exhausted. It does not refill early, so the run stopped "

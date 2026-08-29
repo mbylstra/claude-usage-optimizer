@@ -67,6 +67,10 @@ class ParseSettingsTests(unittest.TestCase):
                 "maxPromptDurationHours": 2.5,
                 "appendToAllPrompts": "Keep changes small.",
                 "paceThresholdHours": -2.5,
+                "queueSource": "jira",
+                "jiraProjectKey": "fcp",
+                "jiraStatusNames": {"todo": "Next up"},
+                "repositories": [{"name": "usage-optimizer", "path": "~/code/current/cuo"}],
             }
         )
         self.assertEqual(result.schedule_hour, 3)
@@ -76,6 +80,65 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
         self.assertEqual(result.append_to_all_prompts, "Keep changes small.")
         self.assertEqual(result.pace_threshold_hours, -2.5)
+        self.assertEqual(result.queue_source, "jira")
+        # Upper-cased: Jira project keys are, and a lower-cased one in the
+        # settings screen would otherwise build a JQL query that matches nothing.
+        self.assertEqual(result.jira_project_key, "FCP")
+        self.assertEqual(result.jira_status_names, {"todo": "Next up"})
+        self.assertEqual(
+            result.repositories,
+            [{"name": "usage-optimizer", "path": "~/code/current/cuo"}],
+        )
+
+    def test_an_unknown_queue_source_falls_back_to_the_file(self):
+        # The fallback direction that matters: no upgrade path may leave an
+        # install with no queue at all.
+        result = settings_module.parse_settings({"queueSource": "postgres"})
+        self.assertEqual(result.queue_source, settings_module.QUEUE_SOURCE_FILE)
+
+    def test_a_missing_queue_source_is_the_file(self):
+        self.assertEqual(
+            settings_module.parse_settings({}).queue_source, settings_module.QUEUE_SOURCE_FILE
+        )
+
+    def test_blank_and_non_string_status_names_are_dropped(self):
+        result = settings_module.parse_settings(
+            {"jiraStatusNames": {"todo": "  ", "inReview": 3, "done": " Shipped "}}
+        )
+        self.assertEqual(result.jira_status_names, {"done": "Shipped"})
+
+    def test_a_non_dict_status_names_field_is_ignored(self):
+        self.assertEqual(settings_module.parse_settings({"jiraStatusNames": "Done"}).jira_status_names, {})
+
+    def test_repositories_default_to_an_empty_list(self):
+        self.assertEqual(settings_module.parse_settings({}).repositories, [])
+
+    def test_wrongly_shaped_repositories_are_dropped_one_by_one(self):
+        # A member is dropped rather than the whole list rejected, the same
+        # tolerance `jiraStatusNames` gets: one bad row must not cost the rest.
+        result = settings_module.parse_settings(
+            {
+                "repositories": [
+                    {"name": " alpha ", "path": " ~/code/alpha "},
+                    {"name": "  ", "path": "~/code/blank"},
+                    {"path": "~/code/nameless"},
+                    "not a dict",
+                    {"name": 3, "path": "~/code/numeric"},
+                ]
+            }
+        )
+        self.assertEqual(result.repositories, [{"name": "alpha", "path": "~/code/alpha"}])
+
+    def test_a_repository_with_no_path_is_kept_as_a_draft_row(self):
+        # Half-filled is a draft, not an error — it simply resolves to no
+        # repository, exactly as an unset field on a card does.
+        result = settings_module.parse_settings({"repositories": [{"name": "alpha"}]})
+        self.assertEqual(result.repositories, [{"name": "alpha", "path": ""}])
+
+    def test_a_non_list_repositories_field_is_ignored(self):
+        self.assertEqual(
+            settings_module.parse_settings({"repositories": {"name": "alpha"}}).repositories, []
+        )
 
     def test_out_of_range_hour_falls_back_to_default(self):
         result = settings_module.parse_settings({"scheduleHour": 24})
@@ -98,6 +161,14 @@ class ParseSettingsTests(unittest.TestCase):
     def test_invalid_model_falls_back_to_default(self):
         result = settings_module.parse_settings({"model": "gpt-5"})
         self.assertEqual(result.model, settings_module.DEFAULT_MODEL)
+
+    def test_a_stored_haiku_is_coerced_to_sonnet(self):
+        # Haiku is no longer offered — auto permission mode does not support it.
+        # An install that had it selected lands on the nearest still-valid model
+        # rather than on DEFAULT_MODEL, which is the most expensive one.
+        result = settings_module.parse_settings({"model": "haiku"})
+        self.assertEqual(result.model, "sonnet")
+        self.assertNotIn("haiku", settings_module.VALID_MODEL_NAMES)
 
     def test_blank_new_projects_directory_falls_back_to_default(self):
         result = settings_module.parse_settings({"newProjectsDirectory": "   "})
@@ -180,10 +251,14 @@ class SettingsRoundTripTests(unittest.TestCase):
             schedule_hour=4,
             schedule_minute=30,
             new_projects_directory="~/code/nightly",
-            model="haiku",
+            model="sonnet",
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",
             pace_threshold_hours=-3.5,
+            queue_source="jira",
+            jira_project_key="FCP",
+            jira_status_names={"todo": "Next up"},
+            repositories=[{"name": "alpha", "path": "~/code/alpha"}],
         )
         settings_module.write_settings(settings)
         self.assertEqual(settings_module.read_settings(), settings)
