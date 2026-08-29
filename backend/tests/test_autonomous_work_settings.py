@@ -67,6 +67,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "maxPromptDurationHours": 2.5,
                 "appendToAllPrompts": "Keep changes small.",
                 "paceThresholdHours": -2.5,
+                "resumeAfterFiveHourResetEnabled": False,
                 "queueSource": "jira",
                 "jiraProjectKey": "fcp",
                 "jiraStatusNames": {"todo": "Next up"},
@@ -80,6 +81,7 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
         self.assertEqual(result.append_to_all_prompts, "Keep changes small.")
         self.assertEqual(result.pace_threshold_hours, -2.5)
+        self.assertFalse(result.resume_after_five_hour_reset_enabled)
         self.assertEqual(result.queue_source, "jira")
         # Upper-cased: Jira project keys are, and a lower-cased one in the
         # settings screen would otherwise build a JQL query that matches nothing.
@@ -214,6 +216,30 @@ class ParseSettingsTests(unittest.TestCase):
         result = settings_module.parse_settings({"paceThresholdHours": True})
         self.assertEqual(result.pace_threshold_hours, settings_module.DEFAULT_PACE_THRESHOLD_HOURS)
 
+    def test_missing_resume_after_reset_defaults_to_on(self):
+        self.assertTrue(
+            settings_module.parse_settings({}).resume_after_five_hour_reset_enabled
+        )
+        self.assertEqual(
+            settings_module.DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED, True
+        )
+
+    def test_resume_after_reset_false_is_respected(self):
+        self.assertFalse(
+            settings_module.parse_settings(
+                {"resumeAfterFiveHourResetEnabled": False}
+            ).resume_after_five_hour_reset_enabled
+        )
+
+    def test_non_bool_resume_after_reset_falls_back_to_on(self):
+        # A truthy int or the string "false" is more likely a serialisation slip
+        # than a considered choice, and the safe direction is the default.
+        for bad_value in (0, 1, "false", "true", None):
+            result = settings_module.parse_settings(
+                {"resumeAfterFiveHourResetEnabled": bad_value}
+            )
+            self.assertTrue(result.resume_after_five_hour_reset_enabled)
+
 
 class AutonomousWorkSettingsTests(unittest.TestCase):
     def test_new_projects_path_expands_user(self):
@@ -255,6 +281,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",
             pace_threshold_hours=-3.5,
+            resume_after_five_hour_reset_enabled=False,
             queue_source="jira",
             jira_project_key="FCP",
             jira_status_names={"todo": "Next up"},

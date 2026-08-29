@@ -404,6 +404,7 @@ def main() -> int:
                         "maxPromptDurationHours": 5.0,
                         "appendToAllPrompts": "",
                         "paceThresholdHours": 0.0,
+                        "resumeAfterFiveHourResetEnabled": True,
                         "queueSource": "file",
                         "jiraProjectKey": "",
                         "jiraStatusNames": {},

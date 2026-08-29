@@ -223,7 +223,17 @@ the run asks launchd to start it again shortly afterwards. Design and rationale:
 `plans/resume-after-five-hour-reset.md`. `autonomous_work_resume.py` owns the
 whole of it — the state file's shape and the agent's lifecycle — and inherits
 the stdlib-only, 3.9-compatible constraint, being imported by
-`cancel-autonomous-work.py`.
+`cancel-autonomous-work.py` and by `usage-host.py`.
+
+**The whole feature is a toggle.** `resumeAfterFiveHourResetEnabled` — a switch
+in the extension's Settings screen, mirrored to
+`autonomous-work-settings.json`, default on, overridable for one run with
+`AUTONOMOUS_WORK_RESUME_ENABLED` — gates it end to end. Off means
+`schedule_resume_if_warranted` returns before scheduling anything (its first
+guard), *and* a `--resume` run that a still-installed agent fires anyway no-ops
+at the top of `main`'s resume branch. Flipping it off is also a settings save,
+so `usage-host.py` clears a resume an earlier run already scheduled — otherwise
+the one-shot agent fires hours later just to hit that second guard.
 
 That makes **a third launch agent**:
 
@@ -255,11 +265,11 @@ obvious improvement. The per-day half of the rule is why serving a resume
 **stamps `servedAt` rather than deleting the file**: the record that today
 already had one has to outlive the schedule it describes.
 
-Three more guards live in `schedule_resume_if_warranted`: a `--force` run
-schedules nothing (it is one explicit instruction, not a standing one); nothing
-is scheduled where the nightly agent is not installed (the same rule
-`install_launch_agent(only_if_installed=True)` follows — a machine that just ran
-`just uninstall-autonomous-work` must not find an agent written back); and
+Four more guards live in `schedule_resume_if_warranted`: the toggle above is off;
+a `--force` run schedules nothing (it is one explicit instruction, not a standing
+one); nothing is scheduled where the nightly agent is not installed (the same
+rule `install_launch_agent(only_if_installed=True)` follows — a machine that just
+ran `just uninstall-autonomous-work` must not find an agent written back); and
 nothing is scheduled with an empty queue.
 
 **When the window resets — three sources, in order.** The CLI's own notice, when
@@ -386,8 +396,10 @@ Every knob is also an environment variable rather than a code edit —
 that ends a session rather than moving on to the next `todo`),
 `AUTONOMOUS_WORK_MAX_RUN_DURATION_SECONDS`, `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` and
 `AUTONOMOUS_WORK_PACE_THRESHOLD_MS` (both of which win over their mirrored
-setting), `AUTONOMOUS_WORK_RESUME_BUFFER_SECONDS` (default 120 — how long after
-a reset a resume fires), and the file-path overrides used by the tests —
+setting), `AUTONOMOUS_WORK_RESUME_ENABLED` (a bool that likewise wins over the
+mirrored `resumeAfterFiveHourResetEnabled` — turns the whole resume feature off
+for one run), `AUTONOMOUS_WORK_RESUME_BUFFER_SECONDS` (default 120 — how long
+after a reset a resume fires), and the file-path overrides used by the tests —
 including `AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST`, `AUTONOMOUS_WORK_LAUNCHCTL`,
 `AUTONOMOUS_WORK_RESUME_LAUNCH_AGENT_PLIST` and
 `AUTONOMOUS_WORK_RESUME_STATE_FILE`, which are what let `just test-usage-host`

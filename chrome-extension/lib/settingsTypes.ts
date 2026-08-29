@@ -45,6 +45,13 @@ export interface AutonomousWorkSettings {
    */
   paceThresholdHours: number;
   /**
+   * Whether a session that runs into the 5-hour usage window schedules its own
+   * resume once that window is expected to refill, instead of leaving the queue
+   * until the next nightly run. On by default. Turning it off also clears any
+   * resume a run has already scheduled.
+   */
+  resumeAfterFiveHourResetEnabled: boolean;
+  /**
    * Where the queue lives. `file` is `prompts.txt` at the repository root, which
    * needs no account, no network and no third party, and is what a fresh clone
    * works with; `jira` is a board — see plans/work-queue-as-a-jira-board.md.
@@ -153,6 +160,7 @@ export const DEFAULT_MODEL = 'opus';
 export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
 export const DEFAULT_APPEND_TO_ALL_PROMPTS = '';
 export const DEFAULT_PACE_THRESHOLD_HOURS = 0;
+export const DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED = true;
 export const DEFAULT_QUEUE_SOURCE: QueueSourceName = 'file';
 export const DEFAULT_JIRA_PROJECT_KEY = '';
 export const DEFAULT_REPOSITORIES: RepositoryOption[] = [];
@@ -164,6 +172,7 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
   appendToAllPrompts: DEFAULT_APPEND_TO_ALL_PROMPTS,
   paceThresholdHours: DEFAULT_PACE_THRESHOLD_HOURS,
+  resumeAfterFiveHourResetEnabled: DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED,
   queueSource: DEFAULT_QUEUE_SOURCE,
   jiraProjectKey: DEFAULT_JIRA_PROJECT_KEY,
   jiraStatusNames: {},
@@ -199,6 +208,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     maxPromptDurationHours?: unknown;
     appendToAllPrompts?: unknown;
     paceThresholdHours?: unknown;
+    resumeAfterFiveHourResetEnabled?: unknown;
     queueSource?: unknown;
     jiraProjectKey?: unknown;
     jiraStatusNames?: unknown;
@@ -241,6 +251,13 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       ? autonomousWorkValue.paceThresholdHours
       : DEFAULT_PACE_THRESHOLD_HOURS;
 
+  // Anything but a real boolean falls back to the default (on) — storage from an
+  // older build has no such key, and "missing" must not read as "off".
+  const resumeAfterFiveHourResetEnabled =
+    typeof autonomousWorkValue.resumeAfterFiveHourResetEnabled === 'boolean'
+      ? autonomousWorkValue.resumeAfterFiveHourResetEnabled
+      : DEFAULT_RESUME_AFTER_FIVE_HOUR_RESET_ENABLED;
+
   // Anything but a known source falls back to the file. That direction matters:
   // no upgrade path, and no half-written storage, may leave an install with no
   // queue at all.
@@ -268,6 +285,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       maxPromptDurationHours,
       appendToAllPrompts,
       paceThresholdHours,
+      resumeAfterFiveHourResetEnabled,
       queueSource,
       jiraProjectKey,
       jiraStatusNames,

@@ -39,6 +39,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import autonomous_work_settings  # noqa: E402  (must follow the sys.path line above)
+# Owns the one-shot resume launch agent. Imported so a settings save that turns
+# the resume feature off can clear a resume an earlier run already scheduled,
+# rather than leaving launchd to fire a no-op hours later. Stdlib-only and
+# 3.9-compatible, like everything else the host imports.
+import autonomous_work_resume  # noqa: E402  (same)
 # The credential half of the Jira queue source, for the daily probe below. It is
 # stdlib-only and 3.9-compatible for exactly this reason — see
 # plans/work-queue-as-a-jira-board.md §5.4.
@@ -478,19 +483,33 @@ def apply_autonomous_work_settings(message):
     settings = autonomous_work_settings.parse_settings(raw_settings)
     result = autonomous_work_settings.apply_settings(settings)
 
+    # Turning the resume feature off clears a resume an earlier run already
+    # scheduled — otherwise launchd fires that one-shot agent hours later and the
+    # run itself has to no-op it. Only touched when something is actually
+    # pending, so a save with the feature already off (the common case) costs
+    # nothing. Best-effort: a launchctl hiccup here must not fail the save.
+    if not settings.resume_after_five_hour_reset_enabled:
+        try:
+            if autonomous_work_resume.read_pending_resume() is not None:
+                autonomous_work_resume.cancel_resume()
+                log_message("Resume feature switched off — cleared the pending resume")
+        except OSError as error:
+            log_message("Could not clear the pending resume: {}".format(error))
+
     # The appended text is logged as a length rather than verbatim: it is a whole
     # paragraph, and all this line has to answer is whether it arrived. The log is
     # the only view of what the extension actually sent, as opposed to what the
     # popup was showing.
     log_message(
         "Settings updated: run at {}, new projects in {}, model {}, max {}h per prompt, "
-        "pace threshold {}h, {} chars appended to prompts, queue in {}, "
+        "pace threshold {}h, resume after reset {}, {} chars appended to prompts, queue in {}, "
         "{} repositories, ({})".format(
             settings.describe_schedule(),
             settings.new_projects_directory,
             settings.model,
             settings.max_prompt_duration_hours,
             settings.pace_threshold_hours,
+            "on" if settings.resume_after_five_hour_reset_enabled else "off",
             len(settings.append_to_all_prompts),
             (
                 "Jira {}".format(settings.jira_project_key or "(no project key)")
