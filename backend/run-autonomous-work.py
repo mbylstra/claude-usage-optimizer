@@ -205,6 +205,20 @@ _model_name = _MODEL_NAME_FORCED_BY_ENV or _settings.model
 # `build_prompt`. Naming and logging of the *queue entry* still use its own
 # prompt unappended; only the invocation sees this.
 APPEND_TO_ALL_PROMPTS = _settings.append_to_all_prompts
+# Appended after the user's optional `APPEND_TO_ALL_PROMPTS`, on every run,
+# with no way to turn it off — the scheduler works unattended, so every prompt
+# must carry the "branch, then merge if you're sure" contract whether or not
+# the user filled in the settings field. The leading ". " lets it read as a
+# continuation of whatever text precedes it. Like `APPEND_TO_ALL_PROMPTS`, only
+# `build_prompt` (the invocation) sees this — queue naming and logging use the
+# entry's own prompt.
+MANDATORY_PROMPT_SUFFIX = (
+    ". Create a new branch for the work. Once finished, if there is no ambiguity"
+    " and you are confident enough (you don't have any unresolved questions for"
+    " the boss) merge it into main and delete the branch, else leave it in the"
+    " branch. Use your judgement for any decisions - I want you to work"
+    " completely autonomously."
+)
 # No "haiku" entry: the scheduler runs `claude -p --permission-mode auto`, and
 # auto mode requires Opus 4.6+ / Sonnet 4.6+ / Fable 5 — on Haiku it silently
 # falls back to Manual, which headless denies every edit and shell call. A name
@@ -1002,15 +1016,19 @@ def session_limit_message(event: dict) -> str | None:
 
 
 def build_prompt(entry_prompt: str) -> str:
-    """The text actually sent to `claude -p`: the queue entry's prompt, plus the
-    user's "append to all prompts" setting if one is configured.
+    """The text actually sent to `claude -p`: the queue entry's prompt, then the
+    user's optional "append to all prompts" setting, then the always-on
+    `MANDATORY_PROMPT_SUFFIX`.
 
-    Project naming (`dated_project_name`) and the queue file itself keep using
-    the entry's own prompt unappended — only the invocation sees this.
+    Doing this here rather than at the call site is deliberate: project naming
+    (`dated_project_name`) and the queue file itself keep using the entry's own
+    prompt unappended — only the `claude -p` invocation, and the `--dry-run`
+    preview of it, ever see any of this.
     """
-    if not APPEND_TO_ALL_PROMPTS.strip():
-        return entry_prompt
-    return f"{entry_prompt}\n\n{APPEND_TO_ALL_PROMPTS}"
+    prompt = entry_prompt
+    if APPEND_TO_ALL_PROMPTS.strip():
+        prompt = f"{prompt}\n\n{APPEND_TO_ALL_PROMPTS}"
+    return f"{prompt}{MANDATORY_PROMPT_SUFFIX}"
 
 
 def slugify_prompt(prompt: str, word_limit: int = 6) -> str:

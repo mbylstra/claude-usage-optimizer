@@ -630,19 +630,33 @@ class SummariseStreamEventTests(unittest.TestCase):
 
 
 class BuildPromptTests(unittest.TestCase):
-    def test_empty_append_setting_leaves_prompt_unchanged(self):
+    def test_empty_append_setting_still_gets_the_mandatory_suffix(self):
         with mock.patch.object(work, "APPEND_TO_ALL_PROMPTS", ""):
-            self.assertEqual(work.build_prompt("Fix the bug"), "Fix the bug")
+            self.assertEqual(
+                work.build_prompt("Fix the bug"),
+                "Fix the bug" + work.MANDATORY_PROMPT_SUFFIX,
+            )
 
-    def test_blank_append_setting_leaves_prompt_unchanged(self):
+    def test_blank_append_setting_contributes_nothing_but_the_suffix_remains(self):
         with mock.patch.object(work, "APPEND_TO_ALL_PROMPTS", "   "):
-            self.assertEqual(work.build_prompt("Fix the bug"), "Fix the bug")
+            self.assertEqual(
+                work.build_prompt("Fix the bug"),
+                "Fix the bug" + work.MANDATORY_PROMPT_SUFFIX,
+            )
 
-    def test_append_setting_is_appended_with_a_blank_line(self):
+    def test_append_setting_sits_between_the_prompt_and_the_mandatory_suffix(self):
         with mock.patch.object(work, "APPEND_TO_ALL_PROMPTS", "Keep changes small."):
             self.assertEqual(
-                work.build_prompt("Fix the bug"), "Fix the bug\n\nKeep changes small."
+                work.build_prompt("Fix the bug"),
+                "Fix the bug\n\nKeep changes small." + work.MANDATORY_PROMPT_SUFFIX,
             )
+
+    def test_mandatory_suffix_carries_the_branch_and_merge_contract(self):
+        # A distinctive literal, so an accidental edit to the constant is caught
+        # rather than silently agreeing with itself.
+        self.assertIn("Create a new branch for the work", work.MANDATORY_PROMPT_SUFFIX)
+        self.assertIn("merge it into main and delete the branch", work.MANDATORY_PROMPT_SUFFIX)
+        self.assertTrue(work.build_prompt("anything").endswith(work.MANDATORY_PROMPT_SUFFIX))
 
 
 class SlugifyPromptTests(unittest.TestCase):

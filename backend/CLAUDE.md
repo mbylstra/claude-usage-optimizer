@@ -484,9 +484,18 @@ it is *there*.
 **It is read out of the repository, not taken on the run's word.** After a
 completed prompt, `unmerged_branch_after_run` asks git whether the branch now
 checked out is something other than the default one and carries commits the
-default branch does not. Nothing has to be added to the prompt for this to work,
-which is the point — a convention the model has to remember is a convention that
-holds until the night it doesn't.
+default branch does not. The detection needs nothing in the prompt — a
+convention the model has to remember is one that holds until the night it
+doesn't.
+
+The prompt *does* still ask for the branch, though. `build_prompt` appends
+`MANDATORY_PROMPT_SUFFIX` — a fixed, non-optional tail after the user's
+`APPEND_TO_ALL_PROMPTS` setting — telling every run to branch, then merge into
+the default branch and delete the branch only if it is sure, else leave the
+work on the branch. That is the behaviour this section detects; the suffix
+makes it the instruction rather than a hope. It is added only where the prompt
+is actually sent (and in the `--dry-run` preview of that) — queue status
+writes and project naming still use the entry's own prompt.
 
 Four cases all read as plain `completed`, each with a test standing over it:
 committing straight to `main`; merging the branch back and staying on it (the
