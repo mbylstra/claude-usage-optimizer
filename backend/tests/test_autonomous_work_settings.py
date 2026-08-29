@@ -162,6 +162,14 @@ class ParseSettingsTests(unittest.TestCase):
         result = settings_module.parse_settings({"model": "gpt-5"})
         self.assertEqual(result.model, settings_module.DEFAULT_MODEL)
 
+    def test_a_stored_haiku_is_coerced_to_sonnet(self):
+        # Haiku is no longer offered — auto permission mode does not support it.
+        # An install that had it selected lands on the nearest still-valid model
+        # rather than on DEFAULT_MODEL, which is the most expensive one.
+        result = settings_module.parse_settings({"model": "haiku"})
+        self.assertEqual(result.model, "sonnet")
+        self.assertNotIn("haiku", settings_module.VALID_MODEL_NAMES)
+
     def test_blank_new_projects_directory_falls_back_to_default(self):
         result = settings_module.parse_settings({"newProjectsDirectory": "   "})
         self.assertEqual(result.new_projects_directory, settings_module.DEFAULT_NEW_PROJECTS_DIRECTORY)
@@ -243,7 +251,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             schedule_hour=4,
             schedule_minute=30,
             new_projects_directory="~/code/nightly",
-            model="haiku",
+            model="sonnet",
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",
             pace_threshold_hours=-3.5,

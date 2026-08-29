@@ -15,8 +15,13 @@ export interface AutonomousWorkSettings {
    * that runs the work rather than here.
    */
   newProjectsDirectory: string;
-  /** The Claude model to use for autonomous runs (haiku, sonnet, opus). */
-  model: 'haiku' | 'sonnet' | 'opus';
+  /**
+   * The Claude model to use for autonomous runs. Haiku is not offered: the
+   * scheduler runs `claude -p` under auto permission mode, which needs
+   * Opus 4.6+ / Sonnet 4.6+ / Fable 5 — on Haiku it falls back to Manual and a
+   * headless run then denies every edit and shell command.
+   */
+  model: 'sonnet' | 'opus';
   /**
    * The longest a single queued prompt may run before it is killed, in hours.
    * There is no way to tell a stuck prompt from a slow one, so this is a flat
@@ -206,9 +211,15 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       ? autonomousWorkValue.newProjectsDirectory
       : DEFAULT_NEW_PROJECTS_DIRECTORY;
 
-  const model = ['haiku', 'sonnet', 'opus'].includes(autonomousWorkValue.model as string)
-    ? (autonomousWorkValue.model as 'haiku' | 'sonnet' | 'opus')
-    : DEFAULT_MODEL;
+  // A stored 'haiku' (no longer offered) lands on 'sonnet', the nearest still-
+  // valid model, rather than jumping to DEFAULT_MODEL — which is the priciest.
+  const rawModel = autonomousWorkValue.model;
+  const model: 'sonnet' | 'opus' =
+    rawModel === 'haiku'
+      ? 'sonnet'
+      : rawModel === 'sonnet' || rawModel === 'opus'
+        ? rawModel
+        : DEFAULT_MODEL;
 
   const maxPromptDurationHours =
     typeof autonomousWorkValue.maxPromptDurationHours === 'number' &&

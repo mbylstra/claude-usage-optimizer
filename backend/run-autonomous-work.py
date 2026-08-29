@@ -205,8 +205,12 @@ _model_name = _MODEL_NAME_FORCED_BY_ENV or _settings.model
 # `build_prompt`. Naming and logging of the *queue entry* still use its own
 # prompt unappended; only the invocation sees this.
 APPEND_TO_ALL_PROMPTS = _settings.append_to_all_prompts
+# No "haiku" entry: the scheduler runs `claude -p --permission-mode auto`, and
+# auto mode requires Opus 4.6+ / Sonnet 4.6+ / Fable 5 — on Haiku it silently
+# falls back to Manual, which headless denies every edit and shell call. A name
+# that isn't here (a leftover Jira "haiku" option, or `AUTONOMOUS_WORK_MODEL=haiku`)
+# falls through: an entry to `CLAUDE_MODEL`, the session default to opus.
 _MODEL_ID_MAP = {
-    "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-5",
     "opus": "claude-opus-5",
 }

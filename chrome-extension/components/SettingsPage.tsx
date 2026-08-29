@@ -387,11 +387,10 @@ export function SettingsPage({
               onChange={(event) =>
                 onAutonomousWorkSettingsChange({
                   ...autonomousWorkSettings,
-                  model: event.target.value as 'haiku' | 'sonnet' | 'opus',
+                  model: event.target.value as 'sonnet' | 'opus',
                 })
               }
             >
-              <option value="haiku">Haiku (fastest, cheapest)</option>
               <option value="sonnet">Sonnet (balanced)</option>
               <option value="opus">Opus (most capable)</option>
             </select>

@@ -50,12 +50,19 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
 DEFAULT_MODEL = "opus"
-# The Claude models a run may be pinned to, shortest name first. The one home
-# both the settings screen's validation and the Jira board's per-card `Model`
-# dropdown (`queue_source_jira.MODEL_FIELD_NAME`) check against, so the two
-# cannot drift. The mapping from these names to concrete model ids lives in
+# The Claude models a run may be pinned to. The one home both the settings
+# screen's validation and the Jira board's per-card `Model` dropdown
+# (`queue_source_jira.MODEL_FIELD_NAME`) check against, so the two cannot drift.
+# The mapping from these names to concrete model ids lives in
 # `run-autonomous-work.py` — the queue never needs it.
-VALID_MODEL_NAMES = ("opus", "sonnet", "haiku")
+#
+# Haiku is deliberately absent. Auto permission mode — which the scheduler runs
+# `claude -p` under — requires Opus 4.6+ / Sonnet 4.6+ / Fable 5; on any other
+# model Claude Code silently starts in Manual mode, and a headless Manual run
+# denies every file edit and shell command, so a Haiku session just asks a
+# question into the void and gets nothing done. A stored `"haiku"` is coerced
+# to `"sonnet"` in `parse_settings` rather than rejected.
+VALID_MODEL_NAMES = ("opus", "sonnet")
 # Hours, not seconds: the settings screen speaks in hours, and
 # `run-autonomous-work.py` is the one place that converts to seconds. A cap on a
 # single `claude` call, not on the nightly session — a session can run many
@@ -220,11 +227,15 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     )
 
     model_value = settings_data.get("model")
-    model = (
-        model_value
-        if isinstance(model_value, str) and model_value in VALID_MODEL_NAMES
-        else DEFAULT_MODEL
-    )
+    if model_value == "haiku":
+        # Haiku is no longer offered (see VALID_MODEL_NAMES). An install that had
+        # it selected lands on the nearest still-valid model rather than jumping
+        # to the DEFAULT_MODEL, which is the most expensive one.
+        model = "sonnet"
+    elif isinstance(model_value, str) and model_value in VALID_MODEL_NAMES:
+        model = model_value
+    else:
+        model = DEFAULT_MODEL
 
     append_to_all_prompts_value = settings_data.get("appendToAllPrompts")
     append_to_all_prompts = (

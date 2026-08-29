@@ -1905,7 +1905,7 @@ class ConfigureProjectOrchestrationTests(StubJiraTestCase):
         self.assertEqual(len(writes_before), len(writes_after))
 
 
-MODEL_NAMES = ("opus", "sonnet", "haiku")
+MODEL_NAMES = ("opus", "sonnet")
 
 
 class SelectedModelNameTests(unittest.TestCase):
@@ -1928,7 +1928,15 @@ class SelectedModelNameTests(unittest.TestCase):
         self.assertEqual(self._selected("sonnet"), "sonnet")
 
     def test_the_name_is_matched_ignoring_case(self):
-        self.assertEqual(self._selected("Haiku"), "haiku")
+        self.assertEqual(self._selected("Sonnet"), "sonnet")
+
+    def test_a_leftover_haiku_option_reads_as_unset_and_is_logged(self):
+        # A board installed while "haiku" was still offered keeps the option
+        # pickable; a card set to it must fall through to the session model, not
+        # run Haiku (which auto permission mode does not support).
+        logged = []
+        self.assertIsNone(self._selected("haiku", log=logged.append))
+        self.assertTrue(any("haiku" in line for line in logged))
 
     def test_an_unset_field_is_none(self):
         self.assertIsNone(self._selected(None))
@@ -1953,13 +1961,13 @@ class ModelFieldTests(StubJiraTestCase):
     def _writes(self):
         return [call for call in self.state.requests if call[0] in ("POST", "PUT")]
 
-    def test_the_field_is_created_as_a_single_select_with_the_three_options(self):
+    def test_the_field_is_created_as_a_single_select_with_its_options(self):
         setup = jira.ensure_model_field(
             self.source.client, PROJECT_ID, MODEL_NAMES, log=self.logged.append
         )
         self.assertTrue(setup.ok)
         self.assertTrue(setup.created_field)
-        self.assertEqual(sorted(setup.added_options), ["haiku", "opus", "sonnet"])
+        self.assertEqual(sorted(setup.added_options), ["opus", "sonnet"])
 
         creation = [
             call for call in self.state.requests
@@ -1971,7 +1979,7 @@ class ModelFieldTests(StubJiraTestCase):
         self.assertEqual(creation[0][2]["searcherKey"], jira.SINGLE_SELECT_SEARCHER_KEY)
         self.assertEqual(
             self.state.options_of(setup.field_id),
-            {"opus": False, "sonnet": False, "haiku": False},
+            {"opus": False, "sonnet": False},
         )
 
     def test_the_field_lands_on_the_issue_screen(self):
@@ -1989,10 +1997,9 @@ class ModelFieldTests(StubJiraTestCase):
 
     def test_an_existing_field_missing_one_option_gets_only_that_option(self):
         field_id = self.state.add_field(jira.MODEL_FIELD_NAME)
-        self.state.add_field_option(field_id, "opus")
-        self.state.add_field_option(field_id, "Sonnet")  # case-insensitive match
+        self.state.add_field_option(field_id, "Opus")  # case-insensitive match
         setup = jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
-        self.assertEqual(setup.added_options, ["haiku"])
+        self.assertEqual(setup.added_options, ["sonnet"])
 
     def test_a_write_failure_is_reported_rather_than_raised(self):
         self.state.fail_writes = True
@@ -2029,9 +2036,9 @@ class ModelFieldReadBackTests(StubJiraTestCase):
         return key
 
     def test_a_card_with_the_model_set_carries_it_on_the_entry(self):
-        self._add_card(model="haiku")
+        self._add_card(model="sonnet")
         entry = self.source.next_todo()
-        self.assertEqual(entry.model_name, "haiku")
+        self.assertEqual(entry.model_name, "sonnet")
 
     def test_a_card_with_no_model_set_carries_none(self):
         self._add_card()

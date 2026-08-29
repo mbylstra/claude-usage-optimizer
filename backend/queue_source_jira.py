@@ -164,11 +164,13 @@ SINGLE_SELECT_SEARCHER_KEY = (
 REPOSITORY_FIELD_TYPE = SINGLE_SELECT_FIELD_TYPE
 REPOSITORY_FIELD_SEARCHER_KEY = SINGLE_SELECT_SEARCHER_KEY
 
-# The per-card `Model` dropdown: pick opus / sonnet / haiku for one prompt, or
-# leave it blank to run on the session's configured model. Unlike the Repository
-# field its options are a fixed set — `autonomous_work_settings.VALID_MODEL_NAMES`
-# — so there is nothing to sync from Settings and no soft-disable dance: the
-# three options are created once by `install-jira-queue` and never change.
+# The per-card `Model` dropdown: pick opus / sonnet for one prompt, or leave it
+# blank to run on the session's configured model. Unlike the Repository field its
+# options are a fixed set — `autonomous_work_settings.VALID_MODEL_NAMES` — so
+# there is nothing to sync from Settings and no soft-disable dance:
+# `ensure_model_field` only ever adds. A board installed while "haiku" was still
+# offered keeps that option pickable; `selected_model_name` logs it and treats
+# the card as unset, so it runs on the session model.
 MODEL_FIELD_NAME = "Model"
 
 REQUEST_TIMEOUT_SECONDS = 30
@@ -2941,7 +2943,7 @@ def configure_project(client, project, log=print, repositories=()):
     log(repository_sync.describe())
     ensure_repository_field_on_card_layout(client, board_id, repository_sync.field_id, log=log)
 
-    # The Model picker — opus / sonnet / haiku for one card, blank for the
+    # The Model picker — opus / sonnet for one card, blank for the
     # session's configured model. A fixed option set, so unlike the Repository
     # field there is nothing to sync from Settings and it never touches the
     # board card layout (that face holds only three fields and Repository has one).
