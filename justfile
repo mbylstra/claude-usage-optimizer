@@ -503,22 +503,24 @@ test-autonomous-work:
 jira_script := "backend/queue_source_jira.py"
 
 # Credential, a company-managed project, its issue type scheme (defaults to
-# Task), workflow statuses (with global transitions) and board columns — all
-# five, scripted end to end. Safe to re-run: it creates only what is missing,
-# and leaves an existing project entirely alone (use jira-configure-project to
-# re-apply config against one).
+# Task), workflow statuses (with global transitions), board columns — all five —
+# and the Repository and Model card dropdowns, scripted end to end. Safe to
+# re-run: it creates only what is missing, and leaves an existing project
+# entirely alone (use jira-configure-project to re-apply config against one).
 
 # Set the queue up on a Jira board
 [no-exit-message]
 install-jira-queue project_key="":
     @python3 {{ jira_script }} --install {{ project_key }}
 
-# Re-applies the scheme/workflow/column config against an existing project —
-# the repair path when it has drifted from a hand edit. Touches neither the
-# credential nor the settings mirror. --purge cascade-deletes the project and
-# the workflow scheme/workflow Jira's own soft delete leaves behind, instead.
+# Re-applies the scheme/workflow/column config and the Repository/Model card
+# dropdowns against an existing project — the repair path when it has drifted
+# from a hand edit, and how an existing board picks up newly added card fields.
+# Touches neither the credential nor the settings mirror. --purge cascade-deletes
+# the project and the workflow scheme/workflow Jira's own soft delete leaves
+# behind, instead.
 
-# Repair a project's scheme, workflow and columns (or --purge to delete it)
+# Repair a project's scheme, workflow, columns and card fields (or --purge to delete it)
 [no-exit-message]
 jira-configure-project project_key="" *flags="":
     @python3 {{ jira_script }} --configure-project {{ project_key }} {{ flags }}

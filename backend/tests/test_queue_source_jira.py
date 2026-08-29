@@ -1905,6 +1905,166 @@ class ConfigureProjectOrchestrationTests(StubJiraTestCase):
         self.assertEqual(len(writes_before), len(writes_after))
 
 
+MODEL_NAMES = ("opus", "sonnet", "haiku")
+
+
+class SelectedModelNameTests(unittest.TestCase):
+    """`selected_model_name` — a card's Model dropdown, read back and validated."""
+
+    FIELD_ID = "customfield_10222"
+
+    def _fields(self, selected=None):
+        fields = {"summary": "t"}
+        if selected is not None:
+            fields[self.FIELD_ID] = {"value": selected}
+        return fields
+
+    def _selected(self, selected, log=None):
+        return jira.selected_model_name(
+            self._fields(selected), self.FIELD_ID, MODEL_NAMES, log=log or (lambda _m: None)
+        )
+
+    def test_a_recognised_selection_comes_back_as_its_name(self):
+        self.assertEqual(self._selected("sonnet"), "sonnet")
+
+    def test_the_name_is_matched_ignoring_case(self):
+        self.assertEqual(self._selected("Haiku"), "haiku")
+
+    def test_an_unset_field_is_none(self):
+        self.assertIsNone(self._selected(None))
+        self.assertIsNone(self._selected("   "))
+
+    def test_no_field_on_the_site_is_none(self):
+        self.assertIsNone(
+            jira.selected_model_name(self._fields("opus"), None, MODEL_NAMES)
+        )
+
+    def test_an_unrecognised_value_is_none_and_is_logged(self):
+        # Silently running the wrong model would spend budget invisibly, which is
+        # the one thing this project exists to watch — so it must be said.
+        logged = []
+        self.assertIsNone(self._selected("gpt-4", log=logged.append))
+        self.assertTrue(any("gpt-4" in line for line in logged))
+
+
+class ModelFieldTests(StubJiraTestCase):
+    """Creating the Model field and giving it its fixed option set."""
+
+    def _writes(self):
+        return [call for call in self.state.requests if call[0] in ("POST", "PUT")]
+
+    def test_the_field_is_created_as_a_single_select_with_the_three_options(self):
+        setup = jira.ensure_model_field(
+            self.source.client, PROJECT_ID, MODEL_NAMES, log=self.logged.append
+        )
+        self.assertTrue(setup.ok)
+        self.assertTrue(setup.created_field)
+        self.assertEqual(sorted(setup.added_options), ["haiku", "opus", "sonnet"])
+
+        creation = [
+            call for call in self.state.requests
+            if call[0] == "POST" and call[1] == "/rest/api/3/field"
+        ]
+        self.assertEqual(len(creation), 1)
+        self.assertEqual(creation[0][2]["name"], jira.MODEL_FIELD_NAME)
+        self.assertEqual(creation[0][2]["type"], jira.SINGLE_SELECT_FIELD_TYPE)
+        self.assertEqual(creation[0][2]["searcherKey"], jira.SINGLE_SELECT_SEARCHER_KEY)
+        self.assertEqual(
+            self.state.options_of(setup.field_id),
+            {"opus": False, "sonnet": False, "haiku": False},
+        )
+
+    def test_the_field_lands_on_the_issue_screen(self):
+        setup = jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
+        self.assertTrue(setup.attached_to_screen)
+        self.assertIn(setup.field_id, self.state.screen_tab_fields)
+
+    def test_a_second_call_writes_nothing_new(self):
+        jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
+        before = len(self._writes())
+        setup = jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
+        self.assertEqual(len(self._writes()), before)
+        self.assertFalse(setup.created_field)
+        self.assertEqual(setup.added_options, [])
+
+    def test_an_existing_field_missing_one_option_gets_only_that_option(self):
+        field_id = self.state.add_field(jira.MODEL_FIELD_NAME)
+        self.state.add_field_option(field_id, "opus")
+        self.state.add_field_option(field_id, "Sonnet")  # case-insensitive match
+        setup = jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
+        self.assertEqual(setup.added_options, ["haiku"])
+
+    def test_a_write_failure_is_reported_rather_than_raised(self):
+        self.state.fail_writes = True
+        setup = jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
+        self.assertFalse(setup.ok)
+        self.assertTrue(setup.error)
+
+    def test_configure_project_creates_it_but_keeps_it_off_the_card_layout(self):
+        # The board card face holds three fields and Repository already takes one
+        # — the model is a detail you set on an open card, not a board glance.
+        jira.configure_project(
+            self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY}, log=self.logged.append
+        )
+        field = jira.find_model_field(self.source.client)
+        self.assertIsNotNone(field)
+        self.assertIn(field["id"], self.state.screen_tab_fields)
+        self.assertNotIn(
+            field["id"], [f["fieldId"] for f in self.state.card_layout_fields]
+        )
+
+
+class ModelFieldReadBackTests(StubJiraTestCase):
+    """The queue reading a card's model choice back, end to end through the source."""
+
+    def setUp(self):
+        super().setUp()
+        self.repository_field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.model_field_id = self.state.add_field(jira.MODEL_FIELD_NAME)
+
+    def _add_card(self, model=None):
+        key = self.state.add_issue("Do the thing", jira.adf_document("Do the thing."))
+        if model is not None:
+            self.state.issues[key]["fields"][self.model_field_id] = {"value": model}
+        return key
+
+    def test_a_card_with_the_model_set_carries_it_on_the_entry(self):
+        self._add_card(model="haiku")
+        entry = self.source.next_todo()
+        self.assertEqual(entry.model_name, "haiku")
+
+    def test_a_card_with_no_model_set_carries_none(self):
+        self._add_card()
+        entry = self.source.next_todo()
+        self.assertIsNone(entry.model_name)
+
+    def test_an_unrecognised_model_reads_as_unset(self):
+        self._add_card(model="gpt-4")
+        entry = self.source.next_todo()
+        self.assertIsNone(entry.model_name)
+        self.assertTrue(any("gpt-4" in line for line in self.logged))
+
+    def test_the_model_field_is_asked_for_in_the_search(self):
+        self._add_card(model="opus")
+        self.source.next_todo()
+        searches = [c for c in self.state.requests if c[1] == "/rest/api/3/search/jql"]
+        self.assertIn(self.model_field_id, searches[0][2]["fields"][0])
+
+    def test_both_custom_fields_are_resolved_from_one_field_list_call(self):
+        self._add_card(model="opus")
+        self.source.next_todo()
+        self.source.remaining_todo_prompts([])
+        lookups = [c for c in self.state.requests if c[1] == "/rest/api/3/field"]
+        self.assertEqual(len(lookups), 1)
+
+    def test_a_site_without_the_model_field_still_runs_the_queue(self):
+        self.state.fields = [f for f in self.state.fields if f["name"] != jira.MODEL_FIELD_NAME]
+        source = jira.JiraQueueSource(self.credentials, PROJECT_KEY, log=self.logged.append)
+        self._add_card()
+        entry = source.next_todo()
+        self.assertIsNone(entry.model_name)
+
+
 class PurgeProjectRemnantsTests(StubJiraTestCase):
     def test_purge_cascades_workflow_scheme_and_workflow(self):
         jira.purge_project_remnants(self.source.client, PROJECT_KEY, log=self.logged.append)

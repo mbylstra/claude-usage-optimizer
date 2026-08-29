@@ -1206,5 +1206,48 @@ class QueueStatusForOutcomeTests(unittest.TestCase):
         )
 
 
+class ClaudeModelIdForTests(unittest.TestCase):
+    """Which concrete model id one queued entry runs on — see `claude_model_id_for`."""
+
+    def _entry(self, model_name):
+        return work.QueueEntry(
+            status=work.STATUS_TODO,
+            handle=0,
+            repository_path=None,
+            prompt="Do it.",
+            model_name=model_name,
+        )
+
+    def test_an_entry_that_names_a_model_runs_on_that_model(self):
+        self.assertEqual(
+            work.claude_model_id_for(self._entry("haiku")), "claude-haiku-4-5-20251001"
+        )
+        self.assertEqual(work.claude_model_id_for(self._entry("sonnet")), "claude-sonnet-5")
+
+    def test_an_entry_that_names_nothing_runs_on_the_session_default(self):
+        self.assertEqual(work.claude_model_id_for(self._entry(None)), work.CLAUDE_MODEL)
+
+    def test_an_unrecognised_name_falls_back_to_the_session_default(self):
+        # `selected_model_name` should already have screened this out on the Jira
+        # side, but the mapping must not blow up if one slips through.
+        self.assertEqual(work.claude_model_id_for(self._entry("gpt-4")), work.CLAUDE_MODEL)
+
+    def test_the_env_override_wins_over_the_entry(self):
+        # `AUTONOMOUS_WORK_MODEL` is an explicit "run everything on X" for the
+        # whole session, the same precedence the other env knobs follow.
+        with mock.patch.object(work, "_MODEL_NAME_FORCED_BY_ENV", "sonnet"), mock.patch.object(
+            work, "CLAUDE_MODEL", "claude-sonnet-5"
+        ):
+            self.assertEqual(work.claude_model_id_for(self._entry("haiku")), "claude-sonnet-5")
+
+    def test_the_model_pin_is_the_first_two_claude_arguments(self):
+        # Losing `--model` off the front of the invocation is the regression the
+        # module's own line-190 comment records having shipped once.
+        arguments = work.claude_arguments_for(self._entry("haiku"))
+        self.assertEqual(arguments[:2], ["--model", "claude-haiku-4-5-20251001"])
+        self.assertEqual(arguments[2:], work.CLAUDE_BASE_ARGUMENTS)
+        self.assertNotIn("--model", work.CLAUDE_BASE_ARGUMENTS)
+
+
 if __name__ == "__main__":
     unittest.main()

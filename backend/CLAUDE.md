@@ -92,8 +92,8 @@ just run-log-preview             # the run-log window UI, on fixtures, no extens
 
 just queue-source                # which queue the next run reads, and can it be read
 just queue-list                  # what the next run would pick up, in rank order
-just install-jira-queue          # credential, company-managed project, scheme/workflow/columns
-just jira-configure-project      # repair a project's scheme/workflow/columns (or --purge it)
+just install-jira-queue          # credential, company-managed project, scheme/workflow/columns, card fields
+just jira-configure-project      # repair a project's scheme/workflow/columns/card fields (or --purge it)
 just set-jira-credentials        # rotate the API token
 just jira-status                 # site, project, credential, columns, queue depth
 just jira-sync-repositories      # push the repository list to the card's dropdown
@@ -636,6 +636,24 @@ name matching nothing configured behaves exactly like an unset field — a
 renamed entry in Settings must not point a queued prompt at the wrong place. A
 sync that cannot reach Jira is reported next to the save confirmation and never
 fails the save, the same rule the credential probe follows.
+
+**A card can also pin its Claude model, from a second dropdown.** The `Model`
+field — `opus` / `sonnet` / `haiku`, the vocabulary
+`autonomous_work_settings.VALID_MODEL_NAMES` owns — is a single-select created
+and put on the issue screen by `install-jira-queue`, exactly as `Repository` is.
+What makes it *much* smaller than `Repository`: its three options are a fixed
+set, so there is nothing to sync from Settings, no soft-disable dance, and no
+`--sync` recipe — `ensure_model_field` creates the options once and re-runs
+write nothing. It is deliberately **not** on the board card layout: that face
+holds three fields, `Repository` already takes one, and the model is a detail
+you set on an open card. `JiraQueueSource` resolves both custom-field ids from a
+single `GET /rest/api/3/field` and carries the choice on `QueueEntry.model_name`;
+`run-autonomous-work.py`'s `claude_model_id_for` maps it to a concrete model id.
+**A blank field, or one set to something unrecognised, runs the session's
+configured model** — and the unrecognised case is logged, since silently running
+the wrong model spends budget invisibly. Precedence: `AUTONOMOUS_WORK_MODEL`
+(a whole-session override) beats the card, which beats the extension's model
+setting, which beats `opus`.
 
 **The prompt is the description, or the summary when the description says
 nothing more than a `REPO:` line.** Jira forces a summary and this is what stops

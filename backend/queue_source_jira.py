@@ -150,14 +150,26 @@ REPOSITORY_FIELD_PREFIX = queue_source.REPOSITORY_FIELD_PREFIX
 # line, this is the single-select field a card can pick a repository from. When
 # both are set the field wins — see `prompt_from_issue`.
 REPOSITORY_FIELD_NAME = "Repository"
-REPOSITORY_FIELD_TYPE = "com.atlassian.jira.plugin.system.customfieldtypes:select"
-# Measured, not reasoned. The searcher Atlassian's own examples suggest for a
-# *single*-select — `selectsearcher` — does not exist and 400s; the multi-select
-# searcher is what works on a single-select field. See
+# Both custom fields this module manages are single-selects, so the type and the
+# searcher are shared. Measured, not reasoned: the searcher Atlassian's own
+# examples suggest for a *single*-select — `selectsearcher` — does not exist and
+# 400s; the multi-select searcher is what works. See
 # plans/jira-repository-picker.md §0.1.
-REPOSITORY_FIELD_SEARCHER_KEY = (
+SINGLE_SELECT_FIELD_TYPE = "com.atlassian.jira.plugin.system.customfieldtypes:select"
+SINGLE_SELECT_SEARCHER_KEY = (
     "com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher"
 )
+# Kept under their old names too — one existing test asserts against
+# `REPOSITORY_FIELD_TYPE` by that name.
+REPOSITORY_FIELD_TYPE = SINGLE_SELECT_FIELD_TYPE
+REPOSITORY_FIELD_SEARCHER_KEY = SINGLE_SELECT_SEARCHER_KEY
+
+# The per-card `Model` dropdown: pick opus / sonnet / haiku for one prompt, or
+# leave it blank to run on the session's configured model. Unlike the Repository
+# field its options are a fixed set — `autonomous_work_settings.VALID_MODEL_NAMES`
+# — so there is nothing to sync from Settings and no soft-disable dance: the
+# three options are created once by `install-jira-queue` and never change.
+MODEL_FIELD_NAME = "Model"
 
 REQUEST_TIMEOUT_SECONDS = 30
 # The probe runs inside the native host, on the message loop, so it is held to a
@@ -907,23 +919,40 @@ class RepositoryFieldSync:
         return "Repository field: " + "; ".join(parts)
 
 
-def find_repository_field(client):
-    # type: (JiraClient) -> dict | None
-    """The Repository custom field, matched by name, case-insensitively.
+def _match_field_by_name(fields, field_name):
+    # type: (object, str) -> dict | None
+    """The field in a `GET /rest/api/3/field` response whose name matches, or None.
 
     Discovered rather than hard-coded for the same reason status IDs are: a
     custom field's id is per-site and only knowable after it is created or looked
     up, so `customfield_10210` is true of exactly one Jira site.
     """
-    response = client.request("GET", "/rest/api/3/field")
-    wanted = REPOSITORY_FIELD_NAME.strip().lower()
-    for candidate in response if isinstance(response, list) else []:
+    wanted = field_name.strip().lower()
+    for candidate in fields if isinstance(fields, list) else []:
         if not isinstance(candidate, dict):
             continue
         name = candidate.get("name")
         if isinstance(name, str) and name.strip().lower() == wanted:
             return candidate
     return None
+
+
+def _find_custom_field_by_name(client, field_name):
+    # type: (JiraClient, str) -> dict | None
+    """A custom field on this site, matched by name, case-insensitively — or None."""
+    return _match_field_by_name(client.request("GET", "/rest/api/3/field"), field_name)
+
+
+def find_repository_field(client):
+    # type: (JiraClient) -> dict | None
+    """The Repository custom field on this site, or None if it is not there yet."""
+    return _find_custom_field_by_name(client, REPOSITORY_FIELD_NAME)
+
+
+def find_model_field(client):
+    # type: (JiraClient) -> dict | None
+    """The Model custom field on this site, or None if it is not there yet."""
+    return _find_custom_field_by_name(client, MODEL_FIELD_NAME)
 
 
 def _default_screen_ids(client, project_id):
@@ -989,9 +1018,14 @@ def _field_already_on_screen(error):
     )
 
 
-def attach_repository_field_to_screens(client, project_id, field_id, log=_ignore):
-    # type: (JiraClient, str, str, object) -> bool
+def attach_repository_field_to_screens(
+    client, project_id, field_id, log=_ignore, field_name=REPOSITORY_FIELD_NAME
+):
+    # type: (JiraClient, str, str, object, str) -> bool
     """Put the field on the project's issue screen. Returns whether anything changed.
+
+    `field_name` only shapes the log line — the Model field goes through here too,
+    and the two must read distinctly in the install output.
 
     This is the *issue screen* — the fields shown with a card open — not the
     board card layout, the two or three fields a closed card shows. That naming
@@ -1011,7 +1045,9 @@ def attach_repository_field_to_screens(client, project_id, field_id, log=_ignore
     "safe to re-run" here means issuing no writes, not merely surviving them.
     """
     try:
-        return _attach_repository_field_to_screens(client, project_id, field_id, log=log)
+        return _attach_repository_field_to_screens(
+            client, project_id, field_id, log=log, field_name=field_name
+        )
     except JiraError as error:
         # Degraded, not fatal — the same stance `ensure_board_columns` takes.
         # The field and its options are the part that must land; a field that is
@@ -1022,13 +1058,15 @@ def attach_repository_field_to_screens(client, project_id, field_id, log=_ignore
         log(
             "Could not put '{}' on the issue screen ({}): {}. The field and its "
             "options are fine — add it to the screen by hand, or re-run once this "
-            "is fixed.".format(REPOSITORY_FIELD_NAME, error.cause, error)
+            "is fixed.".format(field_name, error.cause, error)
         )
         return False
 
 
-def _attach_repository_field_to_screens(client, project_id, field_id, log=_ignore):
-    # type: (JiraClient, str, str, object) -> bool
+def _attach_repository_field_to_screens(
+    client, project_id, field_id, log=_ignore, field_name=REPOSITORY_FIELD_NAME
+):
+    # type: (JiraClient, str, str, object, str) -> bool
     attached = False
     for screen_id in _default_screen_ids(client, project_id):
         tabs = client.request("GET", "/rest/api/3/screens/{}/tabs".format(screen_id))
@@ -1051,7 +1089,7 @@ def _attach_repository_field_to_screens(client, project_id, field_id, log=_ignor
                 if not _field_already_on_screen(error):
                     raise
                 continue
-            log("Added '{}' to screen {}".format(REPOSITORY_FIELD_NAME, screen_id))
+            log("Added '{}' to screen {}".format(field_name, screen_id))
             attached = True
             # One tab is enough — a field on two tabs of one screen is a
             # duplicate on the card, not a second chance at being visible.
@@ -1261,6 +1299,164 @@ def sync_repositories_if_configured(settings, log=_ignore):
         return RepositoryFieldSync(ok=False, error=str(error)).to_json()
 
 
+# --------------------------------------------------------------------------- #
+# The Model field
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class ModelFieldSetup:
+    """What one pass of `ensure_model_field` did, or could not do.
+
+    Reported rather than raised, the same shape as `RepositoryFieldSync` — but
+    much smaller, because the Model field has no living option list to reconcile:
+    its three choices are fixed, so there is only "created it / added the missing
+    options / put it on the screen", never a disable or a re-enable.
+    """
+
+    ok: bool
+    field_id: "str | None" = None
+    created_field: bool = False
+    attached_to_screen: bool = False
+    added_options: "list[str]" = field(default_factory=list)
+    error: "str | None" = None
+
+    def describe(self):
+        # type: () -> str
+        if not self.ok:
+            return "Model field not set up: {}".format(self.error)
+        parts = []
+        if self.created_field:
+            parts.append("created the field")
+        if self.added_options:
+            parts.append("added {}".format(", ".join(self.added_options)))
+        if self.attached_to_screen:
+            parts.append("added it to the issue screen")
+        if not parts:
+            return "Model field already set up"
+        return "Model field: " + "; ".join(parts)
+
+
+def ensure_model_field(client, project_id, model_names, log=_ignore):
+    # type: (JiraClient, str, tuple | list, object) -> ModelFieldSetup
+    """Find or create the Model single-select, give it the fixed option set, and
+    put it on the project's issue screen.
+
+    Re-run safe in the strict sense `configure_project` needs — a second call
+    against an already-configured project issues zero writes. Never raises: every
+    failure comes back as `ok=False` with the reason, so a Jira hiccup here does
+    not fail an install the rest of which succeeded.
+
+    Deliberately **not** on the board card layout: that face holds at most three
+    fields, the Repository field already takes a slot, and the model is a detail
+    you set on an open card, not something the board needs to show at a glance.
+    """
+    try:
+        field = find_model_field(client)
+        created = False
+        if field is None:
+            try:
+                field = client.request(
+                    "POST",
+                    "/rest/api/3/field",
+                    body={
+                        "name": MODEL_FIELD_NAME,
+                        "description": (
+                            "Which Claude model this prompt runs on. Leave blank to use "
+                            "the model set in the Claude Usage Optimizer extension."
+                        ),
+                        "type": SINGLE_SELECT_FIELD_TYPE,
+                        "searcherKey": SINGLE_SELECT_SEARCHER_KEY,
+                    },
+                )
+                created = True
+                log("Created the '{}' field".format(MODEL_FIELD_NAME))
+            except JiraError as error:
+                # Same race as `ensure_repository_field`: Jira Cloud accepts two
+                # custom fields with one name, so the loser of a create/create
+                # race has to adopt the winner's field rather than add to the pile.
+                field = find_model_field(client)
+                if field is None:
+                    raise
+                log(
+                    "Another process created the '{}' field first ({}) — using theirs".format(
+                        MODEL_FIELD_NAME, error.cause
+                    )
+                )
+
+        field_id = str((field or {}).get("id") or "")
+        if not field_id:
+            raise JiraError("Jira returned no id for the '{}' field".format(MODEL_FIELD_NAME))
+
+        # A newly created field has exactly one context, made for it
+        # automatically and always global — the same shape the Repository field
+        # relies on (plans/jira-repository-picker.md §0.2).
+        contexts = client.request("GET", "/rest/api/3/field/{}/context".format(field_id))
+        context_values = (contexts or {}).get("values") or []
+        if not context_values:
+            raise JiraError("The '{}' field has no context to hold options".format(field_id))
+        context_id = str((context_values[0] or {}).get("id") or "")
+
+        option_path = "/rest/api/3/field/{}/context/{}/option".format(field_id, context_id)
+        response = client.request("GET", option_path)
+        present = {
+            option["value"].strip().lower()
+            for option in (response or {}).get("values") or []
+            if isinstance(option, dict) and isinstance(option.get("value"), str)
+        }
+        added = []
+        for name in model_names:
+            if name.strip().lower() in present:
+                continue
+            client.request(
+                "POST", option_path, body={"options": [{"value": name, "disabled": False}]}
+            )
+            added.append(name)
+        if added:
+            log("Added the '{}' options: {}".format(MODEL_FIELD_NAME, ", ".join(added)))
+
+        attached = attach_repository_field_to_screens(
+            client, project_id, field_id, log=log, field_name=MODEL_FIELD_NAME
+        )
+        return ModelFieldSetup(
+            ok=True,
+            field_id=field_id,
+            created_field=created,
+            attached_to_screen=attached,
+            added_options=added,
+        )
+    except WRITE_FAILURES as error:
+        return ModelFieldSetup(ok=False, error=str(error))
+
+
+def selected_model_name(fields, model_field_id, valid_model_names, log=_ignore):
+    # type: (dict, str | None, tuple | list, object) -> str | None
+    """The model name a card's Model dropdown picked, if it is one we recognise.
+
+    An unrecognised value — the field left set to something hand-edited, or a
+    name no longer in `valid_model_names` — is logged and treated as unset, so
+    it falls through to the session's configured model. Silently running the
+    wrong model would spend budget invisibly, which is the one thing this whole
+    project exists to keep an eye on. Matched case-insensitively so a value
+    typed as `Opus` still resolves.
+    """
+    if not model_field_id:
+        return None
+    selection = fields.get(model_field_id)
+    raw = (selection or {}).get("value") if isinstance(selection, dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    wanted = raw.strip().lower()
+    for name in valid_model_names:
+        if name.strip().lower() == wanted:
+            return name
+    log(
+        "Card's '{}' is set to '{}', which is not one of {} — using the "
+        "configured model instead".format(MODEL_FIELD_NAME, raw.strip(), ", ".join(valid_model_names))
+    )
+    return None
+
+
 class JiraQueueSource:
     """The To Do column, read `ORDER BY Rank ASC` — a `queue_source.QueueSource`.
 
@@ -1281,11 +1477,20 @@ class JiraQueueSource:
         self.client = JiraClient(credentials, log=log)
         self._statuses = None  # type: ProjectStatuses | None
         self._repository_field_id = None  # type: str | None
-        # Distinct from `_repository_field_id is None`, which cannot tell "not
-        # looked yet" from "looked, and there is no such field" — without this
-        # every card would re-ask, and a site without the field would pay for a
-        # round trip per card forever.
-        self._looked_for_repository_field = False
+        self._model_field_id = None  # type: str | None
+        # Both custom fields are resolved from one `GET /rest/api/3/field` the
+        # first time either id is asked for. This flag is distinct from
+        # `_..._field_id is None`, which cannot tell "not looked yet" from
+        # "looked, and there is no such field" — without it every card would
+        # re-ask, and a site without the fields would pay for a round trip
+        # per card forever.
+        self._looked_for_custom_fields = False
+        # The model-name vocabulary, from the one module that owns it. Imported
+        # inside the method, the way every other `autonomous_work_settings` use
+        # in this file is, to keep module import cheap and side-effect-free.
+        import autonomous_work_settings
+
+        self._valid_model_names = tuple(autonomous_work_settings.VALID_MODEL_NAMES)
 
     # -- plumbing ----------------------------------------------------------- #
 
@@ -1316,32 +1521,47 @@ class JiraQueueSource:
         # type: (str) -> str | None
         return self.statuses().name_for(column)
 
+    def _resolve_custom_fields(self):
+        # type: () -> None
+        """Resolve the Repository and Model field ids from one field-list call.
+
+        Lazily done and cached the same way `statuses()` is, and for the same
+        reason: it is one call whose answer does not change mid-run, and the JQL
+        search needs the ids to ask for the fields at all. One `GET` covers both,
+        since the endpoint returns every field on the site.
+
+        Unlike `statuses()`, a failure here is **not** raised. Both fields are
+        refinements over things that work without them — the `REPO:` line and the
+        session's configured model — so a site where they are missing, or
+        momentarily unreadable, falls back rather than taking the whole queue down.
+        """
+        if self._looked_for_custom_fields:
+            return
+        self._looked_for_custom_fields = True
+        try:
+            all_fields = self.client.request("GET", "/rest/api/3/field")
+        except JiraError as error:
+            self._log(
+                "Could not look up custom fields ({}) — cards fall back to {} and "
+                "the configured model".format(error.cause, REPOSITORY_FIELD_PREFIX)
+            )
+            return
+        repository_field = _match_field_by_name(all_fields, REPOSITORY_FIELD_NAME)
+        model_field = _match_field_by_name(all_fields, MODEL_FIELD_NAME)
+        self._repository_field_id = str(repository_field.get("id")) if repository_field else None
+        self._model_field_id = str(model_field.get("id")) if model_field else None
+
     def repository_field_id(self):
         # type: () -> str | None
-        """The Repository field's id on this site, resolved once per run.
-
-        Resolved lazily and cached the same way `statuses()` is, and for the same
-        reason: it is one call whose answer does not change mid-run, and the JQL
-        search needs it to ask for the field at all.
-
-        Unlike `statuses()`, a failure here is **not** raised. The picker is a
-        convenience over the `REPO:` line that still works without it, so a site
-        where the field is missing — or momentarily unreadable — falls back
-        rather than taking the whole queue down.
-        """
-        if not self._looked_for_repository_field:
-            self._looked_for_repository_field = True
-            try:
-                found = find_repository_field(self.client)
-            except JiraError as error:
-                self._log(
-                    "Could not look up the '{}' field ({}) — cards fall back to {}".format(
-                        REPOSITORY_FIELD_NAME, error.cause, REPOSITORY_FIELD_PREFIX
-                    )
-                )
-                found = None
-            self._repository_field_id = str(found.get("id")) if found else None
+        """The Repository field's id on this site, or None if it is not there."""
+        self._resolve_custom_fields()
         return self._repository_field_id
+
+    def model_field_id(self):
+        # type: () -> str | None
+        """The Model field's id on this site, or None if it is not there."""
+        self._resolve_custom_fields()
+        return self._model_field_id
 
     def _search(self, column, limit=50):
         # type: (str, int) -> list[dict]
@@ -1357,6 +1577,9 @@ class JiraQueueSource:
         repository_field_id = self.repository_field_id()
         if repository_field_id:
             wanted_fields += "," + repository_field_id
+        model_field_id = self.model_field_id()
+        if model_field_id:
+            wanted_fields += "," + model_field_id
         try:
             response = self.client.request(
                 "GET",
@@ -1385,11 +1608,18 @@ class JiraQueueSource:
             repository_field_id=self.repository_field_id(),
             repositories=self.repositories,
         )
+        model_name = selected_model_name(
+            issue.get("fields") or {},
+            self.model_field_id(),
+            self._valid_model_names,
+            log=self._log,
+        )
         return QueueEntry(
             status=status,
             handle=issue.get("key"),
             repository_path=repository_path,
             prompt=prompt,
+            model_name=model_name,
         )
 
     # -- reading ------------------------------------------------------------ #
@@ -2660,7 +2890,8 @@ def _set_credentials():
 
 def configure_project(client, project, log=print, repositories=()):
     # type: (JiraClient, dict, object, list | tuple) -> ProjectStatuses
-    """Steps 5–8: issue type scheme, workflow statuses, board columns, Repository field.
+    """Steps 5–9: issue type scheme, workflow statuses, board columns, Repository
+    field, Model field.
 
     Re-run safe: every step is find-or-create / diff-and-patch, and a second
     call against an already-configured project issues zero writes. This is
@@ -2709,6 +2940,17 @@ def configure_project(client, project, log=print, repositories=()):
     repository_sync = sync_repository_field(client, project_id, list(repositories), log=log)
     log(repository_sync.describe())
     ensure_repository_field_on_card_layout(client, board_id, repository_sync.field_id, log=log)
+
+    # The Model picker — opus / sonnet / haiku for one card, blank for the
+    # session's configured model. A fixed option set, so unlike the Repository
+    # field there is nothing to sync from Settings and it never touches the
+    # board card layout (that face holds only three fields and Repository has one).
+    import autonomous_work_settings
+
+    model_setup = ensure_model_field(
+        client, project_id, autonomous_work_settings.VALID_MODEL_NAMES, log=log
+    )
+    log(model_setup.describe())
 
     return resolve_project_statuses(client, project_key)
 
@@ -2769,7 +3011,10 @@ def _install(project_key_argument=None):
     # synced from whatever the settings mirror already holds.
     settings = autonomous_work_settings.read_settings()
 
-    print("Configuring the issue type scheme, workflow, board columns and Repository field…")
+    print(
+        "Configuring the issue type scheme, workflow, board columns, Repository "
+        "field and Model field…"
+    )
     try:
         statuses = configure_project(
             client, project, log=print, repositories=settings.repositories
@@ -2813,6 +3058,11 @@ def _install(project_key_argument=None):
     print("to the '{}' dropdown. Only the name goes to Jira; the path stays here.\n".format(
         REPOSITORY_FIELD_NAME
     ))
+
+    print("Each card also has a '{}' dropdown ({}). Leave it blank to run the".format(
+        MODEL_FIELD_NAME, ", ".join(autonomous_work_settings.VALID_MODEL_NAMES)
+    ))
+    print("card on the model set in the extension's Settings.\n")
 
     print("One step is left, and it is not ours to do: point the extension at the")
     print("board. Click its toolbar icon in Chrome, open Settings, set 'Queue source'")
@@ -2957,6 +3207,8 @@ def _list_queue():
         print("{} {}. [{}] {}".format(marker, position, issue.get("key"), summary))
         if entry.repository_path:
             print("       repo: {}".format(entry.repository_path))
+        if entry.model_name:
+            print("       model: {}".format(entry.model_name))
     return 0
 
 

@@ -113,6 +113,13 @@ class QueueEntry:
     """The REPO: line as a path, or None to start a new project — see `resolve_working_directory`."""
     repository_path: "Path | None"
     prompt: str
+    # A model *name* — "opus" / "sonnet" / "haiku", the vocabulary
+    # `autonomous_work_settings.VALID_MODEL_NAMES` holds — or None to run this
+    # entry on the session's configured model. Only the Jira source ever sets it
+    # (from a card's `Model` dropdown); the file source leaves it None. Named
+    # `model_name`, not `model`, because the scheduler maps it to a concrete
+    # model id (`claude-opus-5`) before it reaches `claude --model`.
+    model_name: "str | None" = None
 
     @property
     def status_name(self) -> str:

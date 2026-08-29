@@ -192,7 +192,15 @@ CLAUDE_MAX_PROMPT_DURATION_SECONDS = environment_int_override(
 # run to Haiku. The whole point is to spend the weekly window, so the model this
 # job runs on should not be a side effect of an unrelated interactive preference.
 # Only the main thread is pinned — a subagent that names its own model keeps it.
-_model_name = os.environ.get("AUTONOMOUS_WORK_MODEL") or _settings.model
+#
+# A queued entry can name its own model too (a Jira card's `Model` dropdown —
+# `QueueEntry.model_name`), and that wins over this session default. The one
+# thing it does *not* beat is `AUTONOMOUS_WORK_MODEL`: an env override is an
+# explicit "run everything on X" for the whole session, the same precedence
+# `AUTONOMOUS_WORK_NEW_PROJECTS_DIR` and the pace threshold follow. So the order
+# is env var > per-entry > settings > opus. See `claude_model_id_for`.
+_MODEL_NAME_FORCED_BY_ENV = os.environ.get("AUTONOMOUS_WORK_MODEL") or None
+_model_name = _MODEL_NAME_FORCED_BY_ENV or _settings.model
 # Tacked onto every queued prompt before it reaches `claude -p` — see
 # `build_prompt`. Naming and logging of the *queue entry* still use its own
 # prompt unappended; only the invocation sees this.
@@ -204,14 +212,41 @@ _MODEL_ID_MAP = {
 }
 CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
 
+
+def claude_model_id_for(entry: "QueueEntry") -> str:
+    """The concrete model id this entry runs on.
+
+    `entry.model_name` — set only by the Jira source, from a card's `Model`
+    dropdown — wins, unless `AUTONOMOUS_WORK_MODEL` is pinning the whole session,
+    in which case that wins over everything. An entry that names nothing, or
+    something unrecognised, falls through to `CLAUDE_MODEL` (the env var or the
+    settings model or opus).
+    """
+    if _MODEL_NAME_FORCED_BY_ENV:
+        return CLAUDE_MODEL
+    entry_model_name = getattr(entry, "model_name", None)
+    return _MODEL_ID_MAP.get(entry_model_name, CLAUDE_MODEL)
+
+
+def claude_arguments_for(entry: "QueueEntry") -> list[str]:
+    """The `claude` flags for one prompt: its `--model`, then the shared base.
+
+    Split out so the model pin has a test that does not spawn anything — losing
+    it off the front of `CLAUDE_BASE_ARGUMENTS` is exactly the regression the
+    line-190 comment records having already shipped once.
+    """
+    return ["--model", claude_model_id_for(entry), *CLAUDE_BASE_ARGUMENTS]
+
+
 # Deliberately *not* `--bare`, which would authenticate with ANTHROPIC_API_KEY
 # instead of the subscription session — spending the wrong budget defeats the
 # whole point. A plain run keeps subscription auth and its CLAUDE.md context.
 # `stream-json` (which requires `--verbose`) emits an event per step, so the log
 # can be followed live. Plain `json` would withhold everything until the end.
+#
+# `--model` is *not* here — `claude_arguments_for` prepends it per prompt, since
+# a queued entry may override the session default.
 CLAUDE_BASE_ARGUMENTS = [
-    "--model",
-    CLAUDE_MODEL,
     "--permission-mode",
     "auto",
     "--output-format",
@@ -336,6 +371,7 @@ class RunEventStream:
         is_new_project: bool,
         prompt: str,
         forced: bool,
+        model: str = CLAUDE_MODEL,
     ) -> None:
         self.emit(
             "runStarted",
@@ -344,7 +380,9 @@ class RunEventStream:
             projectName=working_directory.name,
             isNewProject=is_new_project,
             prompt=prompt,
-            model=CLAUDE_MODEL,
+            # The model this prompt actually runs on — a queued entry may have
+            # overridden the session default, so this is not always CLAUDE_MODEL.
+            model=model,
         )
 
     def claude_event(self, event: dict) -> None:
@@ -1318,7 +1356,10 @@ def run_claude(
 ) -> PromptRunResult:
     """Execute one queued prompt, and report how it went."""
     prompt_text = build_prompt(entry.prompt)
-    events.started(working_directory, is_new_project, prompt_text, forced)
+    claude_arguments = claude_arguments_for(entry)
+    events.started(
+        working_directory, is_new_project, prompt_text, forced, claude_model_id_for(entry)
+    )
     started_at = datetime.now()
     output = ClaudeOutputCollector()
     # Taken before the directory is prepared, so a new project reads as the empty
@@ -1402,7 +1443,7 @@ def run_claude(
             # `stream-json` emits an event per step. stderr is merged in so
             # nothing is lost or deadlocks on a second unread pipe.
             process = subprocess.Popen(
-                ["claude", "-p", prompt_text, *CLAUDE_BASE_ARGUMENTS],
+                ["claude", "-p", prompt_text, *claude_arguments],
                 cwd=working_directory,
                 # Without this `claude` spends three seconds waiting on an
                 # inherited stdin that is never going to produce anything, and
@@ -1715,7 +1756,10 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
-        log_message(f"Dry run — would execute in {destination}:\n{build_prompt(next_entry.prompt)}")
+        log_message(
+            f"Dry run — would execute in {destination} "
+            f"on model {claude_model_id_for(next_entry)}:\n{build_prompt(next_entry.prompt)}"
+        )
         return 0
 
     if arguments.resume:
