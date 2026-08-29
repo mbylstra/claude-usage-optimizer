@@ -895,7 +895,7 @@ class RepositoryFieldSync:
         if self.created_field:
             parts.append("created the field")
         if self.attached_to_screen:
-            parts.append("added it to the card layout")
+            parts.append("added it to the issue screen")
         if self.added:
             parts.append("added {}".format(", ".join(self.added)))
         if self.reenabled:
@@ -991,12 +991,19 @@ def _field_already_on_screen(error):
 
 def attach_repository_field_to_screens(client, project_id, field_id, log=_ignore):
     # type: (JiraClient, str, str, object) -> bool
-    """Put the field on the project's card layout. Returns whether anything changed.
+    """Put the field on the project's issue screen. Returns whether anything changed.
+
+    This is the *issue screen* — the fields shown with a card open — not the
+    board card layout, the two or three fields a closed card shows. That naming
+    slip went unnoticed for a while; the board card face is
+    `report_repository_field_on_card_layout`'s job and has no writable public
+    endpoint.
 
     This is the step plans/jira-repository-picker.md §3 printed as a manual
-    instruction. It is superseded: on a **company-managed** project the whole
+    instruction. It is superseded: on a **company-managed** project the screen
     chain is reachable over the public REST API
-    (plans/company-managed-jira-project.md §0.6), so there is no manual step.
+    (plans/company-managed-jira-project.md §0.6), so there is no manual step for
+    the screen attach.
 
     The tab's existing fields are read before posting, rather than posting and
     treating the "already exists" 400 as success, so that a re-run is genuinely
@@ -1008,13 +1015,13 @@ def attach_repository_field_to_screens(client, project_id, field_id, log=_ignore
     except JiraError as error:
         # Degraded, not fatal — the same stance `ensure_board_columns` takes.
         # The field and its options are the part that must land; a field that is
-        # not on the layout is invisible on a card but entirely recoverable, and
-        # letting this unwind the sync meant the *field creation above it* was
-        # retried on every save, minting a duplicate each time (Jira Cloud allows
-        # two custom fields to share a name).
+        # not on the screen is invisible on an open card but entirely
+        # recoverable, and letting this unwind the sync meant the *field creation
+        # above it* was retried on every save, minting a duplicate each time
+        # (Jira Cloud allows two custom fields to share a name).
         log(
-            "Could not put '{}' on the card layout ({}): {}. The field and its "
-            "options are fine — add it to the layout by hand, or re-run once this "
+            "Could not put '{}' on the issue screen ({}): {}. The field and its "
+            "options are fine — add it to the screen by hand, or re-run once this "
             "is fixed.".format(REPOSITORY_FIELD_NAME, error.cause, error)
         )
         return False
@@ -2309,6 +2316,70 @@ def ensure_board_columns(client, board_id, ordered_status_by_column, log=_ignore
         return False
 
 
+# The board's card face is "workMode"; "planMode" is the backlog, left alone.
+# `WORK` is rejected — the mode name is exactly this.
+CARD_LAYOUT_BOARD_MODE = "workMode"
+
+
+def ensure_repository_field_on_card_layout(client, board_id, field_id, log=_ignore):
+    # type: (JiraClient, int, str | None, object) -> bool
+    """Put the Repository field on the board's *card face* — the fields a card
+    shows without being opened.
+
+    A different thing from the issue screen `sync_repository_field` attaches it
+    to: the screen is the open-card view, the card layout is the two or three
+    fields on the *closed* card. The greenhopper card-layout resource, measured
+    against the real site (the rendered docs don't cover it — GreenHopper 6.6
+    `CardLayoutResource` is the nearest reference):
+
+        GET    /rest/greenhopper/1.0/rapidviewconfig/cardLayout?rapidViewId=  — read, all modes
+        POST   /rest/greenhopper/1.0/cardlayout/{id}/workMode/field  {"fieldId"}  — add
+        DELETE /rest/greenhopper/1.0/cardlayout/{id}/workMode/field/{itemId}      — remove
+
+    Find-or-add: a second call issues no write. Degrades to a logged line and
+    False rather than raising — a cosmetic card field must not fail an install,
+    the same stance as `ensure_board_columns`. The card layout also holds at most
+    three fields; a fourth `POST` 400s and lands here as a logged skip.
+
+    A card only *shows* the field once its issue has a value for it, so a fresh
+    install's board looks unchanged until a repository is picked on a card.
+    """
+    if not field_id:
+        return False
+    try:
+        config = client.request(
+            "GET",
+            "/rest/greenhopper/1.0/rapidviewconfig/cardLayout",
+            query={"rapidViewId": board_id},
+        )
+        already_on_board = any(
+            isinstance(entry, dict)
+            and str(entry.get("fieldId")) == str(field_id)
+            and entry.get("mode") == CARD_LAYOUT_BOARD_MODE
+            for entry in (config or {}).get("currentFields") or []
+        )
+        if already_on_board:
+            log("'{}' is on the board card layout".format(REPOSITORY_FIELD_NAME))
+            return True
+
+        client.request(
+            "POST",
+            "/rest/greenhopper/1.0/cardlayout/{}/{}/field".format(
+                board_id, CARD_LAYOUT_BOARD_MODE
+            ),
+            body={"fieldId": str(field_id)},
+        )
+        log("Added '{}' to the board card layout".format(REPOSITORY_FIELD_NAME))
+        return True
+    except JiraError as error:
+        log(
+            "Could not put '{}' on the board card layout ({}): {}. Add it by hand "
+            "in the board's Card layout settings, or re-run once this is "
+            "fixed.".format(REPOSITORY_FIELD_NAME, error.cause, error)
+        )
+        return False
+
+
 # --------------------------------------------------------------------------- #
 # Teardown / re-run safety (plan §0.7, §9 risk 6)
 # --------------------------------------------------------------------------- #
@@ -2631,10 +2702,13 @@ def configure_project(client, project, log=print, repositories=()):
     # The Repository picker. plans/jira-repository-picker.md §3 printed the
     # screen attach as a manual step, because a *team-managed* project exposes no
     # screen model over the API at all. That premise is gone: the queue project
-    # is company-managed, where the whole chain is scriptable
-    # (plans/company-managed-jira-project.md §0.6), so nothing here is printed
-    # for a person to do by hand.
-    log(sync_repository_field(client, project_id, list(repositories), log=log).describe())
+    # is company-managed, where both the *screen* chain
+    # (plans/company-managed-jira-project.md §0.6) and the board *card layout* —
+    # the fields a closed card shows, a separate greenhopper config — are
+    # scriptable, so nothing here is left for a person to do by hand.
+    repository_sync = sync_repository_field(client, project_id, list(repositories), log=log)
+    log(repository_sync.describe())
+    ensure_repository_field_on_card_layout(client, board_id, repository_sync.field_id, log=log)
 
     return resolve_project_statuses(client, project_key)
 
@@ -2732,11 +2806,13 @@ def _install(project_key_argument=None):
     else:
         print("Done — all five columns are present on {}\n".format(board_url))
 
-    print("The '{}' field is on the card layout — no manual step for it.".format(
+    # configure_project has already created the Repository field, put it on the
+    # issue screen and on the board card layout, and logged each — no manual
+    # step for any of it.
+    print("Add repositories in the extension's Settings and each save pushes them")
+    print("to the '{}' dropdown. Only the name goes to Jira; the path stays here.\n".format(
         REPOSITORY_FIELD_NAME
     ))
-    print("Add repositories in the extension's Settings and each save pushes them")
-    print("to its dropdown. Only the name goes to Jira; the path stays here.\n")
 
     print("One step is left, and it is not ours to do: point the extension at the")
     print("board. Click its toolbar icon in Chrome, open Settings, set 'Queue source'")

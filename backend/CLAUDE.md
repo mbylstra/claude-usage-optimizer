@@ -595,11 +595,32 @@ per-column overrides in settings.
 
 **A card picks its repository from a dropdown, not from a typed path.** The
 `Repository` field — a single-select custom field — is created by
-`install-jira-queue` **and attached to the card layout**, which is only possible
-because the project is company-managed: a team-managed project exposes no screen
-model over the API at all, and the earlier plan printed that attach as a manual
-step (`plans/jira-repository-picker.md` §3, superseded by
-`plans/company-managed-jira-project.md` §0.6). Its options are the repository
+`install-jira-queue` **and attached to the project's issue screen and the board
+card layout**, both only possible because the project is company-managed: a
+team-managed project exposes no screen model over the API at all, and the earlier
+plan printed the screen attach as a manual step (`plans/jira-repository-picker.md`
+§3, superseded by `plans/company-managed-jira-project.md` §0.6).
+
+**The issue screen is not the board card layout**, and the two were conflated in
+the code for a while. The screen is what a card shows when opened; the card
+layout is the two or three fields on a *closed* card. They are separate
+greenhopper endpoints, both measured against the real site
+(`ensure_repository_field_on_card_layout`):
+
+- `GET /rest/greenhopper/1.0/rapidviewconfig/cardLayout?rapidViewId=` reads the
+  layout across all modes (this one is `Allow: GET` — read-only).
+- `POST /rest/greenhopper/1.0/cardlayout/{id}/workMode/field` `{"fieldId"}` adds
+  a field; `DELETE .../workMode/field/{itemId}` removes one. Neither is in the
+  rendered docs — GreenHopper 6.6 `CardLayoutResource` is the nearest reference.
+
+`workMode` is the board; `planMode` is the backlog, left alone (`WORK` is
+rejected — the mode name is exactly `workMode`). Find-or-add, so a re-run writes
+nothing; a failure degrades to a logged line, not a raised error, the same as
+`ensure_board_columns`. The card layout holds at most three fields. A card also
+renders nothing for a layout field until its issue has a value for it, so a
+fresh install's board looks unchanged until a repository is picked on a card.
+
+Its options are the repository
 list in the extension's Settings, pushed on **every settings save** rather than
 only at install, because the list is a living thing edited in the popup;
 `just jira-sync-repositories` does the same by hand. **Only the repository name

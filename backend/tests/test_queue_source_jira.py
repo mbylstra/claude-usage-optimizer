@@ -133,6 +133,11 @@ class FakeJiraState:
             {"name": "Done", "statuses": [{"id": "10027"}]},
         ]
         self.rapidviewconfig_columns_status_code = None  # e.g. 500, once
+        # The board card layout (`rapidviewconfig/cardLayout`, read-only on the
+        # real site): [{id, fieldId, name, isValid, mode}], mode "workMode" (the
+        # board) or "planMode" (the backlog).
+        self.card_layout_fields = []  # type: list
+        self.card_layout_status_code = None  # forced code on the add POST, once
         self.deleted_workflow_schemes = []  # type: list
         self.deleted_workflows = []  # type: list
         self.project_deleted = False
@@ -361,6 +366,17 @@ class _Handler(BaseHTTPRequestHandler):
                 {"columnConfig": {"columns": list(state.board_columns), "constraintType": "none"}},
             )
 
+        if parsed.path == "/rest/greenhopper/1.0/rapidviewconfig/cardLayout":
+            return self._reply(
+                200,
+                {
+                    "rapidViewId": state.board_id,
+                    "canEdit": True,
+                    "currentFields": list(state.card_layout_fields),
+                    "availableFields": [],
+                },
+            )
+
         if parsed.path == "/rest/api/3/project/{}".format(PROJECT_KEY):
             if state.project_deleted:
                 return self._reply(404)
@@ -459,6 +475,24 @@ class _Handler(BaseHTTPRequestHandler):
         state.requests.append(("POST", parsed.path, body))
         if self._forced_failure() or (state.fail_writes and self._reply(500) is None):
             return
+
+        if parsed.path == "/rest/greenhopper/1.0/cardlayout/{}/{}/field".format(
+            state.board_id, jira.CARD_LAYOUT_BOARD_MODE
+        ):
+            if state.card_layout_status_code is not None:
+                code = state.card_layout_status_code
+                state.card_layout_status_code = None
+                return self._reply(code, {"errorMessages": ["forced"]})
+            state._next_card_layout_id = getattr(state, "_next_card_layout_id", 100) + 1
+            entry = {
+                "id": state._next_card_layout_id,
+                "fieldId": body.get("fieldId"),
+                "name": jira.REPOSITORY_FIELD_NAME,
+                "isValid": True,
+                "mode": jira.CARD_LAYOUT_BOARD_MODE,
+            }
+            state.card_layout_fields.append(entry)
+            return self._reply(200, entry)
 
         if parsed.path.endswith("/transitions"):
             key = parsed.path.split("/")[-2]
@@ -1552,7 +1586,7 @@ class RepositoryFieldScreenAttachTests(StubJiraTestCase):
         # `sync_repository_field` report failure *after* creating the field, so
         # every save retried the creation and Jira — which allows two custom
         # fields to share a name — minted a duplicate each time. The field and
-        # its options are what must land; the layout is recoverable by hand.
+        # its options are what must land; the screen attach is recoverable by hand.
         field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
         self.state.screen_chain_status_code = 405
 
@@ -1560,7 +1594,7 @@ class RepositoryFieldScreenAttachTests(StubJiraTestCase):
             self.source.client, PROJECT_ID, field_id, log=self.logged.append
         )
         self.assertFalse(attached)
-        self.assertTrue(any("card layout" in line for line in self.logged))
+        self.assertTrue(any("issue screen" in line for line in self.logged))
 
     def test_a_failed_attach_still_leaves_the_options_synced(self):
         self.state.screen_chain_status_code = 405
@@ -1742,6 +1776,71 @@ class RepositoryFieldReadBackTests(StubJiraTestCase):
         self.assertEqual(entry.repository_path, Path("~/code/thing").expanduser())
 
 
+class RepositoryFieldCardLayoutTests(StubJiraTestCase):
+    """`ensure_repository_field_on_card_layout` — find-or-add on the board card
+    face (work mode), distinct from the issue screen the sync attaches to."""
+
+    FIELD_ID = "customfield_10217"
+
+    def test_absent_field_is_added_in_work_mode(self):
+        result = jira.ensure_repository_field_on_card_layout(
+            self.source.client, self.state.board_id, self.FIELD_ID, log=self.logged.append
+        )
+        self.assertIs(result, True)
+        self.assertEqual(
+            [(f["fieldId"], f["mode"]) for f in self.state.card_layout_fields],
+            [(self.FIELD_ID, "workMode")],
+        )
+        self.assertTrue(any("Added" in line for line in self.logged), self.logged)
+
+    def test_already_present_in_work_mode_writes_nothing(self):
+        self.state.card_layout_fields = [
+            {"id": 67, "fieldId": self.FIELD_ID, "name": "Repository",
+             "isValid": True, "mode": "workMode"}
+        ]
+        result = jira.ensure_repository_field_on_card_layout(
+            self.source.client, self.state.board_id, self.FIELD_ID, log=self.logged.append
+        )
+        self.assertIs(result, True)
+        self.assertEqual(
+            [c for c in self.state.requests if c[0] == "POST" and "cardlayout" in c[1]], []
+        )
+
+    def test_present_only_in_plan_mode_still_adds_to_the_board(self):
+        # planMode is the backlog; a field only there shows nothing on the board
+        # card face, so the board (workMode) entry must still be added.
+        self.state.card_layout_fields = [
+            {"id": 67, "fieldId": self.FIELD_ID, "name": "Repository",
+             "isValid": True, "mode": "planMode"}
+        ]
+        result = jira.ensure_repository_field_on_card_layout(
+            self.source.client, self.state.board_id, self.FIELD_ID, log=self.logged.append
+        )
+        self.assertIs(result, True)
+        self.assertIn(
+            (self.FIELD_ID, "workMode"),
+            [(f["fieldId"], f["mode"]) for f in self.state.card_layout_fields],
+        )
+
+    def test_a_missing_field_id_is_a_no_op(self):
+        result = jira.ensure_repository_field_on_card_layout(
+            self.source.client, self.state.board_id, None, log=self.logged.append
+        )
+        self.assertIs(result, False)
+        self.assertEqual(self.logged, [])
+
+    def test_a_write_failure_degrades_to_false_without_raising(self):
+        self.state.card_layout_status_code = 400  # e.g. the four-field cap
+        result = jira.ensure_repository_field_on_card_layout(
+            self.source.client, self.state.board_id, self.FIELD_ID, log=self.logged.append
+        )
+        self.assertIs(result, False)
+        self.assertTrue(
+            any("Could not put" in line and "card layout" in line for line in self.logged),
+            self.logged,
+        )
+
+
 class ConfigureProjectOrchestrationTests(StubJiraTestCase):
     def test_configure_project_leaves_all_five_columns_present(self):
         statuses = jira.configure_project(
@@ -1761,9 +1860,37 @@ class ConfigureProjectOrchestrationTests(StubJiraTestCase):
         )
         field = jira.find_repository_field(self.source.client)
         self.assertIsNotNone(field)
-        # No manual step: the field is on the card layout by the time this returns.
+        # The screen attach is scripted; the field is on the issue screen by the
+        # time this returns.
         self.assertIn(field["id"], self.state.screen_tab_fields)
         self.assertEqual(self.state.options_of(field["id"]), {"alpha": False})
+
+    def test_configure_project_puts_the_repository_field_on_the_board_card_layout(self):
+        jira.configure_project(
+            self.source.client,
+            {"id": PROJECT_ID, "key": PROJECT_KEY},
+            log=self.logged.append,
+        )
+        field = jira.find_repository_field(self.source.client)
+        self.assertIn(
+            (field["id"], "workMode"),
+            [(f["fieldId"], f["mode"]) for f in self.state.card_layout_fields],
+        )
+
+    def test_configure_project_does_not_re_add_a_card_layout_field_that_is_there(self):
+        field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.state.card_layout_fields = [
+            {"id": 1, "fieldId": field_id, "name": jira.REPOSITORY_FIELD_NAME,
+             "isValid": True, "mode": "workMode"}
+        ]
+        jira.configure_project(
+            self.source.client,
+            {"id": PROJECT_ID, "key": PROJECT_KEY},
+            log=self.logged.append,
+        )
+        self.assertEqual(
+            [c for c in self.state.requests if c[0] == "POST" and "cardlayout" in c[1]], []
+        )
 
     def test_a_second_call_writes_nothing_new(self):
         repositories = [{"name": "alpha", "path": "~/code/alpha"}]
