@@ -463,3 +463,35 @@ package: build
     rm -f claude-usage-optimizer.zip
     cd chrome-extension/dist && zip -r ../../claude-usage-optimizer.zip . -x '.*'
     @echo "Wrote claude-usage-optimizer.zip"
+
+### Git housekeeping
+
+# Every branch is re-checked with `git merge-base --is-ancestor` right before it
+# goes, so one that only looked merged is left alone; main and the branch you
+# are on are always skipped, and a branch checked out in another worktree is
+# reported and passed over rather than aborting the run. Branches that landed by
+# squash or rebase do not count as contained and stay — remove those by hand.
+# Reads only local refs: run `git fetch --prune` first if main might be behind
+# its remote.
+
+# Delete every local branch whose tip is already contained in main
+[no-exit-message]
+delete-merged-branches:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current_branch="$(git branch --show-current)"
+    deleted_count=0
+    while IFS= read -r branch; do
+      case "$branch" in
+        main | "$current_branch") continue ;;
+      esac
+      git merge-base --is-ancestor "$branch" main || continue
+      if git branch -D "$branch"; then
+        deleted_count=$((deleted_count + 1))
+      else
+        echo "  kept $branch — git would not delete it (see above)"
+      fi
+    done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
+    if [ "$deleted_count" -eq 0 ]; then
+      echo "No merged branches to delete."
+    fi
