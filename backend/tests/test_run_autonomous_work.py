@@ -658,6 +658,27 @@ class BuildPromptTests(unittest.TestCase):
         self.assertIn("merge it into main and delete the branch", work.MANDATORY_PROMPT_SUFFIX)
         self.assertTrue(work.build_prompt("anything").endswith(work.MANDATORY_PROMPT_SUFFIX))
 
+    def test_mandatory_suffix_asks_for_a_run_retrospective(self):
+        self.assertIn("Run retrospective:", work.MANDATORY_PROMPT_SUFFIX)
+        self.assertIn("nothing to report", work.MANDATORY_PROMPT_SUFFIX)
+
+    def test_mandatory_suffix_avoids_the_session_limit_markers(self):
+        # The retrospective text rides in the `result` event, the same string
+        # `session_limit_message` scans. A successful run is gated out by
+        # `is_error`, but the suffix must not carry a marker phrase regardless.
+        lowered = work.MANDATORY_PROMPT_SUFFIX.lower()
+        for marker in work.SESSION_LIMIT_TEXT_MARKERS:
+            self.assertNotIn(marker, lowered)
+
+    def test_a_successful_result_carrying_a_retrospective_is_not_a_limit(self):
+        retrospective = (
+            "Ran and completed.\n\nRun retrospective: nothing to report on tools "
+            "or permissions. The test setup was enough. No tool call failed. The "
+            "prompt was clear."
+        )
+        event = {"type": "result", "is_error": False, "result": retrospective}
+        self.assertIsNone(work.session_limit_message(event))
+
 
 class SlugifyPromptTests(unittest.TestCase):
     def test_basic_slug(self):

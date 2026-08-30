@@ -152,7 +152,10 @@ Four things about it are deliberate:
 - **The per-prompt account is Claude's own closing message**, taken from the
   `result` event. A prompt that timed out, wedged or was cancelled never emits
   one, so the last assistant message is kept as it streams by and used instead —
-  "how far did it get" is the whole question in exactly those cases.
+  "how far did it get" is the whole question in exactly those cases. The
+  mandatory prompt suffix (see "Work left on a branch") asks that closing
+  message to end with a `Run retrospective:` section, so the account carries a
+  review of how the run went as well as what it did.
 - **A cancelled session still writes its summary**, from the SIGTERM handler,
   before `os._exit`. Its entry is recorded with the status the cancel really
   leaves behind (`todo`), and excluded from the "not attempted" list so it is
@@ -509,6 +512,16 @@ makes it the instruction rather than a hope. It is added only where the prompt
 is actually sent (and in the `--dry-run` preview of that) — queue status
 writes and project naming still use the entry's own prompt.
 
+The same suffix also asks every run to end its final message with a `Run
+retrospective:` section — tools that were unavailable or blocked by the
+permission mode, whether the test setup was enough, tool calls that failed
+unexpectedly, and whether the prompt itself was clear. That message is the
+`result` event, the one text that reaches both the day's summary and the Jira
+card comment, so the review lands beside the account of what was done with no
+extra plumbing. It is worded to steer clear of the phrases in
+`SESSION_LIMIT_TEXT_MARKERS`, and each point offers "nothing to report" so a
+model told to list problems does not manufacture them.
+
 Four cases all read as plain `completed`, each with a test standing over it:
 committing straight to `main`; merging the branch back and staying on it (the
 commits are contained, so nothing is ahead); leaving changes uncommitted for
@@ -705,8 +718,10 @@ fallback if it turns out lossy.
 `claude-unmerged` and `claude-error`: the column means *your turn*, and both an
 unmerged branch and a failed prompt are. Picking a card up clears both labels, so
 re-queueing stays a single gesture — drag it back to To Do and nothing else.
-One comment per attempt, carrying Claude's own closing message, so a card
-re-queued three times reads as three attempts with three accounts.
+One comment per attempt, carrying Claude's own closing message — which the
+mandatory prompt suffix asks to end with a `Run retrospective:` section — so a
+card re-queued three times reads as three attempts with three accounts, each
+also reviewing how that run went.
 
 **A write that fails after a prompt has run is the expensive failure**, because
 an unrecorded outcome means the prompt runs again tomorrow. It is retried three

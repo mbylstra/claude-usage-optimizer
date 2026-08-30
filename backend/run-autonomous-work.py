@@ -244,12 +244,34 @@ RESUME_AFTER_FIVE_HOUR_RESET_ENABLED = (
 # continuation of whatever text precedes it. Like `APPEND_TO_ALL_PROMPTS`, only
 # `build_prompt` (the invocation) sees this — queue naming and logging use the
 # entry's own prompt.
+#
+# The second half asks the run to end its final message with a retrospective on
+# how the run itself went. That message is the `result` event, which is the one
+# text that reaches both the day's summary and the Jira card comment
+# (`comment_for_outcome`), so a review written there lands beside the account of
+# what was done with no extra plumbing. Deliberately worded without the phrases
+# in `SESSION_LIMIT_TEXT_MARKERS` ("usage limit", "rate limit", …) so a
+# successful run's retrospective can never read as a limit notice — the
+# `is_error` gate in `session_limit_message` already stops that, but the wording
+# keeps it true even if the gate is loosened. "Nothing to report" is offered for
+# each point so a model told to list problems does not invent them.
 MANDATORY_PROMPT_SUFFIX = (
     ". Create a new branch for the work. Once finished, if there is no ambiguity"
     " and you are confident enough (you don't have any unresolved questions for"
     " the boss) merge it into main and delete the branch, else leave it in the"
     " branch. Use your judgement for any decisions - I want you to work"
     " completely autonomously."
+    " When the work is finished, end your final message with a section headed"
+    " 'Run retrospective:' reviewing how this run went, so it can be read off"
+    " the work item next to your summary of what you did. Cover: whether any"
+    " tool was unavailable or blocked by the permission mode when you needed it"
+    " (for example a browser or MCP tool you wanted but could not call); whether"
+    " the test setup was enough to check your change; whether any tool call"
+    " failed unexpectedly (a bash error, say) and cost you effort; and whether"
+    " this prompt was clear enough or left you guessing - if it did, say how it"
+    " could be worded better next time. The aim is to improve the setup and the"
+    " prompts for future runs. Write 'nothing to report' for any point that was"
+    " fine rather than inventing a problem."
 )
 # No "haiku" entry: the scheduler runs `claude -p --permission-mode auto`, and
 # auto mode requires Opus 4.6+ / Sonnet 4.6+ / Fable 5 — on Haiku it silently
