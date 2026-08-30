@@ -170,8 +170,8 @@ export function RunLogView({
 
           {model.timeline.length === 0 && !isShowingRawEvents && (
             <p className="text-muted-foreground px-3.5 py-6 text-center text-xs">
-              No run has been recorded yet. Press <span className="font-medium">Run now</span> in
-              the popup to start one.
+              No run has been recorded yet. Press <span className="font-medium">Do next todo</span>{' '}
+              or <span className="font-medium">Trigger a full run</span> in the popup to start one.
             </p>
           )}
         </div>

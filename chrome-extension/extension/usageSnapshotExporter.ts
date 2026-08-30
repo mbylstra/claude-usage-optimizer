@@ -37,6 +37,7 @@ function logExportFailureOnce(error: unknown): void {
 /** Message envelopes the host understands; mirrored in `usage-host.py`. */
 const SNAPSHOT_MESSAGE_TYPE = 'snapshot';
 const RUN_WORK_MESSAGE_TYPE = 'runAutonomousWork';
+const RUN_FULL_WORK_MESSAGE_TYPE = 'runFullAutonomousWork';
 const PRIME_FOLDER_ACCESS_MESSAGE_TYPE = 'primeFolderAccess';
 const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
 const JIRA_STATUS_MESSAGE_TYPE = 'getJiraStatus';
@@ -63,17 +64,37 @@ export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Da
 }
 
 /**
- * Asks the host to start a work run now, bypassing the pace check — the button
- * that triggers this is an explicit instruction, so second-guessing it with the
- * same gate the nightly job uses would just make the button look broken.
+ * "Do next todo": ask the host to run the single next queued prompt now,
+ * bypassing the pace check. An explicit instruction, so second-guessing it with
+ * the same gate the nightly job uses would just make the button look broken.
  *
  * Resolves as soon as the host has *launched* the run. The work itself outlives
  * this call by up to an hour and reports into `autonomous-work.log`.
  */
 export async function requestAutonomousWorkRun(): Promise<{ started: boolean; error?: string }> {
+  return sendRunRequest(RUN_WORK_MESSAGE_TYPE);
+}
+
+/**
+ * "Trigger a full run": ask the host to start the nightly job now.
+ *
+ * Same launchd label the 2 AM run uses, so it stays pace-gated, works through
+ * the whole queue, and schedules a 5-hour-reset resume when that setting is on.
+ * Like the one above, it resolves once the run has *launched*, not finished.
+ */
+export async function requestFullAutonomousWorkRun(): Promise<{
+  started: boolean;
+  error?: string;
+}> {
+  return sendRunRequest(RUN_FULL_WORK_MESSAGE_TYPE);
+}
+
+async function sendRunRequest(
+  messageType: typeof RUN_WORK_MESSAGE_TYPE | typeof RUN_FULL_WORK_MESSAGE_TYPE,
+): Promise<{ started: boolean; error?: string }> {
   try {
     const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
-      type: RUN_WORK_MESSAGE_TYPE,
+      type: messageType,
     });
 
     if (typeof response === 'object' && response !== null && 'ok' in response) {

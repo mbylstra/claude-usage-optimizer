@@ -24,7 +24,7 @@ export interface RunStartedEvent {
   type: 'runStarted';
   runId: string;
   at: string;
-  /** True when a person pressed Run now, false for the nightly pace-gated job. */
+  /** True when the run was started with `--force`; false for any pace-gated run. */
   forced: boolean;
   workingDirectory: string;
   projectName: string;

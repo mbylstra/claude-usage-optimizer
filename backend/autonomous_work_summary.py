@@ -6,9 +6,10 @@ prompts ran, how each of them went, and why the session stopped when it did.
 That is what this module renders.
 
 One file per calendar day, appended to rather than replaced, because a day can
-hold more than one session — the nightly job at 2 AM and any number of "Run now"
-presses afterwards. The date is the one the session *started* on, so a run that
-crosses midnight stays in the file where you would look for it.
+hold more than one session — the nightly job at 2 AM and any number of manual
+"Do next todo" / "Trigger a full run" presses afterwards. The date is the one the
+session *started* on, so a run that crosses midnight stays in the file where you
+would look for it.
 
 Rendering is kept pure and the file I/O is a single function at the bottom, so
 the wording can be unit-tested without a filesystem. Imported by

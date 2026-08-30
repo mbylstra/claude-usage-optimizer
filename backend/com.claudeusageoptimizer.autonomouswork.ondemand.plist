@@ -5,13 +5,14 @@
   Template, installed alongside the nightly job by
   `autonomous_work_settings.py`. Same work, started a different way: this one has
   no schedule at all and exists only to be kickstarted by the native host when
-  the popup's "Run now" is pressed.
+  the popup's "Do next todo" button is pressed. (The popup's "Trigger a full
+  run" button kickstarts the nightly label directly and needs no agent here.)
 
   It exists because launchd cannot be asked to start a job with extra arguments,
-  and a run started by hand must skip the pace gate — hence --force baked in
+  and a single-shot run by hand must skip the pace gate — hence --force baked in
   here, where the nightly job takes none.
 
-  Why route "Run now" through launchd rather than spawning the scheduler from
+  Why route the button through launchd rather than spawning the scheduler from
   the host, which is fewer moving parts: everything the host spawns is a
   descendant of Chrome, and macOS stamps com.apple.quarantine on files written
   by any descendant of a quarantine-aware app. That includes the ad-hoc-signed

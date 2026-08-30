@@ -38,9 +38,11 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIRECTORY.parent
 
 LAUNCH_AGENT_LABEL = "com.claudeusageoptimizer.autonomouswork"
-# The same work with no schedule and --force baked in, for the popup's "Run now"
-# to kickstart. launchd takes no arguments when starting a job, so an on-demand
-# run that skips the pace gate needs a job definition of its own.
+# The same work with no schedule and --force baked in, for the popup's "Do next
+# todo" to kickstart. launchd takes no arguments when starting a job, so a
+# single-shot run that skips the pace gate needs a job definition of its own.
+# (The popup's "Trigger a full run" needs no extra agent — it kickstarts
+# LAUNCH_AGENT_LABEL itself, pace gate and all.)
 ON_DEMAND_LAUNCH_AGENT_LABEL = LAUNCH_AGENT_LABEL + ".ondemand"
 
 DEFAULT_SCHEDULE_HOUR = 2
@@ -441,8 +443,8 @@ def install_launch_agent(
         return LaunchAgentUpdate(False, load_result)
 
     # The on-demand twin carries no schedule, so saving a new time never needs it
-    # reloaded — and reloading it would kill a "Run now" that happened to be in
-    # flight. Left alone unless its definition has actually changed.
+    # reloaded — and reloading it would kill a "Do next todo" run that happened to
+    # be in flight. Left alone unless its definition has actually changed.
     on_demand_result = write_and_load_agent(
         INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE,
         render_on_demand_launch_agent_plist(),

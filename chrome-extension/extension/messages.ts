@@ -23,8 +23,23 @@ export interface TestNotificationMessage {
 
 export const RUN_AUTONOMOUS_WORK_MESSAGE = 'RUN_AUTONOMOUS_WORK' as const;
 
+/** "Do next todo" — the single-shot job that skips the pace gate and runs one prompt. */
 export interface RunAutonomousWorkMessage {
   type: typeof RUN_AUTONOMOUS_WORK_MESSAGE;
+}
+
+export const RUN_FULL_AUTONOMOUS_WORK_MESSAGE = 'RUN_FULL_AUTONOMOUS_WORK' as const;
+
+/**
+ * "Trigger a full run" — start the nightly job now, rather than the single-shot
+ * "Do next todo".
+ *
+ * It kicks the same launchd label the 2 AM run uses, so it stays pace-gated,
+ * works through the whole queue while the week is behind an even burn, and
+ * schedules a 5-hour-reset resume when that setting is on.
+ */
+export interface RunFullAutonomousWorkMessage {
+  type: typeof RUN_FULL_AUTONOMOUS_WORK_MESSAGE;
 }
 
 export const OPEN_RUN_LOG_MESSAGE = 'OPEN_RUN_LOG' as const;
@@ -84,6 +99,7 @@ export type ExtensionMessage =
   | RefreshUsageMessage
   | TestNotificationMessage
   | RunAutonomousWorkMessage
+  | RunFullAutonomousWorkMessage
   | OpenRunLogMessage
   | PrimeFolderAccessMessage
   | SyncAutonomousWorkSettingsMessage
@@ -91,7 +107,11 @@ export type ExtensionMessage =
 
 export type RefreshUsageResponse = UsageCacheEntry;
 
-/** Whether the native host accepted the request, not whether the work succeeded. */
+/**
+ * Whether the native host accepted the request, not whether the work succeeded.
+ *
+ * Shared by both run buttons — "Do next todo" and "Trigger a full run".
+ */
 export interface RunAutonomousWorkResponse {
   started: boolean;
   error?: string;
@@ -160,6 +180,16 @@ export function isRunAutonomousWorkMessage(message: unknown): message is RunAuto
     typeof message === 'object' &&
     message !== null &&
     (message as { type?: unknown }).type === RUN_AUTONOMOUS_WORK_MESSAGE
+  );
+}
+
+export function isRunFullAutonomousWorkMessage(
+  message: unknown,
+): message is RunFullAutonomousWorkMessage {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    (message as { type?: unknown }).type === RUN_FULL_AUTONOMOUS_WORK_MESSAGE
   );
 }
 

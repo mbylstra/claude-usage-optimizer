@@ -52,15 +52,36 @@ import queue_source_jira  # noqa: E402  (same)
 HOST_DIRECTORY = Path(__file__).resolve().parent
 SNAPSHOT_FILE = HOST_DIRECTORY / "claude-usage.json"
 LOG_FILE = HOST_DIRECTORY / "usage-host.log"
-# "Run now" asks launchd to start the job rather than spawning it here, so that
-# the run is not a descendant of Chrome — see start_autonomous_work. Overridable
-# so that path can be exercised without starting a real (and billable) Claude
-# session — see test-usage-host.py.
+# Both popup run buttons ask launchd to start the job rather than spawning it
+# here, so that the run is not a descendant of Chrome — see kickstart_launch_agent.
+# Overridable so that path can be exercised without starting a real (and billable)
+# Claude session — see test-usage-host.py.
 LAUNCHCTL_COMMAND = os.environ.get("USAGE_HOST_LAUNCHCTL", "/bin/launchctl")
+# "Do next todo" kicks the single-shot --force job; "Trigger a full run" kicks the
+# nightly label itself, so a manual full run is pace-gated and drains the queue
+# exactly as the 2 AM run does.
 ON_DEMAND_LAUNCH_AGENT_LABEL = autonomous_work_settings.ON_DEMAND_LAUNCH_AGENT_LABEL
+NIGHTLY_LAUNCH_AGENT_LABEL = autonomous_work_settings.LAUNCH_AGENT_LABEL
 # `launchctl kickstart` for a label launchd has never been given. Worth telling
 # apart from a real failure: it means the agent was never installed.
 LAUNCHCTL_NO_SUCH_SERVICE = 113
+# How the host checks whether a scheduler is already running before kicking off a
+# second one. launchd only blocks a duplicate of the *same* label, and the two
+# buttons use different labels, so without this check pressing both would run two
+# schedulers at once — interleaving the run-event stream and breaking the "a card
+# in In Progress must be wreckage" invariant. Matched by command line, the same
+# way cancel-autonomous-work.py finds these processes. Overridable for the tests.
+#
+# `run-autonomous-work.py` is the reliable marker — measured, it is in the
+# command line of both the `uv run --script` process and the Python child it
+# spawns, for the whole run. `claude-usage-autonomous-work` is the launchd
+# wrapper, present only in the ~10 ms before it `exec`s uv; kept as a
+# belt-and-braces match for that startup window.
+PS_COMMAND = os.environ.get("USAGE_HOST_PS_COMMAND", "/bin/ps")
+SCHEDULER_PROCESS_MARKERS = ("run-autonomous-work.py", "claude-usage-autonomous-work")
+RUN_ALREADY_IN_FLIGHT_ERROR = (
+    "a run is already in flight — follow it with View run, or cancel it first"
+)
 # The structured record `run-autonomous-work.py` writes, and the only channel
 # between a run on disk and a window in the browser: MV3 has no filesystem API.
 RUN_EVENT_FILE = Path(
@@ -81,6 +102,7 @@ CANCEL_SCRIPT = os.environ.get(
 
 MESSAGE_TYPE_SNAPSHOT = "snapshot"
 MESSAGE_TYPE_RUN_WORK = "runAutonomousWork"
+MESSAGE_TYPE_RUN_FULL_WORK = "runFullAutonomousWork"
 MESSAGE_TYPE_SET_SETTINGS = "setAutonomousWorkSettings"
 MESSAGE_TYPE_TAIL_RUN = "tailAutonomousRun"
 MESSAGE_TYPE_CANCEL_WORK = "cancelAutonomousWork"
@@ -193,9 +215,32 @@ def spawn_environment():
     return environment
 
 
-def start_autonomous_work():
-    # type: () -> dict
-    """Ask launchd to start the run, rather than spawning it here.
+def autonomous_work_run_in_flight():
+    # type: () -> bool
+    """Is a scheduler process already running?
+
+    launchd blocks a duplicate of one label but not two different ones, and the
+    two popup buttons kick different labels, so this is what stops a second press
+    starting an overlapping run. A broken `ps` counts as "not running": wedging
+    the button shut on a failed check is worse than the rare double run it guards.
+    """
+    try:
+        completed = subprocess.run(
+            [PS_COMMAND, "-Ao", "command="],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=spawn_environment(),
+        )
+    except OSError as error:
+        log_message("Could not check for a running scheduler: {}".format(error))
+        return False
+    listing = completed.stdout.decode("utf-8", "replace")
+    return any(marker in listing for marker in SCHEDULER_PROCESS_MARKERS)
+
+
+def kickstart_launch_agent(label):
+    # type: (str) -> dict
+    """Ask launchd to start `label` now, rather than spawning the run here.
 
     Spawning it here is fewer moving parts and was how this worked first, but
     everything this host starts is a descendant of Chrome, and macOS stamps
@@ -204,17 +249,18 @@ def start_autonomous_work():
     time a prompt touches an image: loading it then needs an "Apple could not
     verify..." dialog dismissed, and the run stalls until somebody does.
 
-    Handing the job to launchd costs a second launch agent — one cannot pass
-    --force to `launchctl kickstart`, so the on-demand definition carries it —
-    and in exchange the run has launchd as its parent, exactly like the nightly
-    one. Same ancestry, same quarantine (none), same folder permissions, so what
-    the button does is what 2 AM does.
+    Handing the job to launchd instead gives the run launchd as its parent,
+    exactly like the nightly one. Same ancestry, same quarantine (none), same
+    folder permissions, so what a button does is what 2 AM does. "Do next todo"
+    cannot share the nightly label because `launchctl kickstart` cannot pass
+    --force, hence the separate on-demand definition that bakes it in; "Trigger a
+    full run" wants no --force and so kicks the nightly label directly.
 
-    It reports only whether the run *started*; the work outlives this reply by up
-    to an hour and reports into autonomous-work.log and the run event stream,
-    which the run-log window tails regardless of who started the run.
+    Reports only whether the run *started*; the work outlives this reply by up to
+    an hour and reports into autonomous-work.log and the run event stream, which
+    the run-log window tails regardless of who started the run.
     """
-    target = "gui/{}/{}".format(os.getuid(), ON_DEMAND_LAUNCH_AGENT_LABEL)
+    target = "gui/{}/{}".format(os.getuid(), label)
     try:
         completed = subprocess.run(
             [LAUNCHCTL_COMMAND, "kickstart", target],
@@ -232,10 +278,34 @@ def start_autonomous_work():
     if completed.returncode == LAUNCHCTL_NO_SUCH_SERVICE:
         return {
             "ok": False,
-            "error": "the on-demand launch agent is not installed — "
-            "run 'just install-autonomous-work'",
+            "error": "the launch agent is not installed — run 'just install-autonomous-work'",
         }
     return {"ok": False, "error": detail or "launchctl kickstart failed"}
+
+
+def start_autonomous_work():
+    # type: () -> dict
+    """"Do next todo": kick the single-shot --force job.
+
+    It skips the pace gate and runs exactly one queued prompt.
+    """
+    if autonomous_work_run_in_flight():
+        return {"ok": False, "error": RUN_ALREADY_IN_FLIGHT_ERROR}
+    return kickstart_launch_agent(ON_DEMAND_LAUNCH_AGENT_LABEL)
+
+
+def start_full_autonomous_work():
+    # type: () -> dict
+    """"Trigger a full run": kick the nightly label now.
+
+    The same job launchd fires at 2 AM, started early by hand — no --force, so it
+    stays pace-gated, works through every todo while the week is behind an even
+    burn, and schedules a resume after the 5-hour window resets when that setting
+    is on.
+    """
+    if autonomous_work_run_in_flight():
+        return {"ok": False, "error": RUN_ALREADY_IN_FLIGHT_ERROR}
+    return kickstart_launch_agent(NIGHTLY_LAUNCH_AGENT_LABEL)
 
 
 def start_folder_access_prompts():
@@ -592,6 +662,14 @@ def handle_message(message):
             log_message("Asked launchd to start autonomous work, on request from the popup")
         else:
             log_message("Could not start autonomous work: {}".format(result.get("error")))
+        return result
+
+    if message_type == MESSAGE_TYPE_RUN_FULL_WORK:
+        result = start_full_autonomous_work()
+        if result.get("ok"):
+            log_message("Asked launchd to start a full autonomous-work run, from the popup")
+        else:
+            log_message("Could not start a full autonomous-work run: {}".format(result.get("error")))
         return result
 
     if message_type == MESSAGE_TYPE_PRIME_FOLDERS:

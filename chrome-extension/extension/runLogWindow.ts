@@ -18,8 +18,8 @@ const WINDOW_HEIGHT_PX = 680;
  *
  * The service worker is torn down whenever it goes idle, which is most of the
  * time, so a variable would forget the window between one button press and the
- * next — and pressing Run now twice would leave two windows streaming the same
- * run. Session storage lives as long as the browser profile session does, which
+ * next — and pressing a run button twice would leave two windows streaming the
+ * same run. Session storage lives as long as the browser profile session does, which
  * is exactly as long as the window can.
  */
 const RUN_LOG_WINDOW_ID_KEY = 'runLogWindowId';

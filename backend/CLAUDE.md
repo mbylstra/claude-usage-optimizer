@@ -21,9 +21,10 @@ because a subscription limit has been reached — and those last two end the run
 rather than sitting idle for up to five hours waiting for the window to reset,
 since it does not refill early. Instead the run **schedules its own resume**, a
 few minutes after that window is expected to refill — see below. `--force`
-(used by "Run now" and by the test recipes) is the one path that stays
-single-shot: it bypasses the pace check it exists to keep re-evaluating, so it
-runs exactly one prompt.
+(used by the popup's "Do next todo" button and by the test recipes) is the one
+path that stays single-shot: it bypasses the pace check it exists to keep
+re-evaluating, so it runs exactly one prompt. The popup's "Trigger a full run"
+button takes the ordinary no-argument path and behaves exactly as the 2 AM job.
 
 **A prompt refused by a subscription limit is left `todo`, not marked as an
 error.** It never ran, so failing it would skip it until somebody edited
@@ -143,9 +144,9 @@ summary file, rendered by `autonomous_work_summary.py` (underscores, because
 Four things about it are deliberate:
 
 - **One file per day, appended to, not one per session.** A day holds the 2 AM
-  run and any number of "Run now" presses, and they belong together. The date is
-  the day the session _started_, so a run that crosses midnight stays in the
-  file you would look in.
+  run and any number of manual button presses ("Do next todo" / "Trigger a full
+  run"), and they belong together. The date is the day the session _started_, so
+  a run that crosses midnight stays in the file you would look in.
 - **A session that ran nothing writes nothing.** The pace gate's decision is
   already in the log, and a file every night saying "on pace, nothing to do"
   would bury the ones describing real work.
@@ -174,17 +175,29 @@ on the way out. It also clears any pending resume — cancelling a run and then
 having it silently restart itself a few hours later is not what anybody means by
 cancel.
 
-**Triggering a run from the popup.** Settings has a "Run now" button, which goes
-popup → service worker → native host → `launchctl kickstart`, and reports only
-whether the run _started_: the work itself outlives the message by up to an hour
-and reports into `autonomous-work.log`. It then opens the run-log window below.
+**Triggering a run from the popup — two buttons.** Settings has **"Do next
+todo"** and **"Trigger a full run"**, both going popup → service worker → native
+host → `launchctl kickstart`, both reporting only whether the run _started_ (the
+work outlives the message by up to an hour and reports into
+`autonomous-work.log`), and both opening the run-log window below.
+
+- **"Do next todo"** kicks `com.claudeusageoptimizer.autonomouswork.ondemand` —
+  the `--force`, single-shot job: it skips the pace gate, runs exactly one queued
+  prompt, and schedules no resume.
+- **"Trigger a full run"** kicks the nightly label
+  `com.claudeusageoptimizer.autonomouswork` _itself_, with no arguments. It is
+  the 2 AM job started early by hand — still pace-gated, still working through
+  every `todo` while the week is behind, still scheduling a resume after the
+  5-hour window resets when that toggle is on. For someone leaving credits idle
+  for the day, this is the button.
 
 **The host asks launchd to start the run rather than spawning it**, which is the
-opposite of what the rest of the host does and costs a whole second launch
-agent, `com.claudeusageoptimizer.autonomouswork.ondemand` — unscheduled, and
-carrying the `--force` the nightly job does not, since a button press is an
-explicit instruction and `launchctl kickstart` cannot pass arguments. It bought
-two things.
+opposite of what the rest of the host does. `"Trigger a full run"` needs no job
+definition of its own — it reuses the nightly one — but `"Do next todo"` costs a
+whole second launch agent, `com.claudeusageoptimizer.autonomouswork.ondemand`:
+unscheduled, and carrying the `--force` the nightly job does not, since that
+button is an explicit single-shot instruction and `launchctl kickstart` cannot
+pass arguments. Routing through launchd at all bought two things.
 
 The first is **Gatekeeper**. Everything the host spawns is a descendant of
 Chrome, and macOS stamps `com.apple.quarantine` on files written by any
@@ -194,14 +207,14 @@ prompt touches an image — reads a PNG, takes a screenshot — and a stamped,
 unnotarized library cannot load without an "Apple could not verify…" dialog. The
 run then sits there until somebody clicks. The module is unpacked per process
 and deleted on exit, so nothing persists between runs and the nightly job was
-never affected; but the stamp made "Run now" unusable for any prompt doing image
-work. Started by launchd, the run has no quarantine agent above it.
+never affected; but the stamp made the popup buttons unusable for any prompt
+doing image work. Started by launchd, the run has no quarantine agent above it.
 
-The second is **parity**: the button and the nightly job are now the same job
-started two ways, so they have the same ancestry, the same TCC identity and the
-same folder permissions. What you see when you press it is what happens at 2 AM.
-The cost is that "Run now" no longer raises folder-permission dialogs of its
-own — that was only ever a side effect of Chrome being in the chain, and
+The second is **parity**: the buttons and the nightly job are now the same work
+started three ways, so they have the same ancestry, the same TCC identity and the
+same folder permissions. What you see when you press a button is what happens at
+2 AM. The cost is that the buttons no longer raise folder-permission dialogs of
+their own — that was only ever a side effect of Chrome being in the chain, and
 granting is the "Grant folder access" button's job, which still takes the Chrome
 path deliberately.
 
@@ -213,9 +226,15 @@ truth was.
 
 Two failure modes worth recognising. `launchctl kickstart` exits **113** when the
 label was never installed, which the host turns into a "run
-`just install-autonomous-work`" message rather than a generic failure; and
-because launchd will not run two instances of one label, pressing the button
-during a run can no longer start a second overlapping one.
+`just install-autonomous-work`" message rather than a generic failure; and a run
+already in flight is refused, by both buttons. launchd only blocks a duplicate of
+one _label_ — and the two buttons use different labels — so the host checks for a
+running `run-autonomous-work.py` (by command line, the way
+`cancel-autonomous-work.py` finds it) before either kickstart. Without that,
+pressing both would start two schedulers at once: interleaved run-event streams,
+and a card swept out of In Progress by the invariant that says a second run
+cannot exist. A broken `ps` counts as "nothing running" — wedging the buttons
+shut is worse than the rare double run.
 
 ## Resuming after the 5-hour window resets
 
@@ -269,11 +288,14 @@ obvious improvement. The per-day half of the rule is why serving a resume
 already had one has to outlive the schedule it describes.
 
 Four more guards live in `schedule_resume_if_warranted`: the toggle above is off;
-a `--force` run schedules nothing (it is one explicit instruction, not a standing
-one); nothing is scheduled where the nightly agent is not installed (the same
-rule `install_launch_agent(only_if_installed=True)` follows — a machine that just
-ran `just uninstall-autonomous-work` must not find an agent written back); and
-nothing is scheduled with an empty queue.
+a `--force` run schedules nothing (it is one explicit single-shot instruction,
+not a standing one — this is the `"Do next todo"` button); nothing is scheduled
+where the nightly agent is not installed (the same rule
+`install_launch_agent(only_if_installed=True)` follows — a machine that just ran
+`just uninstall-autonomous-work` must not find an agent written back); and nothing
+is scheduled with an empty queue. The popup's `"Trigger a full run"` passes no
+`--force`, so it *does* schedule a resume like the 2 AM job — that is the whole
+point of it being the nightly job rather than a one-off.
 
 **When the window resets — three sources, in order.** The CLI's own notice, when
 the run ended on `sessionLimit`; the snapshot's `fiveHourResetsAt`, for the
@@ -301,12 +323,12 @@ footer ends on), a `**Resuming:**` line in the day's summary, and
 
 ## Watching a run live
 
-"Run now" also opens a **detached window** (`run-log.html`, via
+Both run buttons also open a **detached window** (`run-log.html`, via
 `chrome.windows.create`) that streams the run: status header, timeline, Cancel.
 "View run" reopens it, showing the most recent run whenever it happened — the
 nightly job deliberately raises no window, it just writes to the same stream.
-Pressing either twice focuses the open window rather than opening a second, so
-the window id lives in `chrome.storage.session`; a module variable would be
+Pressing any of them twice focuses the open window rather than opening a second,
+so the window id lives in `chrome.storage.session`; a module variable would be
 forgotten every time the service worker went idle.
 
 **The page opens the native port itself**, in `autonomousRunStream.ts`, which is
@@ -432,9 +454,9 @@ surfaces only as "command not found" in `backend/system.log`.
 **Protected folders — measured, and counter-intuitive.** `~/Desktop`,
 `~/Documents`, `~/Downloads` and iCloud Drive are gated by TCC. The failure
 depends on how the run started: a **launchd** run is refused silently with
-`Operation not permitted`, while a run started from **Run now** raises a dialog,
-because Chrome is in that chain. So the only way to grant a folder is Run now
-plus a click; there is no scriptable path.
+`Operation not permitted`, while one started from the **Grant folder access**
+button raises a dialog, because Chrome is in that chain. So the only way to grant
+a folder is that button plus a click; there is no scriptable path.
 
 **Granting has to happen from the extension**, which is why Settings has a
 "Grant folder access" button going popup → service worker → native host →
