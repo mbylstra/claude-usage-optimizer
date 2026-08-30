@@ -91,10 +91,10 @@ Leave the `REPO:` line off and the prompt gets a fresh repository of its own
 instead. ([Full format](#editing-the-queue).)
 
 **3. Test it end to end.** Open the popup, go to **Settings**, and press
-**Run now** — it runs the first `todo` prompt immediately, ignoring the pace
-gate, and opens a window that follows the run as it happens. (Or watch it in a
-terminal with `just autonomous-log`.) If the button errors, the native host is
-not connected — rebuild, re-run `just install-usage-host`, and reload the
+**Do next todo** — it runs the first `todo` prompt immediately, ignoring the
+pace gate, and opens a window that follows the run as it happens. (Or watch it
+in a terminal with `just autonomous-log`.) If the button errors, the native host
+is not connected — rebuild, re-run `just install-usage-host`, and reload the
 extension.
 
 ## What it shows
@@ -276,14 +276,15 @@ per-application grants, and a queued prompt that reads one may be refused. What
 happens then depends entirely on how the run was started, which took a while to
 pin down:
 
-- **Every run fails closed**, whether it is the nightly one or **Run now**. The
-  read returns `Operation not permitted` immediately — no dialog, no hang.
+- **Every run fails closed**, whether it is the nightly one or a button press.
+  The read returns `Operation not permitted` immediately — no dialog, no hang.
   Claude sees an ordinary tool error, and the queue entry is marked `error`.
-- **Run now used to prompt**, because it was spawned from Chrome and macOS would
-  raise a dialog on its behalf. It now asks launchd to start the same job the
-  nightly run uses, so the two have identical permissions — at the price of that
-  prompting. The reason is Gatekeeper rather than folders: anything Chrome
-  spawns has its files stamped with Chrome's quarantine, including the native
+- **The buttons used to prompt**, because the run was spawned from Chrome and
+  macOS would raise a dialog on its behalf. They now ask launchd to start the
+  same job the nightly run uses, so all have identical permissions — at the
+  price of that prompting. The reason is Gatekeeper rather than folders:
+  anything Chrome spawns has its files stamped with Chrome's quarantine,
+  including the native
   module Claude unpacks to read an image, which then cannot load without a
   malware-check dialog blocking the run. See CLAUDE.md, "Triggering a run from
   the popup".
@@ -501,15 +502,24 @@ just autonomous-running          # is a run in flight?
 just cancel-autonomous-work      # stop an in-flight run
 ```
 
-Settings in the popup has a **Run now** button that does the same work as
-`just trigger-autonomous-work --force` — by asking launchd to start it, so its
-ancestry matches the nightly one — and a **View run** button beside it. `--force`
-bypasses the pace gate for exactly one prompt rather than looping, so **Run
-now** is for testing a single queued item, not for draining the queue on
-demand. Both buttons open a detached window that streams the run — a status
-header with elapsed time and cost, a timeline of what Claude is doing, a Cancel
-button, and a raw JSON toggle. The window follows the newest line until you
-scroll away from it, and a **live** button brings it back.
+Settings in the popup has two run buttons, plus a **View run** button.
+
+- **Do next todo** does the same work as `just trigger-autonomous-work --force`
+  — by asking launchd to start it, so its ancestry matches the nightly one.
+  `--force` bypasses the pace gate for exactly one prompt rather than looping,
+  so this button is for testing a single queued item, not for draining the
+  queue.
+- **Trigger a full run** starts the nightly 2 AM job right now instead — same
+  launchd label, no `--force`. It stays pace-gated, works through the whole
+  queue while the week is behind an even burn, and schedules a resume after the
+  5-hour window resets when that toggle is on. This is the one to press when you
+  are leaving credits idle for the day.
+
+All three buttons open a detached window that streams the run — a status header
+with elapsed time and cost, a timeline of what Claude is doing, a Cancel button,
+and a raw JSON toggle. The window follows the newest line until you scroll away
+from it, and a **live** button brings it back. Either run button is refused
+while a run is already in flight.
 
 The nightly 2 AM job deliberately raises no window; it writes to the same
 stream, so opening **View run** shows whichever queued prompt is running, or

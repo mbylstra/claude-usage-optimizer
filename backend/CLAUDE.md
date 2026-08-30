@@ -453,12 +453,10 @@ surfaces only as "command not found" in `backend/system.log`.
 
 **Protected folders — measured, and counter-intuitive.** `~/Desktop`,
 `~/Documents`, `~/Downloads` and iCloud Drive are gated by TCC. The failure
-depends on how the check started: a **launchd** run is refused silently with
-`Operation not permitted`, while one started from the extension's **Grant folder
-access** button raises a dialog, because Chrome is in that chain. So the only way
-to grant a folder is that button plus a click; there is no scriptable path. (The
-run buttons themselves no longer raise these dialogs — see the parity note
-above.)
+depends on how the run started: a **launchd** run is refused silently with
+`Operation not permitted`, while one started from the **Grant folder access**
+button raises a dialog, because Chrome is in that chain. So the only way to grant
+a folder is that button plus a click; there is no scriptable path.
 
 **Granting has to happen from the extension**, which is why Settings has a
 "Grant folder access" button going popup → service worker → native host →

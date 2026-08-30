@@ -131,8 +131,9 @@ check: typecheck lint format-check
 autonomous_script := "backend/claude-usage-autonomous-work"
 launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
 launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
-# The unscheduled twin the popup's "Run now" kickstarts, so that run belongs to
-# launchd rather than to Chrome — see CLAUDE.md, "Triggering a run from the popup"
+# The unscheduled twin the popup's "Do next todo" button kickstarts, so that run
+# belongs to launchd rather than to Chrome — see CLAUDE.md, "Triggering a run
+# from the popup" ("Trigger a full run" kickstarts the nightly label directly)
 on_demand_label := launch_agent_label + ".ondemand"
 on_demand_plist := home_directory() / "Library/LaunchAgents" / on_demand_label + ".plist"
 # The one-shot agent a run writes for itself when it hits the 5-hour window, so
@@ -295,8 +296,8 @@ autonomous-run-and-watch:
     {{ autonomous_script }} --force || true
     sleep 0.5
 
-# "Run now" in the popup puts Chrome in the process chain, so every file the run
-# writes inherits com.apple.quarantine — including the ad-hoc-signed .node module
+# A run with Chrome anywhere in its ancestry has every file it writes inherit
+# com.apple.quarantine — including the ad-hoc-signed .node module
 # `claude` unpacks the first time a prompt touches an image. macOS then blocks
 # loading it behind an "Apple could not verify..." dialog, and the run stalls
 # until somebody clicks. launchd has no quarantine agent above it, so the nightly
@@ -424,7 +425,7 @@ test-launchd-run timeout="900":
       echo "work — reads a PNG, takes a screenshot — so queue a prompt that does."
     elif grep -q "com.apple.quarantine" "$sightings"; then
       echo "QUARANTINED under launchd. Unexpected: the nightly run would hit the"
-      echo "same Gatekeeper block that 'Run now' does."
+      echo "same Gatekeeper block a Chrome-spawned run does."
       exit 1
     else
       echo "No quarantine stamp — the nightly run raises no Gatekeeper dialog."
@@ -451,7 +452,7 @@ uninstall-autonomous-work:
     @python3 backend/autonomous_work_resume.py --cancel
     @echo "Removed {{ launch_agent_label }}, {{ on_demand_label }} and {{ resume_label }}"
 
-# Is the nightly run scheduled? Lists all three jobs — nightly, "Run now", resume
+# Is the nightly run scheduled? Lists all three jobs — nightly, on-demand, resume
 autonomous-status:
     @launchctl list | grep {{ launch_agent_label }} || echo "not loaded"
 

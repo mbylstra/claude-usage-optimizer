@@ -71,8 +71,14 @@ LAUNCHCTL_NO_SUCH_SERVICE = 113
 # schedulers at once — interleaving the run-event stream and breaking the "a card
 # in In Progress must be wreckage" invariant. Matched by command line, the same
 # way cancel-autonomous-work.py finds these processes. Overridable for the tests.
+#
+# `run-autonomous-work.py` is the reliable marker — measured, it is in the
+# command line of both the `uv run --script` process and the Python child it
+# spawns, for the whole run. `claude-usage-autonomous-work` is the launchd
+# wrapper, present only in the ~10 ms before it `exec`s uv; kept as a
+# belt-and-braces match for that startup window.
 PS_COMMAND = os.environ.get("USAGE_HOST_PS_COMMAND", "/bin/ps")
-SCHEDULER_PROCESS_MARKER = "run-autonomous-work.py"
+SCHEDULER_PROCESS_MARKERS = ("run-autonomous-work.py", "claude-usage-autonomous-work")
 RUN_ALREADY_IN_FLIGHT_ERROR = (
     "a run is already in flight — follow it with View run, or cancel it first"
 )
@@ -229,7 +235,7 @@ def autonomous_work_run_in_flight():
         log_message("Could not check for a running scheduler: {}".format(error))
         return False
     listing = completed.stdout.decode("utf-8", "replace")
-    return SCHEDULER_PROCESS_MARKER in listing
+    return any(marker in listing for marker in SCHEDULER_PROCESS_MARKERS)
 
 
 def kickstart_launch_agent(label):
