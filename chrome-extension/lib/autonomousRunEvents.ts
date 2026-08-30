@@ -24,7 +24,10 @@ export interface RunStartedEvent {
   type: 'runStarted';
   runId: string;
   at: string;
-  /** True when a person pressed Run now, false for the nightly pace-gated job. */
+  /**
+   * True for the single-shot `--force` run ("Do next todo"), false for anything
+   * pace-gated — the nightly job and the manual "Trigger a full run" alike.
+   */
   forced: boolean;
   workingDirectory: string;
   projectName: string;

@@ -5,9 +5,10 @@ Chrome gives almost no diagnostics when a native host misbehaves — the extensi
 just sees the connection fail — so being able to exercise the host directly is
 the difference between a two-minute fix and an afternoon.
 
-The `runAutonomousWork` case points the host at a harmless stand-in command
-rather than the real scheduler, so running these checks never starts a billable
-Claude session. The `setAutonomousWorkSettings` case likewise redirects the
+The `runAutonomousWork` and `runFullAutonomousWork` cases point the host at a
+harmless stand-in `launchctl` and a stand-in `ps` (so the "a run is already in
+flight" guard sees a known state), so running these checks never starts a
+billable Claude session. The `setAutonomousWorkSettings` case likewise redirects the
 settings file, the LaunchAgent path and `launchctl` itself into a temporary
 directory, so it never touches the job actually installed on this machine.
 `cancelAutonomousWork` gets the same treatment, and `tailAutonomousRun` runs
@@ -291,10 +292,17 @@ def main() -> int:
         )
         stand_in.chmod(0o755)
 
-        reply = ask_host(
-            {"type": "runAutonomousWork"},
-            {"USAGE_HOST_LAUNCHCTL": str(stand_in)},
-        )
+        # A stand-in `ps` reporting no scheduler, so the "already in flight" guard
+        # does not depend on what happens to be running on the test machine.
+        idle_ps = Path(temporary_directory) / "ps-idle"
+        idle_ps.write_text("#!/bin/bash\necho COMMAND\n", encoding="utf-8")
+        idle_ps.chmod(0o755)
+        idle_environment = {
+            "USAGE_HOST_LAUNCHCTL": str(stand_in),
+            "USAGE_HOST_PS_COMMAND": str(idle_ps),
+        }
+
+        reply = ask_host({"type": "runAutonomousWork"}, idle_environment)
         results.append(check("host reports the run started", bool(reply and reply.get("started"))))
 
         kickstart_calls = kickstart_log.read_text(encoding="utf-8") if kickstart_log.exists() else ""
@@ -306,6 +314,57 @@ def main() -> int:
             )
         )
 
+        # "Trigger a full run" kicks the nightly label itself, not the .ondemand
+        # one, so a manual full run is pace-gated and drains the queue like 2 AM.
+        full_kickstart_log = Path(temporary_directory) / "launchctl-calls-full"
+        full_stand_in = Path(temporary_directory) / "launchctl-full"
+        full_stand_in.write_text(
+            f'#!/bin/bash\necho "$@" >> "{full_kickstart_log}"\n', encoding="utf-8"
+        )
+        full_stand_in.chmod(0o755)
+        reply = ask_host(
+            {"type": "runFullAutonomousWork"},
+            {"USAGE_HOST_LAUNCHCTL": str(full_stand_in), "USAGE_HOST_PS_COMMAND": str(idle_ps)},
+        )
+        results.append(
+            check("host reports the full run started", bool(reply and reply.get("started")))
+        )
+        full_kickstart_calls = (
+            full_kickstart_log.read_text(encoding="utf-8") if full_kickstart_log.exists() else ""
+        )
+        results.append(
+            check(
+                "launchd was asked to start the nightly job, not the on-demand one",
+                "kickstart" in full_kickstart_calls
+                and "com.claudeusageoptimizer.autonomouswork" in full_kickstart_calls
+                and ".ondemand" not in full_kickstart_calls,
+            )
+        )
+
+        # A scheduler already running blocks both buttons: launchd only stops a
+        # duplicate of one label, and the two use different labels.
+        busy_ps = Path(temporary_directory) / "ps-busy"
+        busy_ps.write_text(
+            "#!/bin/bash\necho 'uv run --script /x/backend/run-autonomous-work.py'\n",
+            encoding="utf-8",
+        )
+        busy_ps.chmod(0o755)
+        for busy_message in ("runAutonomousWork", "runFullAutonomousWork"):
+            reply = ask_host(
+                {"type": busy_message},
+                {"USAGE_HOST_LAUNCHCTL": str(stand_in), "USAGE_HOST_PS_COMMAND": str(busy_ps)},
+            )
+            results.append(
+                check(
+                    f"{busy_message} is refused while a run is in flight",
+                    bool(
+                        reply
+                        and not reply.get("ok")
+                        and "in flight" in reply.get("error", "")
+                    ),
+                )
+            )
+
         # A label launchd has never heard of must be told apart from a real
         # failure, since it means `just install-autonomous-work` was never run.
         missing_agent_launchctl = Path(temporary_directory) / "launchctl-missing"
@@ -313,7 +372,10 @@ def main() -> int:
         missing_agent_launchctl.chmod(0o755)
         reply = ask_host(
             {"type": "runAutonomousWork"},
-            {"USAGE_HOST_LAUNCHCTL": str(missing_agent_launchctl)},
+            {
+                "USAGE_HOST_LAUNCHCTL": str(missing_agent_launchctl),
+                "USAGE_HOST_PS_COMMAND": str(idle_ps),
+            },
         )
         results.append(
             check(

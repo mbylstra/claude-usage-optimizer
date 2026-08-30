@@ -52,7 +52,7 @@ export interface AutonomousRunViewModel {
   workingDirectory: string | null;
   prompt: string | null;
   isNewProject: boolean;
-  /** True when someone pressed Run now rather than the nightly job firing. */
+  /** True for the single-shot `--force` run ("Do next todo"); false for any pace-gated run. */
   forced: boolean;
   model: string | null;
   sessionId: string | null;

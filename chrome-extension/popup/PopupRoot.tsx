@@ -13,6 +13,7 @@ import {
   REFRESH_USAGE_MESSAGE,
   PRIME_FOLDER_ACCESS_MESSAGE,
   RUN_AUTONOMOUS_WORK_MESSAGE,
+  RUN_FULL_AUTONOMOUS_WORK_MESSAGE,
   SYNC_AUTONOMOUS_WORK_SETTINGS_MESSAGE,
   TEST_NOTIFICATION_MESSAGE,
   type RefreshUsageResponse,
@@ -85,6 +86,11 @@ export function PopupRoot() {
   const [autonomousWorkStatus, setAutonomousWorkStatus] = useState<AutonomousWorkStatus>(
     IDLE_AUTONOMOUS_WORK_STATUS,
   );
+  // A second status, because the two run buttons are independent — a shared one
+  // would show "Starting…" under whichever button was not pressed.
+  const [fullAutonomousWorkStatus, setFullAutonomousWorkStatus] = useState<AutonomousWorkStatus>(
+    IDLE_AUTONOMOUS_WORK_STATUS,
+  );
   const [folderAccessStatus, setFolderAccessStatus] =
     useState<FolderAccessStatus>(IDLE_FOLDER_ACCESS_STATUS);
   const [autonomousWorkSettingsStatus, setAutonomousWorkSettingsStatus] =
@@ -141,33 +147,43 @@ export function PopupRoot() {
     });
   }, []);
 
-  const runAutonomousWork = useCallback(() => {
-    setAutonomousWorkStatus({ kind: 'starting' });
-    chrome.runtime.sendMessage(
-      { type: RUN_AUTONOMOUS_WORK_MESSAGE },
-      (response?: RunAutonomousWorkResponse) => {
+  const startAutonomousRun = useCallback(
+    (
+      messageType: typeof RUN_AUTONOMOUS_WORK_MESSAGE | typeof RUN_FULL_AUTONOMOUS_WORK_MESSAGE,
+      setStatus: (status: AutonomousWorkStatus) => void,
+    ) => {
+      setStatus({ kind: 'starting' });
+      chrome.runtime.sendMessage({ type: messageType }, (response?: RunAutonomousWorkResponse) => {
         if (chrome.runtime.lastError !== undefined) {
-          setAutonomousWorkStatus({
-            kind: 'failed',
-            error: chrome.runtime.lastError.message ?? '',
-          });
+          setStatus({ kind: 'failed', error: chrome.runtime.lastError.message ?? '' });
           return;
         }
         if (response === undefined) {
-          setAutonomousWorkStatus({ kind: 'failed', error: 'No response from the extension' });
+          setStatus({ kind: 'failed', error: 'No response from the extension' });
           return;
         }
         if (!response.started) {
-          setAutonomousWorkStatus({ kind: 'failed', error: response.error ?? '' });
+          setStatus({ kind: 'failed', error: response.error ?? '' });
           return;
         }
-        setAutonomousWorkStatus({ kind: 'started' });
+        setStatus({ kind: 'started' });
         // Only once the host has accepted: a window that opens on a failed
         // start would show an empty log and say nothing about why.
         openRunLog();
-      },
-    );
-  }, [openRunLog]);
+      });
+    },
+    [openRunLog],
+  );
+
+  const runAutonomousWork = useCallback(
+    () => startAutonomousRun(RUN_AUTONOMOUS_WORK_MESSAGE, setAutonomousWorkStatus),
+    [startAutonomousRun],
+  );
+
+  const runFullAutonomousWork = useCallback(
+    () => startAutonomousRun(RUN_FULL_AUTONOMOUS_WORK_MESSAGE, setFullAutonomousWorkStatus),
+    [startAutonomousRun],
+  );
 
   const primeFolderAccess = useCallback(() => {
     setFolderAccessStatus({ kind: 'starting' });
@@ -381,6 +397,8 @@ export function PopupRoot() {
           autonomousWorkSettingsStatus={autonomousWorkSettingsStatus}
           autonomousWorkStatus={autonomousWorkStatus}
           onRunAutonomousWork={runAutonomousWork}
+          fullAutonomousWorkStatus={fullAutonomousWorkStatus}
+          onRunFullAutonomousWork={runFullAutonomousWork}
           folderAccessStatus={folderAccessStatus}
           onPrimeFolderAccess={primeFolderAccess}
           onOpenRunLog={openRunLog}

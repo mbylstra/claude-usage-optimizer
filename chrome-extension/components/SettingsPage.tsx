@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowLeft, FolderLock, Pencil, Play, ScrollText, X } from 'lucide-react';
+import { ArrowLeft, FolderLock, ListChecks, Pencil, Play, ScrollText, X } from 'lucide-react';
 import { PopupFrame } from './PopupFrame';
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -149,7 +149,14 @@ export interface SettingsPageProps {
   onSyncSettingsNow: () => void;
   autonomousWorkSettingsStatus: AutonomousWorkSettingsStatus;
   autonomousWorkStatus: AutonomousWorkStatus;
+  /** "Do next todo": run the single next queued prompt now, skipping the pace check. */
   onRunAutonomousWork: () => void;
+  fullAutonomousWorkStatus: AutonomousWorkStatus;
+  /**
+   * "Trigger a full run": start the nightly job now — pace-gated, works through
+   * the whole queue, and schedules a 5-hour-reset resume when that toggle is on.
+   */
+  onRunFullAutonomousWork: () => void;
   /** Opens the window that streams the current run, or replays the last one. */
   onOpenRunLog: () => void;
   folderAccessStatus: FolderAccessStatus;
@@ -175,6 +182,8 @@ export function SettingsPage({
   autonomousWorkSettingsStatus,
   autonomousWorkStatus,
   onRunAutonomousWork,
+  fullAutonomousWorkStatus,
+  onRunFullAutonomousWork,
   onOpenRunLog,
   folderAccessStatus,
   onPrimeFolderAccess,
@@ -182,6 +191,7 @@ export function SettingsPage({
   onBack,
 }: SettingsPageProps) {
   const autonomousWorkMessage = describeAutonomousWorkStatus(autonomousWorkStatus);
+  const fullAutonomousWorkMessage = describeAutonomousWorkStatus(fullAutonomousWorkStatus);
   const settingsMessage = describeAutonomousWorkSettingsStatus(autonomousWorkSettingsStatus);
   const folderAccessMessage = describeFolderAccessStatus(folderAccessStatus);
 
@@ -666,18 +676,32 @@ export function SettingsPage({
               disabled={autonomousWorkStatus.kind === 'starting'}
             >
               <Play className="size-3.5" aria-hidden="true" />
-              Run now
+              Do next todo
             </Button>
-            <Button variant="outline" size="sm" className="flex-1" onClick={onOpenRunLog}>
-              <ScrollText className="size-3.5" aria-hidden="true" />
-              View run
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={onRunFullAutonomousWork}
+              disabled={fullAutonomousWorkStatus.kind === 'starting'}
+            >
+              <ListChecks className="size-3.5" aria-hidden="true" />
+              Trigger a full run
             </Button>
           </div>
 
+          <Button variant="outline" size="sm" className="w-full" onClick={onOpenRunLog}>
+            <ScrollText className="size-3.5" aria-hidden="true" />
+            View run
+          </Button>
+
           <p className="text-muted-foreground text-xs">
-            Running now skips the pace check and starts the next queued prompt straight away, and
-            opens a window that follows it. View run reopens that window, showing the most recent
-            run whenever it happened.
+            <strong>Do next todo</strong> skips the pace check and runs the single next queued
+            prompt. <strong>Trigger a full run</strong> starts the nightly job right now instead: it
+            works through the whole queue while the week is behind pace, and — when the resume
+            toggle above is on — schedules itself to pick up again after the 5-hour window resets.
+            Both open a window that follows the run; <strong>View run</strong> reopens it, showing
+            the most recent run whenever it happened.
           </p>
 
           {autonomousWorkMessage !== null && (
@@ -689,7 +713,20 @@ export function SettingsPage({
                   : 'text-muted-foreground text-xs'
               }
             >
-              {autonomousWorkMessage}
+              Do next todo: {autonomousWorkMessage}
+            </p>
+          )}
+
+          {fullAutonomousWorkMessage !== null && (
+            <p
+              role="status"
+              className={
+                isAutonomousWorkStatusError(fullAutonomousWorkStatus)
+                  ? 'text-destructive text-xs'
+                  : 'text-muted-foreground text-xs'
+              }
+            >
+              Full run: {fullAutonomousWorkMessage}
             </p>
           )}
 

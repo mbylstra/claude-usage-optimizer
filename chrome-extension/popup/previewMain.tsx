@@ -89,6 +89,8 @@ function Column({ dark }: { dark: boolean }) {
             autonomousWorkSettingsStatus={settingsStatus}
             autonomousWorkStatus={status}
             onRunAutonomousWork={() => {}}
+            fullAutonomousWorkStatus={status}
+            onRunFullAutonomousWork={() => {}}
             onOpenRunLog={() => {}}
             folderAccessStatus={IDLE_FOLDER_ACCESS_STATUS}
             onPrimeFolderAccess={() => {}}

@@ -22,6 +22,7 @@ import {
   isRefreshUsageMessage,
   isPrimeFolderAccessMessage,
   isRunAutonomousWorkMessage,
+  isRunFullAutonomousWorkMessage,
   isSyncAutonomousWorkSettingsMessage,
   isTestNotificationMessage,
   type OpenRunLogResponse,
@@ -36,6 +37,7 @@ import {
   exportUsageSnapshot,
   readJiraCredentialStatus,
   requestAutonomousWorkRun,
+  requestFullAutonomousWorkRun,
   requestFolderAccessPrompts,
   syncAutonomousWorkSettings,
 } from './usageSnapshotExporter';
@@ -327,6 +329,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (isRunAutonomousWorkMessage(message)) {
     void requestAutonomousWorkRun().then((result) =>
+      sendResponse(result satisfies RunAutonomousWorkResponse),
+    );
+    return true;
+  }
+
+  if (isRunFullAutonomousWorkMessage(message)) {
+    void requestFullAutonomousWorkRun().then((result) =>
       sendResponse(result satisfies RunAutonomousWorkResponse),
     );
     return true;
