@@ -660,37 +660,55 @@ def _selected_repository_path(fields, repository_field_id, repositories):
     return None
 
 
+def _first_nonblank_line(text):
+    # type: (str) -> str
+    for line in text.split("\n"):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
 def prompt_from_issue(issue, repository_field_id=None, repositories=None):
     # type: (dict, str | None, list | None) -> tuple[str, Path | None]
     """A card's prompt text and the repository to run it in.
 
-    **The prompt is the description, or the summary when the description says
-    nothing more than a `REPO:` line.** Jira forces a summary, and that fallback
-    is what stops it from being double entry: a prompt you can state in a
-    sentence is one field on a phone, and a long one gets a title worth having
-    on the board.
+    **The prompt is the summary and the description together — the title on its
+    own line, a blank line, then the body.** Jira forces a summary, so a card
+    written on a phone can be a one-line title with no body at all; a card with
+    real detail keeps its title as context rather than losing it. Either field
+    may be empty (a summary-only card, or one whose description is nothing but a
+    `REPO:` line), and then the prompt is just whichever field has text.
 
-    "Nothing more than a `REPO:` line" rather than "empty", because pointing a
-    one-sentence card at a repository is the obvious thing to want, and reading
-    the result as an empty prompt made the card invisible to `next_todo` — a
-    board with work on it reporting an empty queue.
+    **A description that already opens with the summary is used on its own**, no
+    title prepended. That is exactly the shape `import_prompts` creates — first
+    line of the prompt becomes the summary, the whole prompt becomes the
+    description — and prepending there would double the first line.
 
-    **The Repository dropdown wins over a `REPO:` line when both are set.** The
-    field is the deliberate, current-intent choice made on the board; the text
-    line predates it and stays as the fallback, so cards written before the
-    picker existed keep working with no migration.
+    **Repository precedence: the dropdown, then a `REPO:` line in the
+    description, then one in the summary.** The field is the deliberate,
+    current-intent choice made on the board; a `REPO:` line predates it and
+    stays as the fallback, so cards written before the picker existed keep
+    working with no migration. Wherever the winning `REPO:` line sat, it is
+    lifted off and never appears in the prompt text.
     """
     fields = issue.get("fields") or {}
     selected_path = _selected_repository_path(fields, repository_field_id, repositories)
 
-    prompt, repository_path = _split_repository_line(flatten_adf(fields.get("description")))
-    if prompt:
-        return prompt, selected_path or repository_path
-
-    summary_prompt, summary_repository = _split_repository_line(
+    description_body, description_repository = _split_repository_line(
+        flatten_adf(fields.get("description"))
+    )
+    summary_body, summary_repository = _split_repository_line(
         (fields.get("summary") or "").strip()
     )
-    return summary_prompt, selected_path or repository_path or summary_repository
+    repository_path = selected_path or description_repository or summary_repository
+
+    if (
+        summary_body
+        and description_body
+        and _first_nonblank_line(description_body) != summary_body
+    ):
+        return summary_body + "\n\n" + description_body, repository_path
+    return (description_body or summary_body), repository_path
 
 
 @dataclass
@@ -2774,8 +2792,12 @@ def summary_and_description_for_prompt(prompt, repository_path=None):
     The first line becomes the summary and the whole prompt the description, so
     the board is scannable on a phone without the prompt itself being paraphrased
     — the description is what actually runs.
+
+    Uses the same `_first_nonblank_line` `prompt_from_issue` compares against on
+    the way back in: the importer sets the summary *from* that line, and the
+    reader drops the prepended title *when* the description still opens with it.
     """
-    first_line = next((line.strip() for line in prompt.split("\n") if line.strip()), "Queued prompt")
+    first_line = _first_nonblank_line(prompt) or "Queued prompt"
     summary = first_line if len(first_line) <= 120 else first_line[:119] + "…"
     body = prompt
     if repository_path is not None:

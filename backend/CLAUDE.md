@@ -733,14 +733,23 @@ the wrong model spends budget invisibly. Precedence: `AUTONOMOUS_WORK_MODEL`
 (a whole-session override) beats the card, which beats the extension's model
 setting, which beats `opus`.
 
-**The prompt is the description, or the summary when the description says
-nothing more than a `REPO:` line.** Jira forces a summary and this is what stops
-that from being double entry. "Nothing more than a `REPO:` line" rather than
-"empty", because pointing a one-sentence card at a repository is the obvious
-thing to want — and reading what was left as an empty prompt made the card
-invisible to `next_todo`, so a board with work on it reported an empty queue.
-`next_todo` now logs every card it passes over for that reason, since skipping
-in silence is indistinguishable from an empty board.
+**The prompt is the summary and the description together** — the title on its
+own line, a blank line, then the body. Jira forces a summary, so a card typed on
+a phone can be a one-line title with no body at all; a card with real detail
+keeps that title as context rather than dropping it on the floor. Either field
+may be empty — a summary-only card, or a description that says nothing more than
+a `REPO:` line — and then the prompt is just whichever field carries text. A
+description that already opens with its summary (exactly what `import_prompts`
+writes: the first line of the prompt becomes the summary, the whole prompt
+becomes the description) is used on its own, no title prepended, so the first
+line is not doubled. A card with no text in either field carries no prompt, and
+`next_todo` logs every card it passes over for that reason, since skipping in
+silence is indistinguishable from an empty board.
+
+**Repository precedence, when a `REPO:` line and the dropdown disagree:** the
+dropdown wins, then a `REPO:` line at the top of the description, then one that
+is the whole of the summary. Wherever the winning line sat, it is lifted off and
+never reaches the prompt text.
 
 **Descriptions arrive as Atlassian Document Format** — a JSON tree, not text —
 and `flatten_adf` walks it. The saving grace is that **the run only ever reads

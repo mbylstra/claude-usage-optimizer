@@ -804,25 +804,50 @@ class PromptFromIssueTests(unittest.TestCase):
     def _issue(self, summary, description=None):
         return {"key": "FCP-1", "fields": {"summary": summary, "description": description}}
 
-    def test_the_description_is_the_prompt(self):
+    def test_the_summary_and_description_are_joined_title_first(self):
+        # Both fields land in the prompt — the title on its own line, a blank
+        # line, then the body — so a card with real detail keeps its title as
+        # context instead of losing it.
         prompt, repository = jira.prompt_from_issue(
             self._issue("A short title", jira.adf_document("The real prompt."))
         )
-        self.assertEqual(prompt, "The real prompt.")
+        self.assertEqual(prompt, "A short title\n\nThe real prompt.")
         self.assertIsNone(repository)
 
-    def test_an_empty_description_falls_back_to_the_summary(self):
-        # What stops Jira's forced summary from being double entry: a prompt you
-        # can state in a sentence is one field on a phone.
+    def test_a_summary_only_card_is_the_prompt(self):
+        # Jira forces a summary, so a card written on a phone can be a one-line
+        # title with no body at all.
         prompt, _ = jira.prompt_from_issue(self._issue("Tidy up the log formatting"))
         self.assertEqual(prompt, "Tidy up the log formatting")
 
-    def test_a_repo_line_is_lifted_off_the_top(self):
+    def test_a_description_that_opens_with_the_summary_is_not_repeated(self):
+        # The shape `import_prompts` creates: first line of the prompt becomes
+        # the summary, the whole prompt becomes the description. Prepending the
+        # title there would double the first line.
+        prompt, _ = jira.prompt_from_issue(
+            self._issue(
+                "Tidy up the log formatting",
+                jira.adf_document("Tidy up the log formatting\n\nand the timestamps too."),
+            )
+        )
+        self.assertEqual(prompt, "Tidy up the log formatting\n\nand the timestamps too.")
+
+    def test_a_repo_line_is_lifted_off_the_top_and_the_title_kept(self):
         prompt, repository = jira.prompt_from_issue(
             self._issue("t", jira.adf_document("REPO: ~/code/thing\n\nDo the thing."))
         )
         self.assertEqual(repository, Path("~/code/thing").expanduser())
+        self.assertEqual(prompt, "t\n\nDo the thing.")
+
+    def test_a_repo_line_in_the_summary_is_used_when_the_description_has_none(self):
+        # New precedence: a `REPO:` line in the summary is a third fallback,
+        # after the dropdown and a `REPO:` line in the description. Wherever it
+        # sat, it is lifted off and never appears in the prompt.
+        prompt, repository = jira.prompt_from_issue(
+            self._issue("REPO: ~/code/thing", jira.adf_document("Do the thing."))
+        )
         self.assertEqual(prompt, "Do the thing.")
+        self.assertEqual(repository, Path("~/code/thing").expanduser())
 
     def test_a_description_holding_only_a_repo_line_falls_back_to_the_summary(self):
         # The card that reported an empty queue: pointing a one-sentence card at
@@ -876,7 +901,7 @@ class PromptFromIssueRepositoryFieldTests(unittest.TestCase):
         prompt, repository = self._prompt_from(
             self._issue("t", jira.adf_document("Do the thing."), selected="usage-optimizer")
         )
-        self.assertEqual(prompt, "Do the thing.")
+        self.assertEqual(prompt, "t\n\nDo the thing.")
         self.assertEqual(repository, Path("~/code/current/claude-usage-optimizer").expanduser())
 
     def test_the_field_wins_over_a_repo_line(self):
@@ -923,7 +948,7 @@ class PromptFromIssueRepositoryFieldTests(unittest.TestCase):
             repository_field_id=self.FIELD_ID,
             repositories=[{"name": "drafty", "path": ""}],
         )
-        self.assertEqual(prompt, "Do it.")
+        self.assertEqual(prompt, "t\n\nDo it.")
         self.assertIsNone(repository)
 
     def test_no_configured_repositories_leaves_the_repo_line_in_charge(self):
@@ -1085,7 +1110,7 @@ class ReadingTheQueueTests(StubJiraTestCase):
         self.state.add_issue("Second", jira.adf_document("Do the second thing."))
         entry = self.source.next_todo()
         self.assertEqual(entry.handle, first)
-        self.assertEqual(entry.prompt, "Do the first thing.")
+        self.assertEqual(entry.prompt, "First\n\nDo the first thing.")
         self.assertEqual(entry.status, queue_source.STATUS_TODO)
 
     def test_cards_in_other_columns_are_not_picked_up(self):
@@ -1116,7 +1141,9 @@ class ReadingTheQueueTests(StubJiraTestCase):
     def test_remaining_prompts_exclude_the_ones_already_attempted(self):
         self.state.add_issue("First", jira.adf_document("One."))
         self.state.add_issue("Second", jira.adf_document("Two."))
-        self.assertEqual(self.source.remaining_todo_prompts(["One."]), ["Two."])
+        self.assertEqual(
+            self.source.remaining_todo_prompts(["First\n\nOne."]), ["Second\n\nTwo."]
+        )
 
 
 class PickingACardUpTests(StubJiraTestCase):
