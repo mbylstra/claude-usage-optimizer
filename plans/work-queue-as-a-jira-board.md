@@ -148,6 +148,13 @@ Jira forces a summary and this is what stops that from being double entry. A
 prompt you can state in a sentence is one field on a phone; a long one gets a
 title worth having on a card.
 
+> **As built**, the prompt is the summary _and_ the description together — the
+> title on its own line, a blank line, then the body — so a detailed card keeps
+> its title as context instead of losing it. Either field may be empty, and then
+> the prompt is just the other one; a description that already opens with its
+> summary (the shape `import_prompts` writes) is used on its own so the first
+> line is not doubled. See `backend/CLAUDE.md` → "The Jira half".
+
 **In Review holds both endings that need a human**, told apart by a label. The
 column means _your turn_, and both an unmerged branch and a failed prompt mean
 exactly that. It is also what keeps the user's five columns intact rather than
@@ -810,6 +817,7 @@ the board, not the migration's.
   statuses. §2.
 - **The prompt is the description, or the summary when the description is
   empty.** §3 — this is what stops a forced title from being double entry.
+  _As built:_ the summary and the description together, title first.
 - **In Review holds both unmerged work and failures**, told apart by a label. §3.
 - **Status names are discovered, not hard-coded.** §3.
 - **An API token, not OAuth**, because an annual expiry with a known date is a
