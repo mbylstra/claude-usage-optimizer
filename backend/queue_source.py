@@ -143,8 +143,14 @@ class QueueSource(Protocol):
         different answer from None and must never be treated as "empty".
         """
 
-    def start(self, entry: QueueEntry) -> None:
-        """Mark the entry as being worked on, where the source has such a state."""
+    def start(self, entry: QueueEntry, prompt_text: "str | None" = None) -> None:
+        """Mark the entry as being worked on, where the source has such a state.
+
+        `prompt_text` is the exact string about to be sent to the model —
+        `build_prompt`'s output, threaded through so a source that records the
+        pick-up (a board, in a comment) quotes what was really sent rather than
+        rebuilding it. The file source has no "running" state and ignores it.
+        """
 
     def record_outcome(self, entry: QueueEntry, status: str, report: object = None) -> str:
         """Write the finished status, returning the status the entry is left holding.
@@ -335,10 +341,11 @@ class FileQueueSource:
     def next_todo(self) -> "QueueEntry | None":
         return find_next_todo(self.entries())
 
-    def start(self, entry: QueueEntry) -> None:
+    def start(self, entry: QueueEntry, prompt_text: "str | None" = None) -> None:
         """Nothing. A file has no "running" column, and inventing one would mean
         rewriting the STATUS line twice per prompt — doubling the window in which
-        a crash leaves a status nobody wrote deliberately."""
+        a crash leaves a status nobody wrote deliberately. `prompt_text` has
+        nowhere to go here either: a STATUS line is one field."""
 
     def abandon(self, entry: QueueEntry) -> None:
         """Nothing, for the same reason `start` does nothing."""

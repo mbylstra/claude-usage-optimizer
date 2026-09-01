@@ -75,6 +75,10 @@ class FakeJiraState:
         self.requests = []  # type: list
         self.next_status_code = None  # Forced failure for the next call, once.
         self.fail_writes = False
+        # Fails only the comment POST, so a pick-up comment can be made to fail
+        # while the transition it follows still lands — `next_status_code` is
+        # one-shot and would be spent on whichever call comes first.
+        self.fail_comment_posts = False
         self._counter = 0
 
         # -- scheme / workflow / board machinery ---------------------------- #
@@ -502,6 +506,8 @@ class _Handler(BaseHTTPRequestHandler):
 
         if parsed.path.endswith("/comment"):
             key = parsed.path.split("/")[-2]
+            if state.fail_comment_posts:
+                return self._reply(500, {"errorMessages": ["forced"]})
             state.issues[key]["comments"].append(jira.flatten_adf(body.get("body")))
             return self._reply(201, {"id": "1"})
 
@@ -1130,6 +1136,68 @@ class PickingACardUpTests(StubJiraTestCase):
         self.state.next_status_code = 500
         self.source.start(entry)  # Must not raise: the prompt is worth running.
         self.assertTrue(any("In Progress" in line for line in self.logged))
+
+    def test_starting_posts_a_pickup_comment_with_the_exact_prompt(self):
+        key = self.state.add_issue("Do the thing", jira.adf_document("Do the thing."))
+        entry = self.source.next_todo()
+        self.source.start(entry, "Do the thing.\n\n. Create a new branch for the work.")
+        self.assertEqual(self.status_of(key), "In Progress")
+        comments = self.state.issues[key]["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("Autonomous run started", comments[0])
+        # The whole point of the card: the comment is the prompt that was sent,
+        # mandatory suffix and all — not a paraphrase of the card's summary.
+        self.assertIn("Create a new branch for the work.", comments[0])
+
+    def test_starting_without_a_prompt_posts_no_comment(self):
+        # An older caller that passes nothing gets the bare transition it always
+        # did — `start_comment` has nothing to quote.
+        key = self.state.add_issue("Legacy", jira.adf_document("x"))
+        self.source.start(self.source.next_todo())
+        self.assertEqual(self.status_of(key), "In Progress")
+        self.assertEqual(self.state.issues[key]["comments"], [])
+
+    def test_a_failed_pickup_comment_does_not_stop_the_prompt_running(self):
+        key = self.state.add_issue("Run me", jira.adf_document("Do it."))
+        entry = self.source.next_todo()
+        self.state.fail_comment_posts = True
+        self.source.start(entry, "Do it.\n\nfull prompt")  # Must not raise.
+        self.assertEqual(self.status_of(key), "In Progress")  # transition still landed
+        self.assertEqual(self.state.issues[key]["comments"], [])
+        self.assertTrue(any("comment on" in line and "at start" in line for line in self.logged))
+
+    def test_a_retried_card_carries_a_note_per_pickup_and_per_cancellation(self):
+        # No de-duplication: pick up, cancel, pick up again reads as three
+        # comments — started, cancelled, started — which is the history it is.
+        key = self.state.add_issue("Flaky", jira.adf_document("Do it."))
+        entry = self.source.next_todo()
+        self.source.start(entry, "Do it.\n\nfull prompt")
+        self.source.abandon(entry)
+        self.source.start(entry, "Do it.\n\nfull prompt")
+        comments = self.state.issues[key]["comments"]
+        self.assertEqual(len(comments), 3)
+        self.assertIn("cancelled", comments[1].lower())
+
+    def test_abandoning_answers_the_pickup_comment_so_it_is_not_left_alone(self):
+        # Without this, a cancelled run leaves a card in To Do with a "run
+        # started" comment and nothing saying it did not finish.
+        key = self.state.add_issue("Cancel me", jira.adf_document("Do it."))
+        entry = self.source.next_todo()
+        self.source.start(entry, "Do it.\n\nfull prompt")
+        self.source.abandon(entry)
+        self.assertEqual(self.status_of(key), "To Do")
+        comments = self.state.issues[key]["comments"]
+        self.assertEqual(len(comments), 2)
+        self.assertIn("cancelled", comments[1].lower())
+
+    def test_abandon_stays_silent_when_it_could_not_move_the_card_back(self):
+        key = self.state.add_issue("Cancel me", jira.adf_document("Do it."))
+        entry = self.source.next_todo()
+        self.source.start(entry, "Do it.\n\nfull prompt")
+        self.state.fail_writes = True
+        self.source.abandon(entry)  # transition fails; no misleading note added
+        self.state.fail_writes = False
+        self.assertEqual(len(self.state.issues[key]["comments"]), 1)
 
     def test_abandoning_puts_the_card_back_in_to_do(self):
         key = self.state.add_issue("Cancel me", jira.adf_document("Do it."))

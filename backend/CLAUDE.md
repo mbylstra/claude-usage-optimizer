@@ -611,6 +611,20 @@ a run is stale by definition** — launchd will not run two instances of one
 label, so no second run can be in flight — and the sweep is the backstop for a
 hard kill the cancellation handler could not survive.
 
+**`start` also posts a pick-up comment** carrying the exact prompt the run is
+about to send — `build_prompt`'s output, built once in `run-autonomous-work.py`
+and threaded through to both `QUEUE.start` and `run_claude` so the quoted prompt
+and the sent one cannot drift. Best-effort, like the transition it follows: a
+missing note is cosmetic, nothing downstream reads it, so it is logged and let
+go rather than retried or set aside the way an outcome write is. There is no
+de-duplication — a card retried three times carries a pick-up note per attempt,
+each answered by the note beneath it: the outcome comment for a run that
+finished, or the `CANCELLED_COMMENT` that `abandon` leaves for one killed
+mid-flight. The single unanswered case is a prompt a **usage limit** refused —
+it never reaches `abandon`, and `comment_for_outcome` stays quiet for it — so a
+lone pick-up note above a card back in To Do means exactly that. The file source
+takes the new `prompt_text` argument and ignores it: a STATUS line is one field.
+
 ### The Jira half
 
 Five columns: Draft, To Do, In Progress, In Review, Done, in a
@@ -740,10 +754,12 @@ fallback if it turns out lossy.
 `claude-unmerged` and `claude-error`: the column means *your turn*, and both an
 unmerged branch and a failed prompt are. Picking a card up clears both labels, so
 re-queueing stays a single gesture — drag it back to To Do and nothing else.
-One comment per attempt, carrying Claude's own closing message — which the
-mandatory prompt suffix asks to end with a `Run retrospective:` section — so a
-card re-queued three times reads as three attempts with three accounts, each
-also reviewing how that run went.
+One outcome comment per attempt, carrying Claude's own closing message — which
+the mandatory prompt suffix asks to end with a `Run retrospective:` section — so
+a card re-queued three times reads as three attempts with three accounts, each
+also reviewing how that run went. It sits below that attempt's pick-up comment
+(see the `start` note above), so each finished attempt is a prompt-and-account
+pair on the card.
 
 **A write that fails after a prompt has run is the expensive failure**, because
 an unrecorded outcome means the prompt runs again tomorrow. It is retried three

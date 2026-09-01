@@ -1424,14 +1424,20 @@ class PromptRunResult:
 
 def run_claude(
     entry: QueueEntry,
+    prompt_text: str,
     working_directory: Path,
     is_new_project: bool,
     events: RunEventStream,
     forced: bool,
     session: autonomous_work_summary.SessionSummary,
 ) -> PromptRunResult:
-    """Execute one queued prompt, and report how it went."""
-    prompt_text = build_prompt(entry.prompt)
+    """Execute one queued prompt, and report how it went.
+
+    `prompt_text` is `build_prompt`'s output, passed in rather than rebuilt here
+    so the exact string this function sends is the same one `QUEUE.start` quoted
+    back onto the card — the pick-up comment has to be the real prompt, not a
+    second construction of it.
+    """
     claude_arguments = claude_arguments_for(entry)
     events.started(
         working_directory, is_new_project, prompt_text, forced, claude_model_id_for(entry)
@@ -1941,13 +1947,24 @@ def main() -> int:
             break
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
+        # Built once here and threaded through to both the pick-up and the run:
+        # `QUEUE.start` quotes it back onto the card, `run_claude` sends it. A
+        # second `build_prompt` call for the comment would let the two drift.
+        prompt_text = build_prompt(next_entry.prompt)
         # Where the source has a "running" state, this is what puts the entry in
-        # it — the move into In Progress on a board, and nothing at all for a
-        # file, which has no such column and deliberately leaves the STATUS line
-        # alone until the outcome is known.
-        QUEUE.start(next_entry)
+        # it — the move into In Progress on a board, with the prompt recorded in
+        # a pick-up comment — and nothing at all for a file, which has no such
+        # column and deliberately leaves the STATUS line alone until the outcome
+        # is known.
+        QUEUE.start(next_entry, prompt_text)
         prompt_result = run_claude(
-            next_entry, working_directory, is_new_project, events, arguments.force, session
+            next_entry,
+            prompt_text,
+            working_directory,
+            is_new_project,
+            events,
+            arguments.force,
+            session,
         )
         # The status the queue is left holding, which is not always the one asked
         # for: a run that marked itself `unmerged:<branch>` keeps that.

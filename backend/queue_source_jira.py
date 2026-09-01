@@ -4,8 +4,9 @@ and `plans/company-managed-jira-project.md`.
 
 Five columns (Draft, To Do, In Progress, In Review, Done) in a company-managed
 Jira Software project. The run reads the To Do column `ORDER BY Rank ASC`, moves
-the card it is working on into In Progress, and writes Claude's own account of
-what it did back onto the card as a comment.
+the card it is working on into In Progress with a pick-up comment carrying the
+exact prompt it sent, and writes Claude's own account of what it did back onto
+the card as a second comment when it finishes.
 
 **Why the board, and not the file.** Reordering a queue is a direct-manipulation
 gesture, and Jira's data model is a ranked queue — dragging a card *is* the
@@ -800,6 +801,36 @@ def comment_for_outcome(status, report):
     header = "\n".join(lines)
     account = (report.result_text or "").strip()
     return header + "\n\n" + account if account else header
+
+
+# Posted by `abandon` when a run is cancelled mid-flight, so the pick-up comment
+# above it is not left standing alone on a card that is back in To Do. The only
+# silent return that remains is a prompt a usage limit refused: it never reaches
+# `abandon` (the status is written by `record_outcome`, which `comment_for_outcome`
+# keeps quiet for), so a lone pick-up note with the card back in To Do and no
+# comment beneath it means exactly that.
+CANCELLED_COMMENT = (
+    "🤖 Run cancelled before it finished. The card is back in To Do for another attempt."
+)
+
+
+def start_comment(prompt_text):
+    # type: (str | None) -> str | None
+    """The pick-up comment: a note that a run started, carrying the exact prompt.
+
+    One per pick-up — a card retried three times carries three, each paired with
+    the outcome note beneath it (or, for a cancelled attempt, the
+    `CANCELLED_COMMENT` that `abandon` leaves). No de-duplication against an
+    earlier identical note: "started three times" is the honest record, and
+    body-matching to suppress a repeat is more machinery than the noise is worth.
+
+    Returns None when there is no prompt to quote, so an older caller that does
+    not pass one simply gets the bare transition it always did.
+    """
+    quoted = (prompt_text or "").strip()
+    if not quoted:
+        return None
+    return "🤖 Autonomous run started.\n\nFull prompt sent to the model:\n\n" + quoted
 
 
 # --------------------------------------------------------------------------- #
@@ -1665,8 +1696,15 @@ class JiraQueueSource:
 
     # -- writing ------------------------------------------------------------ #
 
-    def start(self, entry: QueueEntry) -> None:
-        """Move the card into In Progress, so the board shows what is running."""
+    def start(self, entry: QueueEntry, prompt_text: "str | None" = None) -> None:
+        """Move the card into In Progress and note the pick-up in a comment.
+
+        The comment carries `prompt_text` — `build_prompt`'s output, threaded
+        through from the scheduler rather than rebuilt here so it is the real
+        prompt the model was sent. Both writes are best-effort: the prompt is
+        worth running even if the board did not move, and `sweep_stale` catches
+        a card left behind.
+        """
         issue_key = entry.handle
         if not isinstance(issue_key, str):
             return
@@ -1681,21 +1719,52 @@ class JiraQueueSource:
             # move; the sweep at the next run's start catches the mismatch.
             self._log("Could not move {} to In Progress: {}".format(issue_key, error))
 
+        note = start_comment(prompt_text)
+        if note:
+            try:
+                self.client.request(
+                    "POST",
+                    "/rest/api/3/issue/{}/comment".format(issue_key),
+                    body={"body": adf_document(note)},
+                )
+            except WRITE_FAILURES as error:
+                # A missing pick-up note is a cosmetic loss — nothing downstream
+                # reads it, unlike the outcome write — so it is logged and let
+                # go rather than retried or set aside.
+                self._log("Could not comment on {} at start: {}".format(issue_key, error))
+
     def abandon(self, entry: QueueEntry) -> None:
         """Put the card back in To Do — it was picked up, but never really ran.
 
         Called from the cancellation handler, which has a SIGTERM in hand and
         `os._exit` a line away, so this is best-effort by necessity: the sweep at
         the next run's start is what catches a card this could not move.
+
+        It also leaves a `CANCELLED_COMMENT`, so the pick-up comment `start` put
+        on the card is answered rather than left standing alone above a card that
+        is back in To Do.
         """
         issue_key = entry.handle
         if not isinstance(issue_key, str):
             return
+        moved_back = False
         try:
             self._transition(issue_key, COLUMN_TODO)
             self._log("Returned {} to To Do".format(issue_key))
+            moved_back = True
         except WRITE_FAILURES as error:
             self._log("Could not return {} to To Do: {}".format(issue_key, error))
+
+        if not moved_back:
+            return
+        try:
+            self.client.request(
+                "POST",
+                "/rest/api/3/issue/{}/comment".format(issue_key),
+                body={"body": adf_document(CANCELLED_COMMENT)},
+            )
+        except WRITE_FAILURES as error:
+            self._log("Could not note the cancellation on {}: {}".format(issue_key, error))
 
     def sweep_stale(self) -> None:
         """Return any card left in In Progress to To Do.
