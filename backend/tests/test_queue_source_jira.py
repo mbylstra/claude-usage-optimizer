@@ -1286,6 +1286,23 @@ class WritePlanTests(unittest.TestCase):
         self.assertIn("7 turns", plan.comment)
         self.assertIn("$0.42", plan.comment)
 
+    def test_how_long_the_run_took_leads_the_turns_and_cost_line(self):
+        plan = self._plan(
+            queue_source.STATUS_COMPLETED,
+            jira.OutcomeReport(turns=139, cost_usd=5.56, duration_seconds=23 * 60 + 40),
+        )
+        self.assertIn("24 minutes · 139 turns · $5.56", plan.comment)
+
+    def test_a_sub_minute_run_is_named_rather_than_shown_as_zero_minutes(self):
+        plan = self._plan(
+            queue_source.STATUS_COMPLETED,
+            jira.OutcomeReport(turns=2, duration_seconds=12),
+        )
+        self.assertIn("under a minute · 2 turns", plan.comment)
+
+    def test_a_one_minute_run_is_singular(self):
+        self.assertEqual(jira.describe_run_duration(72), "1 minute")
+
     def test_a_plan_survives_being_written_to_disk_and_read_back(self):
         plan = self._plan(queue_source.STATUS_ERROR)
         self.assertEqual(jira.OutcomeWrite.from_json(plan.to_json()), plan)
