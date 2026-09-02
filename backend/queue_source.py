@@ -143,13 +143,21 @@ class QueueSource(Protocol):
         different answer from None and must never be treated as "empty".
         """
 
-    def start(self, entry: QueueEntry, prompt_text: "str | None" = None) -> None:
+    def start(
+        self,
+        entry: QueueEntry,
+        prompt_text: "str | None" = None,
+        resume_instructions: "str | None" = None,
+    ) -> None:
         """Mark the entry as being worked on, where the source has such a state.
 
         `prompt_text` is the exact string about to be sent to the model —
         `build_prompt`'s output, threaded through so a source that records the
         pick-up (a board, in a comment) quotes what was really sent rather than
-        rebuilding it. The file source has no "running" state and ignores it.
+        rebuilding it. `resume_instructions` is a short prose block telling a
+        person how to take the run over by hand (`claude --resume <session-id>`
+        in the working directory), for that same comment. The file source has no
+        "running" state and ignores both.
         """
 
     def record_outcome(self, entry: QueueEntry, status: str, report: object = None) -> str:
@@ -341,11 +349,17 @@ class FileQueueSource:
     def next_todo(self) -> "QueueEntry | None":
         return find_next_todo(self.entries())
 
-    def start(self, entry: QueueEntry, prompt_text: "str | None" = None) -> None:
+    def start(
+        self,
+        entry: QueueEntry,
+        prompt_text: "str | None" = None,
+        resume_instructions: "str | None" = None,
+    ) -> None:
         """Nothing. A file has no "running" column, and inventing one would mean
         rewriting the STATUS line twice per prompt — doubling the window in which
-        a crash leaves a status nobody wrote deliberately. `prompt_text` has
-        nowhere to go here either: a STATUS line is one field."""
+        a crash leaves a status nobody wrote deliberately. `prompt_text` and
+        `resume_instructions` have nowhere to go here either: a STATUS line is
+        one field."""
 
     def abandon(self, entry: QueueEntry) -> None:
         """Nothing, for the same reason `start` does nothing."""

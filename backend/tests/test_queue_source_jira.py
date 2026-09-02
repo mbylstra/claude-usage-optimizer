@@ -31,6 +31,24 @@ import queue_source  # noqa: E402  (must follow the sys.path line above)
 import queue_source_jira as jira  # noqa: E402  (same)
 
 
+def _text_nodes_with_mark(node, mark_type):
+    # type: (object, str) -> list[str]
+    """Every text string in an ADF tree carrying a mark of `mark_type`."""
+    found = []  # type: list[str]
+    if isinstance(node, dict):
+        if node.get("type") == "text" and any(
+            isinstance(mark, dict) and mark.get("type") == mark_type
+            for mark in node.get("marks", [])
+        ):
+            found.append(node.get("text", ""))
+        for value in node.values():
+            found.extend(_text_nodes_with_mark(value, mark_type))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_text_nodes_with_mark(item, mark_type))
+    return found
+
+
 # --------------------------------------------------------------------------- #
 # The stub
 # --------------------------------------------------------------------------- #
@@ -954,6 +972,29 @@ class StartCommentDocumentTests(unittest.TestCase):
         self.assertIn("Autonomous run started", flattened)
         self.assertIn("assert 1 == 1", flattened)
 
+    def test_resume_instructions_land_in_the_preamble_before_the_code_block(self):
+        document = jira.start_comment_document(
+            "Do the thing.",
+            "Session: abc-123\nResume interactively with `cd ~/x && claude --resume abc-123`.",
+        )
+        flattened = jira.flatten_adf(document)
+        self.assertIn("Session: abc-123", flattened)
+        self.assertIn("claude --resume abc-123", flattened)
+        # Rendered as Markdown, so the command is an inline-code span rather than
+        # literal backticks in the prose.
+        coded = _text_nodes_with_mark(document, "code")
+        self.assertIn("cd ~/x && claude --resume abc-123", coded)
+        # And it is prose above the prompt, not part of the quoted code block.
+        types = [node["type"] for node in document["content"]]
+        self.assertEqual(types[-1], "codeBlock")
+        self.assertNotIn(
+            "abc-123", document["content"][-1]["content"][0]["text"]
+        )
+
+    def test_no_resume_instructions_keeps_the_original_preamble(self):
+        document = jira.start_comment_document("Do the thing.")
+        self.assertNotIn("Resume interactively", jira.flatten_adf(document))
+
 
 class PromptFromIssueTests(unittest.TestCase):
     def _issue(self, summary, description=None):
@@ -1330,6 +1371,18 @@ class PickingACardUpTests(StubJiraTestCase):
         # The whole point of the card: the comment is the prompt that was sent,
         # mandatory suffix and all — not a paraphrase of the card's summary.
         self.assertIn("Create a new branch for the work.", comments[0])
+
+    def test_starting_posts_the_resume_line_alongside_the_prompt(self):
+        key = self.state.add_issue("Do the thing", jira.adf_document("Do the thing."))
+        entry = self.source.next_todo()
+        self.source.start(
+            entry,
+            "Do the thing.\n\n. Create a new branch for the work.",
+            "Session: s-1\nResume interactively with `cd ~/x && claude --resume s-1`.",
+        )
+        comment = self.state.issues[key]["comments"][0]
+        self.assertIn("Create a new branch for the work.", comment)
+        self.assertIn("claude --resume s-1", comment)
 
     def test_starting_without_a_prompt_posts_no_comment(self):
         # An older caller that passes nothing gets the bare transition it always

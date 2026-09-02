@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -300,14 +301,29 @@ def claude_model_id_for(entry: "QueueEntry") -> str:
     return _MODEL_ID_MAP.get(entry_model_name, CLAUDE_MODEL)
 
 
-def claude_arguments_for(entry: "QueueEntry") -> list[str]:
-    """The `claude` flags for one prompt: its `--model`, then the shared base.
+def claude_arguments_for(entry: "QueueEntry", session_id: str) -> list[str]:
+    """The `claude` flags for one prompt: its `--model`, the pinned `--session-id`,
+    then the shared base.
 
     Split out so the model pin has a test that does not spawn anything — losing
     it off the front of `CLAUDE_BASE_ARGUMENTS` is exactly the regression the
     line-190 comment records having already shipped once.
+
+    `--session-id` is the one flag here whose *absence* fails the run rather than
+    degrading it: a `claude` too old to know it exits at once, and every prompt
+    in the session records as `error`. It is passed anyway because the whole
+    point is that the pick-up comment can print a `claude --resume <id>` line
+    before the run has even started — the id is minted in `main`, not left for
+    `claude` to generate. It only takes effect under `--print`, which
+    `CLAUDE_BASE_ARGUMENTS` always passes.
     """
-    return ["--model", claude_model_id_for(entry), *CLAUDE_BASE_ARGUMENTS]
+    return [
+        "--model",
+        claude_model_id_for(entry),
+        "--session-id",
+        session_id,
+        *CLAUDE_BASE_ARGUMENTS,
+    ]
 
 
 # Deliberately *not* `--bare`, which would authenticate with ANTHROPIC_API_KEY
@@ -1085,6 +1101,37 @@ def build_prompt(entry_prompt: str) -> str:
     return f"{prompt}{MANDATORY_PROMPT_SUFFIX}"
 
 
+def display_path(path: Path) -> str:
+    """An absolute path with `$HOME` collapsed to `~`, for prose a person reads.
+
+    Also the reason this is safe to put in a Jira comment where a raw path is
+    not wanted in the Repository *field*: `~/code/...` carries no username.
+    """
+    home = str(Path.home())
+    text = str(path)
+    if text == home:
+        return "~"
+    if text.startswith(home + os.sep):
+        return "~" + text[len(home) :]
+    return text
+
+
+def interactive_resume_instructions(working_directory: Path, session_id: str) -> str:
+    """The pick-up comment's line telling a person how to take the run over by hand.
+
+    Nothing to do with the scheduler's own `--resume` (the one-shot launch agent
+    that restarts the queue after a 5-hour reset): this is `claude --resume` for
+    a human at a terminal, resuming the exact session this prompt runs under —
+    which is knowable up front only because `main` mints the id and pins it with
+    `--session-id` rather than letting `claude` generate one.
+    """
+    return (
+        f"Session: {session_id}\n"
+        f"Resume interactively with `cd {display_path(working_directory)} "
+        f"&& claude --resume {session_id}`."
+    )
+
+
 def slugify_prompt(prompt: str, word_limit: int = 6) -> str:
     """A few words from the prompt, safe as a directory name.
 
@@ -1430,6 +1477,7 @@ def run_claude(
     events: RunEventStream,
     forced: bool,
     session: autonomous_work_summary.SessionSummary,
+    session_id: str,
 ) -> PromptRunResult:
     """Execute one queued prompt, and report how it went.
 
@@ -1437,8 +1485,12 @@ def run_claude(
     so the exact string this function sends is the same one `QUEUE.start` quoted
     back onto the card — the pick-up comment has to be the real prompt, not a
     second construction of it.
+
+    `session_id` is likewise minted in `main` and threaded through, so the id
+    `claude` runs under is the same one the pick-up comment told a person to
+    `claude --resume`.
     """
-    claude_arguments = claude_arguments_for(entry)
+    claude_arguments = claude_arguments_for(entry, session_id)
     events.started(
         working_directory, is_new_project, prompt_text, forced, claude_model_id_for(entry)
     )
@@ -1951,12 +2003,21 @@ def main() -> int:
         # `QUEUE.start` quotes it back onto the card, `run_claude` sends it. A
         # second `build_prompt` call for the comment would let the two drift.
         prompt_text = build_prompt(next_entry.prompt)
+        # Minted here rather than left for `claude` to generate, so the pick-up
+        # comment can name the exact session a person would `claude --resume` —
+        # `claude_arguments_for` pins it with `--session-id` and it echoes back
+        # unchanged in the init event.
+        claude_session_id = str(uuid.uuid4())
         # Where the source has a "running" state, this is what puts the entry in
-        # it — the move into In Progress on a board, with the prompt recorded in
-        # a pick-up comment — and nothing at all for a file, which has no such
-        # column and deliberately leaves the STATUS line alone until the outcome
-        # is known.
-        QUEUE.start(next_entry, prompt_text)
+        # it — the move into In Progress on a board, with the prompt and a
+        # by-hand resume line recorded in a pick-up comment — and nothing at all
+        # for a file, which has no such column and deliberately leaves the STATUS
+        # line alone until the outcome is known.
+        QUEUE.start(
+            next_entry,
+            prompt_text,
+            interactive_resume_instructions(working_directory, claude_session_id),
+        )
         prompt_result = run_claude(
             next_entry,
             prompt_text,
@@ -1965,6 +2026,7 @@ def main() -> int:
             events,
             arguments.force,
             session,
+            claude_session_id,
         )
         # The status the queue is left holding, which is not always the one asked
         # for: a run that marked itself `unmerged:<branch>` keeps that.

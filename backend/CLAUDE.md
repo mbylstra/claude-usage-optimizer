@@ -507,8 +507,10 @@ strictly better, and FDA on anything shared would hand arbitrary `uvx` packages
 the user's Mail, Messages and Safari data.
 
 The `claude -p` invocation is deliberately plain apart from `--permission-mode
-auto`. Notably it does **not** pass `--bare`, which would authenticate with
-`ANTHROPIC_API_KEY` and so spend the wrong budget entirely.
+auto`, `--model` (pinned per entry) and `--session-id` (a UUID minted per prompt
+so the Jira pick-up comment can print a `claude --resume` line — see "Two queues
+behind one interface"). Notably it does **not** pass `--bare`, which would
+authenticate with `ANTHROPIC_API_KEY` and so spend the wrong budget entirely.
 
 ## Work left on a branch
 
@@ -616,7 +618,18 @@ about to send — `build_prompt`'s output, built once in `run-autonomous-work.py
 and threaded through to both `QUEUE.start` and `run_claude` so the quoted prompt
 and the sent one cannot drift. The prompt sits in an ADF `codeBlock`, quoted
 character for character rather than rendered, so a fenced block inside it cannot
-break out; the one-line preamble above it is the only rendered part. Best-effort, like the transition it follows: a
+break out; the preamble above it is the only rendered part. That preamble also
+carries a **by-hand resume line** — `interactive_resume_instructions` builds
+`Session: <uuid>` plus ``cd <dir> && claude --resume <uuid>`` (home collapsed to
+`~`, so no username leaks into the comment), rendered as Markdown so the command
+shows as inline code. This works only because `main` **mints the session id
+itself** (`uuid.uuid4()`) and pins it with `claude --session-id` rather than
+letting `claude` generate one — so the id is knowable before the run starts.
+It is unrelated to the scheduler's own `--resume` (the 5-hour-reset launch
+agent); this one is for a person at a terminal. Unlike the rest of the comment,
+`--session-id` is not best-effort: a `claude` too old to know the flag exits at
+once and every prompt records as `error` — acceptable because it is verified on
+the same machine launchd runs on. Best-effort, like the transition it follows: a
 missing note is cosmetic, nothing downstream reads it, so it is logged and let
 go rather than retried or set aside the way an outcome write is. There is no
 de-duplication — a card retried three times carries a pick-up note per attempt,
@@ -625,7 +638,8 @@ finished, or the `CANCELLED_COMMENT` that `abandon` leaves for one killed
 mid-flight. The single unanswered case is a prompt a **usage limit** refused —
 it never reaches `abandon`, and `comment_for_outcome` stays quiet for it — so a
 lone pick-up note above a card back in To Do means exactly that. The file source
-takes the new `prompt_text` argument and ignores it: a STATUS line is one field.
+takes the `prompt_text` and `resume_instructions` arguments and ignores both: a
+STATUS line is one field.
 
 ### The Jira half
 

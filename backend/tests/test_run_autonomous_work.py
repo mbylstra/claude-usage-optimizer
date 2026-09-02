@@ -1286,10 +1286,35 @@ class ClaudeModelIdForTests(unittest.TestCase):
     def test_the_model_pin_is_the_first_two_claude_arguments(self):
         # Losing `--model` off the front of the invocation is the regression the
         # module's own line-190 comment records having shipped once.
-        arguments = work.claude_arguments_for(self._entry("sonnet"))
+        arguments = work.claude_arguments_for(self._entry("sonnet"), "session-uuid")
         self.assertEqual(arguments[:2], ["--model", "claude-sonnet-5"])
-        self.assertEqual(arguments[2:], work.CLAUDE_BASE_ARGUMENTS)
+        # `--session-id` rides just behind the model pin, ahead of the shared base.
+        self.assertEqual(arguments[2:4], ["--session-id", "session-uuid"])
+        self.assertEqual(arguments[4:], work.CLAUDE_BASE_ARGUMENTS)
         self.assertNotIn("--model", work.CLAUDE_BASE_ARGUMENTS)
+        self.assertNotIn("--session-id", work.CLAUDE_BASE_ARGUMENTS)
+
+
+class InteractiveResumeInstructionsTests(unittest.TestCase):
+    """The pick-up comment's "take this over by hand" line — see
+    `interactive_resume_instructions`."""
+
+    def test_it_names_the_session_and_a_cd_plus_resume_command(self):
+        text = work.interactive_resume_instructions(Path("/srv/repos/song-ratings"), "abc-123")
+        self.assertIn("Session: abc-123", text)
+        self.assertIn("cd /srv/repos/song-ratings && claude --resume abc-123", text)
+
+    def test_the_home_prefix_collapses_to_a_tilde(self):
+        # Matches the example the request gave, and keeps a username out of the
+        # comment for free.
+        home = Path.home()
+        text = work.interactive_resume_instructions(home / "code" / "current" / "x", "s")
+        self.assertIn("cd ~/code/current/x ", text)
+        self.assertNotIn(str(home), text)
+
+    def test_display_path_leaves_a_path_outside_home_alone(self):
+        self.assertEqual(work.display_path(Path("/tmp/build")), "/tmp/build")
+        self.assertEqual(work.display_path(Path.home()), "~")
 
 
 if __name__ == "__main__":

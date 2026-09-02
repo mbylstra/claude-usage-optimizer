@@ -1064,16 +1064,22 @@ CANCELLED_COMMENT = (
 )
 
 
-def start_comment_document(prompt_text):
-    # type: (str | None) -> dict | None
-    """The pick-up comment as an ADF document: a note that a run started, then
-    the exact prompt as a code block.
+def start_comment_document(prompt_text, resume_instructions=None):
+    # type: (str | None, str | None) -> dict | None
+    """The pick-up comment as an ADF document: a note that a run started, an
+    optional line on how to take it over by hand, then the exact prompt as a
+    code block.
 
     One per pick-up — a card retried three times carries three, each paired with
     the outcome note beneath it (or, for a cancelled attempt, the
     `CANCELLED_COMMENT` that `abandon` leaves). No de-duplication against an
     earlier identical note: "started three times" is the honest record, and
     body-matching to suppress a repeat is more machinery than the noise is worth.
+
+    `resume_instructions` is prose the scheduler built (`claude --resume
+    <session-id>` in the working directory) — rendered as Markdown so the
+    command shows as inline code. It is separate from this module's own notion
+    of resuming; nothing here reads it back.
 
     The prompt is quoted in a `codeBlock`, not run through `markdown_to_adf`:
     this comment's whole job is to show *what was sent to the model*, character
@@ -1086,7 +1092,11 @@ def start_comment_document(prompt_text):
     quoted = (prompt_text or "").strip()
     if not quoted:
         return None
-    document = markdown_to_adf("🤖 Autonomous run started.\n\nFull prompt sent to the model:")
+    preamble = "🤖 Autonomous run started."
+    if resume_instructions and resume_instructions.strip():
+        preamble += "\n\n" + resume_instructions.strip()
+    preamble += "\n\nFull prompt sent to the model:"
+    document = markdown_to_adf(preamble)
     document["content"].append(
         {"type": "codeBlock", "content": [{"type": "text", "text": quoted}]}
     )
@@ -1956,14 +1966,20 @@ class JiraQueueSource:
 
     # -- writing ------------------------------------------------------------ #
 
-    def start(self, entry: QueueEntry, prompt_text: "str | None" = None) -> None:
+    def start(
+        self,
+        entry: QueueEntry,
+        prompt_text: "str | None" = None,
+        resume_instructions: "str | None" = None,
+    ) -> None:
         """Move the card into In Progress and note the pick-up in a comment.
 
         The comment carries `prompt_text` — `build_prompt`'s output, threaded
         through from the scheduler rather than rebuilt here so it is the real
-        prompt the model was sent. Both writes are best-effort: the prompt is
-        worth running even if the board did not move, and `sweep_stale` catches
-        a card left behind.
+        prompt the model was sent — and `resume_instructions`, the scheduler's
+        `claude --resume <session-id>` line for a person taking the run over.
+        Both writes are best-effort: the prompt is worth running even if the
+        board did not move, and `sweep_stale` catches a card left behind.
         """
         issue_key = entry.handle
         if not isinstance(issue_key, str):
@@ -1979,7 +1995,7 @@ class JiraQueueSource:
             # move; the sweep at the next run's start catches the mismatch.
             self._log("Could not move {} to In Progress: {}".format(issue_key, error))
 
-        note_document = start_comment_document(prompt_text)
+        note_document = start_comment_document(prompt_text, resume_instructions)
         if note_document:
             try:
                 self.client.request(
