@@ -739,6 +739,16 @@ itself.
 session-level account; the card comments are the prompt-level one, and neither
 replaces the other.
 
+> **As built, comments are converted from Markdown to ADF.** `result_text` and
+> the pick-up note are Markdown, and posted as plain text a heading showed a
+> literal `##` and a fenced block lost its monospace. `markdown_to_adf` (a small
+> stdlib converter next to `flatten_adf` — headings, fenced code, one list
+> level, blockquotes, rules, inline code/bold/italic/links, nothing else)
+> handles the write side; anything it does not recognise stays a plain
+> paragraph. Descriptions keep using `adf_document`'s verbatim pass, because §4
+> reads them straight back into a prompt. The pick-up comment quotes the prompt
+> in a `codeBlock` so a fenced block inside it cannot break the rendering.
+
 ## 10. Settings
 
 Following the existing mirror path — popup → service worker → native host →
