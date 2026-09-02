@@ -958,6 +958,7 @@ class OutcomeReport:
     exit_code: "int | None" = None
     turns: "int | None" = None
     cost_usd: "float | None" = None
+    duration_seconds: "float | None" = None
     working_directory: "str | None" = None
     unmerged_branch: "str | None" = None
 
@@ -1010,6 +1011,20 @@ class OutcomeWrite:
         )
 
 
+def describe_run_duration(seconds):
+    # type: (float) -> str
+    """How long the prompt ran, in whole minutes, for the card comment.
+
+    Spelled out ("23 minutes") rather than abbreviated, since it sits in prose
+    on the card next to the turn count and cost. A run shorter than a minute is
+    named as such rather than shown as "0 minutes".
+    """
+    minutes = int(round(seconds / 60))
+    if minutes < 1:
+        return "under a minute"
+    return "{} minute{}".format(minutes, "" if minutes == 1 else "s")
+
+
 def comment_for_outcome(status, report):
     # type: (str, OutcomeReport) -> str | None
     """Claude's own account of the prompt, as the card's comment — or None.
@@ -1041,6 +1056,8 @@ def comment_for_outcome(status, report):
         lines.append("Exit code: {}".format(report.exit_code))
 
     detail_parts = []  # type: list[str]
+    if report.duration_seconds is not None:
+        detail_parts.append(describe_run_duration(report.duration_seconds))
     if report.turns is not None:
         detail_parts.append("{} turns".format(report.turns))
     if report.cost_usd is not None:

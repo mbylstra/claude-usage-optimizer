@@ -2038,6 +2038,9 @@ def main() -> int:
                 exit_code=prompt_result.exit_code,
                 turns=prompt_result.turns,
                 cost_usd=prompt_result.cost_usd,
+                duration_seconds=(
+                    prompt_result.finished_at - prompt_result.started_at
+                ).total_seconds(),
                 working_directory=str(working_directory),
                 unmerged_branch=prompt_result.unmerged_branch,
             ),
