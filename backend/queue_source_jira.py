@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import ssl
 import tempfile
 import time
@@ -577,8 +578,11 @@ def adf_document(text):
     # type: (str) -> dict
     """Plain text as an ADF document — one paragraph per blank-line-separated block.
 
-    The only place this module *writes* a document body: comments, and the
-    descriptions `import_prompts` creates once at migration.
+    Used for the descriptions `import_prompts` creates once at migration, and
+    nothing else now: `create_card` writes the prompt here verbatim, and the run
+    reads it back through `flatten_adf` to rebuild that prompt, so this write has
+    to stay a plain-text pass that cannot reshape a single character. Comments —
+    which are never read back — go through `markdown_to_adf` instead.
     """
     paragraphs = []  # type: list[dict]
     for block in (text or "").split("\n\n"):
@@ -595,6 +599,234 @@ def adf_document(text):
     if not paragraphs:
         paragraphs.append({"type": "paragraph", "content": []})
     return {"type": "doc", "version": 1, "content": paragraphs}
+
+
+# --------------------------------------------------------------------------- #
+# Markdown -> ADF, for the comments this module writes
+# --------------------------------------------------------------------------- #
+
+# A comment carries Claude's own Markdown prose — the pick-up note and the
+# closing account of a finished prompt. Posted through `adf_document`, which
+# takes every line literally, a heading shows a stray `##` and a fenced block
+# loses its monospace. `markdown_to_adf` turns the Markdown a run actually
+# writes into real ADF nodes, so a comment reads on the board the way it reads
+# in a terminal. Only comments use it: a description round-trips back into a
+# prompt and so must stay on `adf_document`'s verbatim pass.
+#
+# Deliberately not a general Markdown parser. It handles ATX headings, fenced
+# code blocks, one level of bullet or ordered list, blockquotes, thematic
+# breaks, and inline code / bold / italic / links. It does NOT handle nested
+# lists, tables, reference or image links, raw HTML, setext headings, or
+# underscore emphasis (`_x_` / `__x__` — left out on purpose, because `__init__`
+# and `some_path/lib_helpers.py` turn up far more often in this domain than
+# underscore italics would). Anything unrecognised falls through as a plain
+# paragraph, exactly as `adf_document` would have left it — the worst case is
+# unchanged, never worse.
+
+_MARKDOWN_HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
+_MARKDOWN_BULLET_ITEM = re.compile(r"^[-*+][ \t]+(.*)$")
+_MARKDOWN_ORDERED_ITEM = re.compile(r"^\d+[.)][ \t]+(.*)$")
+_MARKDOWN_FENCE = re.compile(r"^(`{3,}|~{3,})[ \t]*([^`]*?)[ \t]*$")
+_MARKDOWN_THEMATIC_BREAK = re.compile(r"^([-*_])[ \t]*(?:\1[ \t]*){2,}$")
+
+# Tried in order, and on a tie the earlier one wins — so `**` is read as bold
+# before `*` gets a chance to read it as italics. Each span's inside is taken as
+# plain text: one level of mark, no nesting.
+_INLINE_TOKENS = (
+    ("code", re.compile(r"`([^`]+)`")),
+    ("link", re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")),
+    ("strong", re.compile(r"\*\*(\S|\S.*?\S)\*\*")),
+    ("em", re.compile(r"\*(\S|\S[^*]*?\S)\*")),
+)
+
+
+def markdown_to_adf(text):
+    # type: (str) -> dict
+    """A Markdown string as an ADF document — see the note above for the scope."""
+    blocks = _markdown_blocks((text or "").split("\n"))
+    if not blocks:
+        blocks = [{"type": "paragraph", "content": []}]
+    return {"type": "doc", "version": 1, "content": blocks}
+
+
+def _markdown_blocks(lines, top_level=True):
+    # type: (list[str], bool) -> list[dict]
+    blocks = []  # type: list[dict]
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+
+        if not line:
+            index += 1
+            continue
+
+        fence = _MARKDOWN_FENCE.match(line)
+        if fence:
+            fence_char = fence.group(1)[0]
+            language = fence.group(2).strip()
+            code_lines = []  # type: list[str]
+            index += 1
+            while index < len(lines):
+                closing = lines[index].strip()
+                if closing and set(closing) == {fence_char} and len(closing) >= 3:
+                    index += 1
+                    break
+                code_lines.append(lines[index])
+                index += 1
+            code_block = {"type": "codeBlock", "content": []}  # type: dict
+            if language:
+                code_block["attrs"] = {"language": language}
+            if code_lines:
+                code_block["content"] = [{"type": "text", "text": "\n".join(code_lines)}]
+            blocks.append(code_block)
+            continue
+
+        heading = _MARKDOWN_HEADING.match(line)
+        if heading:
+            blocks.append(
+                {
+                    "type": "heading",
+                    "attrs": {"level": len(heading.group(1))},
+                    "content": _inline_nodes(heading.group(2)),
+                }
+            )
+            index += 1
+            continue
+
+        # `rule` is a top-level-only node in ADF, so a `> ---` inside a quote is
+        # dropped to a paragraph rather than an invalid nested rule.
+        if top_level and _MARKDOWN_THEMATIC_BREAK.match(line):
+            blocks.append({"type": "rule"})
+            index += 1
+            continue
+
+        if line.startswith(">"):
+            quoted_lines = []  # type: list[str]
+            while index < len(lines) and lines[index].strip().startswith(">"):
+                quoted_lines.append(re.sub(r"^[ \t]*>[ \t>]*", "", lines[index]))
+                index += 1
+            inner_blocks = _markdown_blocks(quoted_lines, top_level=False) or [
+                {"type": "paragraph", "content": []}
+            ]
+            blocks.append({"type": "blockquote", "content": inner_blocks})
+            continue
+
+        list_item = _MARKDOWN_BULLET_ITEM.match(line)
+        list_type = "bulletList"
+        if not list_item:
+            list_item = _MARKDOWN_ORDERED_ITEM.match(line)
+            list_type = "orderedList"
+        if list_item:
+            item_pattern = (
+                _MARKDOWN_BULLET_ITEM if list_type == "bulletList" else _MARKDOWN_ORDERED_ITEM
+            )
+            items = []  # type: list[dict]
+            while index < len(lines):
+                stripped = lines[index].strip()
+                current_item = item_pattern.match(stripped) if stripped else None
+                if not current_item:
+                    break
+                items.append(
+                    {
+                        "type": "listItem",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": _inline_nodes(current_item.group(1)),
+                            }
+                        ],
+                    }
+                )
+                index += 1
+            blocks.append({"type": list_type, "content": items})
+            continue
+
+        # The current line matched no block rule, so it opens a paragraph — take
+        # it unconditionally (which also guarantees the loop makes progress),
+        # then keep taking lines until a blank or the start of the next block.
+        paragraph_lines = [line]  # type: list[str]
+        index += 1
+        while index < len(lines):
+            candidate = lines[index].strip()
+            if not candidate or _starts_a_new_block(candidate):
+                break
+            paragraph_lines.append(candidate)
+            index += 1
+        paragraph_content = []  # type: list[dict]
+        for line_number, paragraph_line in enumerate(paragraph_lines):
+            if line_number:
+                paragraph_content.append({"type": "hardBreak"})
+            paragraph_content.extend(_inline_nodes(paragraph_line))
+        blocks.append({"type": "paragraph", "content": paragraph_content})
+
+    return blocks
+
+
+def _starts_a_new_block(line):
+    # type: (str) -> bool
+    """Whether a line inside a running paragraph is really the next block."""
+    return bool(
+        _MARKDOWN_FENCE.match(line)
+        or _MARKDOWN_HEADING.match(line)
+        or _MARKDOWN_THEMATIC_BREAK.match(line)
+        or _MARKDOWN_BULLET_ITEM.match(line)
+        or _MARKDOWN_ORDERED_ITEM.match(line)
+        or line.startswith(">")
+    )
+
+
+def _inline_nodes(text):
+    # type: (str) -> list[dict]
+    """Inline Markdown as a list of ADF text nodes.
+
+    One level of mark only: whatever is inside a link, bold or italic span is
+    taken as plain text, not parsed again.
+    """
+    nodes = []  # type: list[dict]
+    remaining = text
+    while remaining:
+        kind, match = _first_inline_token(remaining)
+        if match is None:
+            _append_text_node(nodes, remaining)
+            break
+        if match.start():
+            _append_text_node(nodes, remaining[: match.start()])
+        if kind == "code":
+            _append_text_node(nodes, match.group(1), [{"type": "code"}])
+        elif kind == "link":
+            _append_text_node(
+                nodes,
+                match.group(1),
+                [{"type": "link", "attrs": {"href": match.group(2)}}],
+            )
+        elif kind == "strong":
+            _append_text_node(nodes, match.group(1), [{"type": "strong"}])
+        elif kind == "em":
+            _append_text_node(nodes, match.group(1), [{"type": "em"}])
+        remaining = remaining[match.end() :]
+    return nodes
+
+
+def _first_inline_token(text):
+    # type: (str) -> tuple[str | None, object]
+    best_kind = None
+    best_match = None
+    for kind, pattern in _INLINE_TOKENS:
+        found = pattern.search(text)
+        if found is not None and (best_match is None or found.start() < best_match.start()):
+            best_kind = kind
+            best_match = found
+    return best_kind, best_match
+
+
+def _append_text_node(nodes, text, marks=None):
+    # type: (list[dict], str, list[dict] | None) -> None
+    if not text:
+        return
+    node = {"type": "text", "text": text}  # type: dict
+    if marks:
+        node["marks"] = marks
+    nodes.append(node)
 
 
 # --------------------------------------------------------------------------- #
@@ -832,9 +1064,10 @@ CANCELLED_COMMENT = (
 )
 
 
-def start_comment(prompt_text):
-    # type: (str | None) -> str | None
-    """The pick-up comment: a note that a run started, carrying the exact prompt.
+def start_comment_document(prompt_text):
+    # type: (str | None) -> dict | None
+    """The pick-up comment as an ADF document: a note that a run started, then
+    the exact prompt as a code block.
 
     One per pick-up — a card retried three times carries three, each paired with
     the outcome note beneath it (or, for a cancelled attempt, the
@@ -842,13 +1075,22 @@ def start_comment(prompt_text):
     earlier identical note: "started three times" is the honest record, and
     body-matching to suppress a repeat is more machinery than the noise is worth.
 
+    The prompt is quoted in a `codeBlock`, not run through `markdown_to_adf`:
+    this comment's whole job is to show *what was sent to the model*, character
+    for character, and a fenced block inside the prompt would break out of a
+    Markdown rendering. A code block keeps it verbatim and monospaced.
+
     Returns None when there is no prompt to quote, so an older caller that does
     not pass one simply gets the bare transition it always did.
     """
     quoted = (prompt_text or "").strip()
     if not quoted:
         return None
-    return "🤖 Autonomous run started.\n\nFull prompt sent to the model:\n\n" + quoted
+    document = markdown_to_adf("🤖 Autonomous run started.\n\nFull prompt sent to the model:")
+    document["content"].append(
+        {"type": "codeBlock", "content": [{"type": "text", "text": quoted}]}
+    )
+    return document
 
 
 # --------------------------------------------------------------------------- #
@@ -1737,13 +1979,13 @@ class JiraQueueSource:
             # move; the sweep at the next run's start catches the mismatch.
             self._log("Could not move {} to In Progress: {}".format(issue_key, error))
 
-        note = start_comment(prompt_text)
-        if note:
+        note_document = start_comment_document(prompt_text)
+        if note_document:
             try:
                 self.client.request(
                     "POST",
                     "/rest/api/3/issue/{}/comment".format(issue_key),
-                    body={"body": adf_document(note)},
+                    body={"body": note_document},
                 )
             except WRITE_FAILURES as error:
                 # A missing pick-up note is a cosmetic loss — nothing downstream
@@ -1779,7 +2021,7 @@ class JiraQueueSource:
             self.client.request(
                 "POST",
                 "/rest/api/3/issue/{}/comment".format(issue_key),
-                body={"body": adf_document(CANCELLED_COMMENT)},
+                body={"body": markdown_to_adf(CANCELLED_COMMENT)},
             )
         except WRITE_FAILURES as error:
             self._log("Could not note the cancellation on {}: {}".format(issue_key, error))
@@ -1858,7 +2100,7 @@ class JiraQueueSource:
             self.client.request(
                 "POST",
                 "/rest/api/3/issue/{}/comment".format(plan.issue_key),
-                body={"body": adf_document(plan.comment)},
+                body={"body": markdown_to_adf(plan.comment)},
             )
 
     def apply_write_with_retries(self, plan: OutcomeWrite) -> bool:
@@ -2853,7 +3095,7 @@ def import_prompts(client, project_key, statuses, entries, log=_ignore):
                     "POST",
                     "/rest/api/3/issue/{}/comment".format(issue_key),
                     body={
-                        "body": adf_document(
+                        "body": markdown_to_adf(
                             "Imported from prompts.txt — the work is on branch `{}`.".format(branch)
                         )
                     },

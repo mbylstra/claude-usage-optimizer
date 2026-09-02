@@ -614,7 +614,9 @@ hard kill the cancellation handler could not survive.
 **`start` also posts a pick-up comment** carrying the exact prompt the run is
 about to send — `build_prompt`'s output, built once in `run-autonomous-work.py`
 and threaded through to both `QUEUE.start` and `run_claude` so the quoted prompt
-and the sent one cannot drift. Best-effort, like the transition it follows: a
+and the sent one cannot drift. The prompt sits in an ADF `codeBlock`, quoted
+character for character rather than rendered, so a fenced block inside it cannot
+break out; the one-line preamble above it is the only rendered part. Best-effort, like the transition it follows: a
 missing note is cosmetic, nothing downstream reads it, so it is logged and let
 go rather than retried or set aside the way an outcome write is. There is no
 de-duplication — a card retried three times carries a pick-up note per attempt,
@@ -758,6 +760,16 @@ cannot corrupt anything; the worst case is a prompt that reads slightly
 differently, never a card rewritten. `just probe-jira-adf` measures it against a
 real prompt on a real site, and `/rest/api/2/` (wiki markup) is the documented
 fallback if it turns out lossy.
+
+**Writing ADF splits by field.** A description is written by `adf_document` as a
+verbatim plain-text pass — `create_card` puts the prompt there and the run reads
+it straight back, so that write must not reshape a character. A comment is
+different: it is Claude's own Markdown prose and is never read back, so it goes
+through `markdown_to_adf`, a small stdlib converter (headings, fenced code, one
+level of list, blockquotes, rules, inline code/bold/italic/links — and
+deliberately nothing else) so it renders on the board instead of showing literal
+`##` and backticks. Anything it does not recognise falls through as a plain
+paragraph, matching the old behaviour.
 
 **In Review holds both endings that need a human**, told apart by the labels
 `claude-unmerged` and `claude-error`: the column means *your turn*, and both an

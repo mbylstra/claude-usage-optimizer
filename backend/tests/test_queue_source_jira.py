@@ -800,6 +800,161 @@ class FlattenAdfTests(unittest.TestCase):
         self.assertEqual(jira.flatten_adf(jira.adf_document(original)), original)
 
 
+class MarkdownToAdfTests(unittest.TestCase):
+    """The comment path: Claude's Markdown prose turned into real ADF nodes.
+
+    Measured against what a run actually writes — a heading, a fenced block, a
+    bullet list, inline code and bold, and identifiers with underscores that must
+    not be mistaken for emphasis."""
+
+    def _blocks(self, text):
+        document = jira.markdown_to_adf(text)
+        self.assertEqual(document["type"], "doc")
+        self.assertEqual(document["version"], 1)
+        return document["content"]
+
+    def _only_block(self, text):
+        blocks = self._blocks(text)
+        self.assertEqual(len(blocks), 1, blocks)
+        return blocks[0]
+
+    def test_plain_prose_matches_the_plain_text_writer(self):
+        original = "First line.\n\nSecond block\nwith a break."
+        self.assertEqual(jira.flatten_adf(jira.markdown_to_adf(original)), original)
+
+    def test_an_empty_string_is_one_empty_paragraph(self):
+        self.assertEqual(
+            jira.markdown_to_adf(""),
+            {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": []}]},
+        )
+
+    def test_a_single_newline_becomes_a_hard_break(self):
+        block = self._only_block("one\ntwo")
+        self.assertEqual(block["type"], "paragraph")
+        self.assertEqual([node["type"] for node in block["content"]], ["text", "hardBreak", "text"])
+
+    def test_an_atx_heading_becomes_a_heading_node(self):
+        block = self._only_block("## What it did")
+        self.assertEqual(block["type"], "heading")
+        self.assertEqual(block["attrs"], {"level": 2})
+        self.assertEqual(block["content"], [{"type": "text", "text": "What it did"}])
+
+    def test_a_fenced_block_keeps_its_language_and_content_verbatim(self):
+        block = self._only_block("```python\ndef f():\n    return  1\n```")
+        self.assertEqual(block["type"], "codeBlock")
+        self.assertEqual(block["attrs"], {"language": "python"})
+        self.assertEqual(block["content"], [{"type": "text", "text": "def f():\n    return  1"}])
+
+    def test_a_fence_with_no_language_has_no_attrs(self):
+        block = self._only_block("```\nplain\n```")
+        self.assertEqual(block["type"], "codeBlock")
+        self.assertNotIn("attrs", block)
+
+    def test_a_bullet_list_becomes_a_bullet_list(self):
+        block = self._only_block("- first\n- second")
+        self.assertEqual(block["type"], "bulletList")
+        self.assertEqual(len(block["content"]), 2)
+        first_item = block["content"][0]
+        self.assertEqual(first_item["type"], "listItem")
+        self.assertEqual(first_item["content"][0]["type"], "paragraph")
+        self.assertEqual(first_item["content"][0]["content"], [{"type": "text", "text": "first"}])
+
+    def test_an_ordered_list_becomes_an_ordered_list(self):
+        block = self._only_block("1. first\n2. second")
+        self.assertEqual(block["type"], "orderedList")
+        self.assertEqual(len(block["content"]), 2)
+
+    def test_a_blockquote_wraps_a_paragraph(self):
+        block = self._only_block("> quoted line")
+        self.assertEqual(block["type"], "blockquote")
+        self.assertEqual(block["content"][0]["type"], "paragraph")
+        self.assertEqual(
+            block["content"][0]["content"], [{"type": "text", "text": "quoted line"}]
+        )
+
+    def test_a_thematic_break_becomes_a_rule(self):
+        blocks = self._blocks("before\n\n---\n\nafter")
+        self.assertEqual([block["type"] for block in blocks], ["paragraph", "rule", "paragraph"])
+
+    def test_inline_code_gets_a_code_mark(self):
+        block = self._only_block("run `just check` first")
+        self.assertEqual(
+            block["content"],
+            [
+                {"type": "text", "text": "run "},
+                {"type": "text", "text": "just check", "marks": [{"type": "code"}]},
+                {"type": "text", "text": " first"},
+            ],
+        )
+
+    def test_bold_gets_a_strong_mark_and_wins_over_italic(self):
+        block = self._only_block("this is **very** important")
+        self.assertEqual(
+            block["content"][1],
+            {"type": "text", "text": "very", "marks": [{"type": "strong"}]},
+        )
+
+    def test_italic_gets_an_em_mark(self):
+        block = self._only_block("do *not* touch it")
+        self.assertEqual(
+            block["content"][1],
+            {"type": "text", "text": "not", "marks": [{"type": "em"}]},
+        )
+
+    def test_a_link_becomes_a_link_mark_with_its_href(self):
+        block = self._only_block("see [the plan](https://example.com/x)")
+        self.assertEqual(
+            block["content"][1],
+            {
+                "type": "text",
+                "text": "the plan",
+                "marks": [{"type": "link", "attrs": {"href": "https://example.com/x"}}],
+            },
+        )
+
+    def test_underscores_in_identifiers_are_not_emphasis(self):
+        # The reason underscore emphasis is left out entirely.
+        block = self._only_block("do not touch __init__ or some_path/lib_helpers.py")
+        self.assertEqual(
+            block["content"],
+            [{"type": "text", "text": "do not touch __init__ or some_path/lib_helpers.py"}],
+        )
+
+    def test_a_spaced_asterisk_is_not_italic(self):
+        block = self._only_block("2 * 3 * 4 = 24")
+        self.assertEqual(block["content"], [{"type": "text", "text": "2 * 3 * 4 = 24"}])
+
+    def test_an_unrecognised_line_falls_through_as_a_paragraph(self):
+        block = self._only_block("| a | b |")
+        self.assertEqual(block["type"], "paragraph")
+        self.assertEqual(block["content"], [{"type": "text", "text": "| a | b |"}])
+
+    def test_a_thematic_break_inside_a_blockquote_does_not_become_a_nested_rule(self):
+        # `rule` is top-level-only in ADF; a `> ---` must not produce one, and
+        # must not spin the block loop.
+        block = self._only_block("> before\n> ---\n> after")
+        self.assertEqual(block["type"], "blockquote")
+        self.assertNotIn("rule", [inner["type"] for inner in block["content"]])
+        self.assertIn("---", jira.flatten_adf(jira.markdown_to_adf("> before\n> ---\n> after")))
+
+
+class StartCommentDocumentTests(unittest.TestCase):
+    def test_no_prompt_means_no_comment(self):
+        self.assertIsNone(jira.start_comment_document(None))
+        self.assertIsNone(jira.start_comment_document("   "))
+
+    def test_the_prompt_is_kept_verbatim_in_a_trailing_code_block(self):
+        prompt = "Fix the parser.\n\n```python\nassert 1 == 1\n```\n\nThen stop."
+        document = jira.start_comment_document(prompt)
+        code_blocks = [node for node in document["content"] if node["type"] == "codeBlock"]
+        self.assertEqual(len(code_blocks), 1)
+        self.assertEqual(code_blocks[0]["content"], [{"type": "text", "text": prompt}])
+        # The preamble is still there, as prose.
+        flattened = jira.flatten_adf(document)
+        self.assertIn("Autonomous run started", flattened)
+        self.assertIn("assert 1 == 1", flattened)
+
+
 class PromptFromIssueTests(unittest.TestCase):
     def _issue(self, summary, description=None):
         return {"key": "FCP-1", "fields": {"summary": summary, "description": description}}
@@ -1178,7 +1333,7 @@ class PickingACardUpTests(StubJiraTestCase):
 
     def test_starting_without_a_prompt_posts_no_comment(self):
         # An older caller that passes nothing gets the bare transition it always
-        # did — `start_comment` has nothing to quote.
+        # did — `start_comment_document` has nothing to quote.
         key = self.state.add_issue("Legacy", jira.adf_document("x"))
         self.source.start(self.source.next_todo())
         self.assertEqual(self.status_of(key), "In Progress")
