@@ -11,6 +11,11 @@ hold more than one session — the nightly job at 2 AM and any number of manual
 session *started* on, so a run that crosses midnight stays in the file where you
 would look for it.
 
+The one exception is a night that runs into the 5-hour session window: it stops
+and schedules a resume a few hours later, and its two sessions each get their
+own file — `YYYY-MM-DD-run-1.md` and `YYYY-MM-DD-run-2.md` — so each attempt at
+the night's work stands alone. `run_file_label` decides which name applies.
+
 Rendering is kept pure and the file I/O is a single function at the bottom, so
 the wording can be unit-tested without a filesystem. Imported by
 `run-autonomous-work.py`, hence the underscores in the filename — a hyphen would
@@ -113,6 +118,12 @@ class SessionSummary:
 
     started_at: datetime
     forced: bool
+    """True when this session is the post-5-hour-reset resume of an earlier one.
+
+    Set from `run-autonomous-work.py --resume`. Splits the night's summary into
+    a `-run-1` and a `-run-2` file — see `run_file_label`.
+    """
+    is_resume_run: bool = False
     attempts: list[PromptAttempt] = field(default_factory=list)
     """Prompts still marked `todo` when the session stopped — queued, never reached."""
     not_attempted: list[str] = field(default_factory=list)
@@ -294,9 +305,38 @@ def render_day_heading(day: datetime) -> str:
     return f"# Autonomous work — {day:%A %-d %B %Y}\n"
 
 
-def summary_file_path(summaries_directory: Path, day: datetime) -> Path:
-    """One file per calendar day, named so the directory sorts chronologically."""
-    return summaries_directory / f"{day:%Y-%m-%d}.md"
+def run_file_label(summary: SessionSummary) -> str | None:
+    """The `run-1` / `run-2` tag a resumed night's two summary files carry.
+
+    Most nights write a single `YYYY-MM-DD.md` and this returns None. A night
+    that runs into the 5-hour session window stops and schedules a resume a few
+    hours later (see `autonomous_work_resume.py`), so its work is split across
+    two sessions — and, so each stands on its own, two files: a `-run-1.md`
+    written when the first session ends and a `-run-2.md` when the resume does.
+
+    `run-1` is decided by the first session having *scheduled* a resume, not by
+    the resume having run. If the resume later does nothing (back on pace, the
+    setting switched off), the night keeps its lone `-run-1.md` — the honest
+    record of a two-session night that was cut back to one.
+    """
+    if summary.is_resume_run:
+        return "run-2"
+    if summary.resume_scheduled_for is not None:
+        return "run-1"
+    return None
+
+
+def summary_file_path(
+    summaries_directory: Path, day: datetime, run_label: str | None = None
+) -> Path:
+    """One file per calendar day, named so the directory sorts chronologically.
+
+    `run_label` is `run_file_label`'s output: None for the ordinary single-file
+    day, `"run-1"` / `"run-2"` to split a night that resumed after the 5-hour
+    reset. The leading date still orders the directory either way.
+    """
+    stem = f"{day:%Y-%m-%d}" if run_label is None else f"{day:%Y-%m-%d}-{run_label}"
+    return summaries_directory / f"{stem}.md"
 
 
 # --------------------------------------------------------------------------- #
@@ -314,7 +354,9 @@ def write_session_summary(
     a record of work that has already happened, so failing to write one must
     never be able to fail the run.
     """
-    destination = summary_file_path(summaries_directory, summary.started_at)
+    destination = summary_file_path(
+        summaries_directory, summary.started_at, run_file_label(summary)
+    )
     is_new_file = not destination.exists()
 
     section = render_session_summary(summary)

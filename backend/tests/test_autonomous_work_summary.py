@@ -261,6 +261,25 @@ class RenderSessionSummaryTests(unittest.TestCase):
         self.assertIn("…", rendered)
 
 
+class RunFileLabelTests(unittest.TestCase):
+    def test_an_ordinary_session_has_no_label(self):
+        self.assertIsNone(summary_module.run_file_label(build_session()))
+
+    def test_a_first_session_that_scheduled_a_resume_is_run_1(self):
+        session = build_session()
+        session.resume_scheduled_for = datetime(2026, 8, 15, 6, 17)
+        self.assertEqual(summary_module.run_file_label(session), "run-1")
+
+    def test_a_resume_session_is_run_2(self):
+        session = build_session(is_resume_run=True)
+        self.assertEqual(summary_module.run_file_label(session), "run-2")
+
+    def test_a_resume_session_stays_run_2_even_if_it_somehow_scheduled_one(self):
+        session = build_session(is_resume_run=True)
+        session.resume_scheduled_for = datetime(2026, 8, 15, 9, 0)
+        self.assertEqual(summary_module.run_file_label(session), "run-2")
+
+
 class WriteSessionSummaryTests(unittest.TestCase):
     def test_creates_the_folder_and_a_dated_file(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -274,6 +293,45 @@ class WriteSessionSummaryTests(unittest.TestCase):
             self.assertEqual(written_path, summaries / "2026-08-15.md")
             self.assertTrue(written_path.exists())
             self.assertIn("# Autonomous work —", written_path.read_text(encoding="utf-8"))
+
+    def test_a_first_session_that_scheduled_a_resume_writes_a_run_1_file(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            summaries = Path(temporary_directory) / "summaries"
+            session = build_session()
+            session.record_attempt(build_attempt())
+            session.stop(summary_module.OUTCOME_SESSION_LIMIT)
+            session.resume_scheduled_for = datetime(2026, 8, 15, 6, 17)
+
+            written_path = summary_module.write_session_summary(summaries, session)
+
+            self.assertEqual(written_path, summaries / "2026-08-15-run-1.md")
+
+    def test_a_resume_session_writes_a_separate_run_2_file(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            summaries = Path(temporary_directory) / "summaries"
+
+            first = build_session()
+            first.record_attempt(build_attempt(prompt="First prompt"))
+            first.stop(summary_module.OUTCOME_SESSION_LIMIT)
+            first.resume_scheduled_for = datetime(2026, 8, 15, 6, 17)
+            summary_module.write_session_summary(summaries, first)
+
+            resumed = build_session(
+                started_at=datetime(2026, 8, 15, 6, 20), is_resume_run=True
+            )
+            resumed.record_attempt(build_attempt(prompt="Second prompt"))
+            resumed.stop("emptyQueue")
+            resumed_path = summary_module.write_session_summary(summaries, resumed)
+
+            self.assertEqual(resumed_path, summaries / "2026-08-15-run-2.md")
+            self.assertEqual(
+                sorted(path.name for path in summaries.iterdir()),
+                ["2026-08-15-run-1.md", "2026-08-15-run-2.md"],
+            )
+            run_2_contents = resumed_path.read_text(encoding="utf-8")
+            self.assertIn("# Autonomous work —", run_2_contents)
+            self.assertIn("Second prompt", run_2_contents)
+            self.assertNotIn("First prompt", run_2_contents)
 
     def test_second_session_the_same_day_appends_to_the_same_file(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

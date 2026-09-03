@@ -143,10 +143,17 @@ summary file, rendered by `autonomous_work_summary.py` (underscores, because
 
 Four things about it are deliberate:
 
-- **One file per day, appended to, not one per session.** A day holds the 2 AM
-  run and any number of manual button presses ("Do next todo" / "Trigger a full
-  run"), and they belong together. The date is the day the session _started_, so
-  a run that crosses midnight stays in the file you would look in.
+- **One file per day, appended to, not one per session** — bar one exception. A
+  day holds the 2 AM run and any number of manual button presses ("Do next todo"
+  / "Trigger a full run"), and they belong together. The date is the day the
+  session _started_, so a run that crosses midnight stays in the file you would
+  look in. The exception is a night that hits the 5-hour window and schedules a
+  resume: it writes `YYYY-MM-DD-run-1.md` when the first session ends and
+  `YYYY-MM-DD-run-2.md` when the resume does, so each attempt at the night's
+  work stands alone. `autonomous_work_summary.run_file_label` picks the name —
+  `run-1` off the first session having _scheduled_ a resume, not off it having
+  run, so a resume that then does nothing leaves a lone `-run-1.md`. `just
+  autonomous-summary <day>` prints both.
 - **A session that ran nothing writes nothing.** The pace gate's decision is
   already in the log, and a file every night saying "on pace, nothing to do"
   would bury the ones describing real work.

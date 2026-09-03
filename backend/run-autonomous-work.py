@@ -1843,6 +1843,10 @@ def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
     the only two ways a session ends. A session that ran nothing writes no file:
     the gate's decision is already in the log, and a summary every night saying
     "nothing to do" would bury the ones that describe actual work.
+
+    The file is normally the day's `YYYY-MM-DD.md`. A night that scheduled a
+    5-hour-reset resume is the exception: its first session writes `-run-1.md`
+    and the resume writes `-run-2.md` — see `autonomous_work_summary.run_file_label`.
     """
     session.finished_at = datetime.now()
     session.not_attempted = remaining_todo_prompts(
@@ -1945,7 +1949,7 @@ def main() -> int:
     # Accumulated across every prompt in the session, and written out once at the
     # end as the day's summary — see `finish_session`.
     session = autonomous_work_summary.SessionSummary(
-        started_at=datetime.now(), forced=arguments.force
+        started_at=datetime.now(), forced=arguments.force, is_resume_run=arguments.resume
     )
 
     while True:

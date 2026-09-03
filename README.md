@@ -561,8 +561,11 @@ failed, which were left untouched, and why the session stopped — out of `todo`
 entries, back on pace, or the 5-hour window exhausted. Every prompt gets
 Claude's own closing message; a prompt that timed out or was cancelled never
 produces one, so its last message before it stopped is shown instead. A day
-holds one file however many times work ran, and a night that ran nothing writes
-nothing at all — the log already says why it declined. The folder is gitignored,
+holds one file however many times work ran — except a night that stopped on the
+5-hour window and resumed a few hours later, which splits into
+`YYYY-MM-DD-run-1.md` and `YYYY-MM-DD-run-2.md` (both printed by `just
+autonomous-summary <day>`). A night that ran nothing writes nothing at all —
+the log already says why it declined. The folder is gitignored,
 like `prompts.txt`, since it describes your own task list.
 
 ### One deliberate rough edge
