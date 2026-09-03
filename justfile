@@ -263,20 +263,26 @@ autonomous-summary day="":
     set -euo pipefail
     summaries_directory="{{ justfile_directory() }}/summaries"
     if [ -n "{{ day }}" ]; then
-      summary_file="$summaries_directory/{{ day }}.md"
+      # Most days are one file; a night that resumed after the 5-hour reset
+      # wrote `<day>-run-1.md` and `<day>-run-2.md` instead, so glob for both.
+      summary_files="$(ls -1 "$summaries_directory/{{ day }}.md" \
+        "$summaries_directory/{{ day }}"-run-*.md 2>/dev/null || true)"
     else
       # `|| true` because pipefail would otherwise make an empty (or absent)
       # summaries folder exit the recipe silently, before the message below.
-      summary_file="$(ls -1 "$summaries_directory"/*.md 2>/dev/null | tail -n 1 || true)"
+      summary_files="$(ls -1 "$summaries_directory"/*.md 2>/dev/null | tail -n 1 || true)"
     fi
-    if [ -z "${summary_file:-}" ] || [ ! -f "$summary_file" ]; then
+    if [ -z "${summary_files:-}" ]; then
       echo "No summary to show. One is written whenever a session runs at least"
       echo "one prompt — 'ls summaries/' for the days that have one."
       exit 0
     fi
-    echo "$summary_file"
-    echo
-    cat "$summary_file"
+    while IFS= read -r summary_file; do
+      echo "$summary_file"
+      echo
+      cat "$summary_file"
+      echo
+    done <<< "$summary_files"
 
 # Follow the raw stream-json events, for when a summary line is not enough
 [no-exit-message]
