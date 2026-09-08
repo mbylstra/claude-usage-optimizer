@@ -1840,9 +1840,13 @@ def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
     """Close the session record off and append it to the day's summary file.
 
     Called from the end of `main` and from the cancellation handler, which are
-    the only two ways a session ends. A session that ran nothing writes no file:
-    the gate's decision is already in the log, and a summary every night saying
-    "nothing to do" would bury the ones that describe actual work.
+    the only two ways a session ends. Every session that reached the run loop
+    writes a section, including one that ran nothing because the gate held it
+    back or the queue was empty — "did it run last night, and if not why not"
+    should be answerable from `summaries/` without opening the log. The two
+    `--resume` branch exits above the loop still write nothing: they mean this
+    agent should not have fired, not that the scheduler weighed the work and
+    declined it.
 
     The file is normally the day's `YYYY-MM-DD.md`. A night that scheduled a
     5-hour-reset resume is the exception: its first session writes `-run-1.md`
@@ -1852,9 +1856,6 @@ def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
     session.not_attempted = remaining_todo_prompts(
         [attempt.prompt for attempt in session.attempts]
     )
-
-    if not session.attempts:
-        return
 
     summary_path = autonomous_work_summary.write_session_summary(SUMMARIES_DIRECTORY, session)
     if summary_path is None:

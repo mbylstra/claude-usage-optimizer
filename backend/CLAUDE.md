@@ -135,8 +135,8 @@ spends three seconds waiting on an inherited stdin and warns about it; and
 
 **The morning-after summary — `summaries/YYYY-MM-DD.md`.** None of the three log
 files above answers the question you actually have over breakfast: which queued
-prompts ran, how each went, and why the session stopped when it did. So a
-session that ran at least one prompt appends its own section to the day's
+prompts ran, how each went, and why the session stopped when it did. So every
+session that reaches the run loop appends its own section to the day's
 summary file, rendered by `autonomous_work_summary.py` (underscores, because
 `run-autonomous-work.py` imports it — the same constraint as
 `autonomous_work_settings.py`). `just autonomous-summary` prints the latest.
@@ -154,9 +154,17 @@ Four things about it are deliberate:
   `run-1` off the first session having _scheduled_ a resume, not off it having
   run, so a resume that then does nothing leaves a lone `-run-1.md`. `just
   autonomous-summary <day>` prints both.
-- **A session that ran nothing writes nothing.** The pace gate's decision is
-  already in the log, and a file every night saying "on pace, nothing to do"
-  would bury the ones describing real work.
+- **A session that ran nothing still writes its section.** A night the pace
+  gate held back, or one that found an empty queue, appends a short section
+  giving the counts (all zero) and why it stopped — so `summaries/` alone
+  answers "did it run, and if not why not" without a trip to the log. The cost
+  is that an all-on-pace day's dated file collects a thin section for the
+  nightly skip and one more for each "Trigger a full run" press. The two
+  `--resume` no-ops above the run loop (the toggle is off; nothing was pending)
+  are the exception and write nothing: they mean the agent should not have
+  fired, not that the scheduler weighed the work and declined it. So does a dry
+  run. An unreadable queue source, reached from inside the loop, does write its
+  section — `queueUnavailable` is one of the answers you want the file to give.
 - **The per-prompt account is Claude's own closing message**, taken from the
   `result` event. A prompt that timed out, wedged or was cancelled never emits
   one, so the last assistant message is kept as it streams by and used instead —

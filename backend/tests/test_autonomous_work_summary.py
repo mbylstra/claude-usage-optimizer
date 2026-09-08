@@ -260,6 +260,24 @@ class RenderSessionSummaryTests(unittest.TestCase):
         self.assertNotIn("x" * (summary_module.RESULT_TEXT_CHARACTER_LIMIT + 1), rendered)
         self.assertIn("…", rendered)
 
+    def test_a_session_that_ran_nothing_still_renders_a_section(self):
+        # Held back by the pace gate before it picked up a single prompt: the
+        # morning's file should still say the run happened and why it stopped.
+        session = build_session()
+        session.not_attempted = ["Wire up the settings screen", "Add the badge"]
+        session.stop(
+            "onPace",
+            "9.2h ahead of an even weekly burn (snapshot 0 min old), "
+            "threshold is 5.0h ahead of an even weekly burn",
+        )
+
+        rendered = summary_module.render_session_summary(session)
+
+        self.assertIn("0 prompts attempted", rendered)
+        self.assertIn("running more would have spent above an even weekly burn", rendered)
+        self.assertIn("2 still queued", rendered)
+        self.assertIn("Wire up the settings screen", rendered)
+
 
 class RunFileLabelTests(unittest.TestCase):
     def test_an_ordinary_session_has_no_label(self):
@@ -293,6 +311,21 @@ class WriteSessionSummaryTests(unittest.TestCase):
             self.assertEqual(written_path, summaries / "2026-08-15.md")
             self.assertTrue(written_path.exists())
             self.assertIn("# Autonomous work —", written_path.read_text(encoding="utf-8"))
+
+    def test_a_session_that_ran_nothing_still_writes_its_dated_file(self):
+        # The night the pace gate skips is exactly the one you go looking in the
+        # folder to explain, so it has to leave a file behind.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            summaries = Path(temporary_directory) / "summaries"
+            session = build_session()
+            session.stop("onPace", "9.2h ahead of an even weekly burn")
+
+            written_path = summary_module.write_session_summary(summaries, session)
+
+            self.assertEqual(written_path, summaries / "2026-08-15.md")
+            contents = written_path.read_text(encoding="utf-8")
+            self.assertIn("# Autonomous work —", contents)
+            self.assertIn("0 prompts attempted", contents)
 
     def test_a_first_session_that_scheduled_a_resume_writes_a_run_1_file(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
