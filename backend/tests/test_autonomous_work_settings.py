@@ -64,6 +64,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "scheduleMinute": 45,
                 "newProjectsDirectory": "~/code/projects",
                 "model": "sonnet",
+                "effort": "xhigh",
                 "maxPromptDurationHours": 2.5,
                 "appendToAllPrompts": "Keep changes small.",
                 "paceThresholdHours": -2.5,
@@ -78,6 +79,7 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.schedule_minute, 45)
         self.assertEqual(result.new_projects_directory, "~/code/projects")
         self.assertEqual(result.model, "sonnet")
+        self.assertEqual(result.effort, "xhigh")
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
         self.assertEqual(result.append_to_all_prompts, "Keep changes small.")
         self.assertEqual(result.pace_threshold_hours, -2.5)
@@ -171,6 +173,19 @@ class ParseSettingsTests(unittest.TestCase):
         result = settings_module.parse_settings({"model": "haiku"})
         self.assertEqual(result.model, "sonnet")
         self.assertNotIn("haiku", settings_module.VALID_MODEL_NAMES)
+
+    def test_missing_effort_falls_back_to_default(self):
+        self.assertEqual(settings_module.parse_settings({}).effort, settings_module.DEFAULT_EFFORT)
+
+    def test_invalid_effort_falls_back_to_default(self):
+        result = settings_module.parse_settings({"effort": "ultra"})
+        self.assertEqual(result.effort, settings_module.DEFAULT_EFFORT)
+
+    def test_every_effort_level_is_valid_for_both_current_models(self):
+        for model in settings_module.VALID_MODEL_NAMES:
+            for level in settings_module.VALID_EFFORT_LEVELS:
+                result = settings_module.parse_settings({"model": model, "effort": level})
+                self.assertEqual(result.effort, level)
 
     def test_blank_new_projects_directory_falls_back_to_default(self):
         result = settings_module.parse_settings({"newProjectsDirectory": "   "})
@@ -278,6 +293,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             schedule_minute=30,
             new_projects_directory="~/code/nightly",
             model="sonnet",
+            effort="xhigh",
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",
             pace_threshold_hours=-3.5,

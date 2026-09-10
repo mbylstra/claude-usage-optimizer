@@ -285,6 +285,14 @@ _MODEL_ID_MAP = {
 }
 CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
 
+# Same precedence chain as the model, one field over: env var > per-entry >
+# settings, and each candidate still has to be one this session's *model*
+# actually offers — see `claude_effort_for`. An empty string throughout means
+# "send no --effort flag", not a fourth level.
+_EFFORT_FORCED_BY_ENV = os.environ.get("AUTONOMOUS_WORK_EFFORT") or None
+_effort_name = _EFFORT_FORCED_BY_ENV or _settings.effort
+CLAUDE_EFFORT = _effort_name or None
+
 
 def claude_model_id_for(entry: "QueueEntry") -> str:
     """The concrete model id this entry runs on.
@@ -301,9 +309,49 @@ def claude_model_id_for(entry: "QueueEntry") -> str:
     return _MODEL_ID_MAP.get(entry_model_name, CLAUDE_MODEL)
 
 
+def _resolved_model_name_for(entry: "QueueEntry") -> str:
+    """The model *name* ("opus" / "sonnet") `claude_model_id_for` would resolve
+    this entry to — needed here, and only here, because `claude_effort_for`
+    has to know which model's effort levels to validate against, not just
+    which id to pass. Mirrors `claude_model_id_for`'s precedence without
+    touching it, so its own pinned behaviour and tests stay exactly as they
+    are.
+    """
+    if _MODEL_NAME_FORCED_BY_ENV in _MODEL_ID_MAP:
+        return _MODEL_NAME_FORCED_BY_ENV
+    entry_model_name = getattr(entry, "model_name", None)
+    if entry_model_name in _MODEL_ID_MAP:
+        return entry_model_name
+    return _model_name if _model_name in _MODEL_ID_MAP else "opus"
+
+
+def claude_effort_for(entry: "QueueEntry") -> "str | None":
+    """The `--effort` value for this entry, or None to pass no flag at all and
+    let `claude` use its own default.
+
+    Precedence mirrors `claude_model_id_for`: `AUTONOMOUS_WORK_EFFORT` (a
+    whole-session override) beats `entry.effort_name` (a Jira card's `Effort`
+    dropdown), which beats `CLAUDE_EFFORT` (the settings default). Every
+    candidate is also checked against `MODEL_EFFORT_LEVELS` for the model this
+    same entry resolves to — a level offered for one model is not guaranteed
+    to mean anything for another — so an entry naming a level its own model
+    does not support falls through exactly as an unset one does, rather than
+    reaching `claude` on the wrong footing.
+    """
+    valid_levels = autonomous_work_settings.MODEL_EFFORT_LEVELS.get(
+        _resolved_model_name_for(entry), autonomous_work_settings.VALID_EFFORT_LEVELS
+    )
+    if _EFFORT_FORCED_BY_ENV:
+        return _EFFORT_FORCED_BY_ENV if _EFFORT_FORCED_BY_ENV in valid_levels else None
+    entry_effort_name = getattr(entry, "effort_name", None)
+    if entry_effort_name in valid_levels:
+        return entry_effort_name
+    return CLAUDE_EFFORT if CLAUDE_EFFORT in valid_levels else None
+
+
 def claude_arguments_for(entry: "QueueEntry", session_id: str) -> list[str]:
     """The `claude` flags for one prompt: its `--model`, the pinned `--session-id`,
-    then the shared base.
+    its `--effort` if one resolved, then the shared base.
 
     Split out so the model pin has a test that does not spawn anything — losing
     it off the front of `CLAUDE_BASE_ARGUMENTS` is exactly the regression the
@@ -316,12 +364,18 @@ def claude_arguments_for(entry: "QueueEntry", session_id: str) -> list[str]:
     before the run has even started — the id is minted in `main`, not left for
     `claude` to generate. It only takes effect under `--print`, which
     `CLAUDE_BASE_ARGUMENTS` always passes.
+
+    `--effort` is omitted entirely when `claude_effort_for` resolves to None —
+    an install that has never touched the setting sends exactly the arguments
+    it always has, and `claude` keeps picking its own default.
     """
+    effort = claude_effort_for(entry)
     return [
         "--model",
         claude_model_id_for(entry),
         "--session-id",
         session_id,
+        *(["--effort", effort] if effort else []),
         *CLAUDE_BASE_ARGUMENTS,
     ]
 
@@ -1903,9 +1957,12 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
+        effort = claude_effort_for(next_entry)
+        effort_description = f" at {effort} effort" if effort else ""
         log_message(
             f"Dry run — would execute in {destination} "
-            f"on model {claude_model_id_for(next_entry)}:\n{build_prompt(next_entry.prompt)}"
+            f"on model {claude_model_id_for(next_entry)}{effort_description}:\n"
+            f"{build_prompt(next_entry.prompt)}"
         )
         return 0
 

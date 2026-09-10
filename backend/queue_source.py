@@ -120,6 +120,15 @@ class QueueEntry:
     # `model_name`, not `model`, because the scheduler maps it to a concrete
     # model id (`claude-opus-5`) before it reaches `claude --model`.
     model_name: "str | None" = None
+    # An effort *level* — "low" / "medium" / "high" / "xhigh" / "max", the
+    # vocabulary `autonomous_work_settings.VALID_EFFORT_LEVELS` holds — or None
+    # to run this entry on the session's configured effort. Only the Jira
+    # source ever sets it (from a card's `Effort` dropdown); the file source
+    # leaves it None. Validated against the levels `model_name` (or, absent
+    # that, the session's model) actually offers — see `claude_effort_for` in
+    # `run-autonomous-work.py` — not just against the flat vocabulary, since a
+    # level valid for one model can be meaningless for another.
+    effort_name: "str | None" = None
 
     @property
     def status_name(self) -> str:

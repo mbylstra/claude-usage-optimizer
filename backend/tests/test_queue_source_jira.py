@@ -2392,6 +2392,189 @@ class ModelFieldReadBackTests(StubJiraTestCase):
         self.assertIsNone(entry.model_name)
 
 
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+class SelectedEffortNameTests(unittest.TestCase):
+    """`selected_effort_name` — a card's Effort dropdown, read back and validated."""
+
+    FIELD_ID = "customfield_10333"
+
+    def _fields(self, selected=None):
+        fields = {"summary": "t"}
+        if selected is not None:
+            fields[self.FIELD_ID] = {"value": selected}
+        return fields
+
+    def _selected(self, selected, log=None):
+        return jira.selected_effort_name(
+            self._fields(selected), self.FIELD_ID, EFFORT_LEVELS, log=log or (lambda _m: None)
+        )
+
+    def test_a_recognised_selection_comes_back_as_its_name(self):
+        self.assertEqual(self._selected("xhigh"), "xhigh")
+
+    def test_the_name_is_matched_ignoring_case(self):
+        self.assertEqual(self._selected("XHigh"), "xhigh")
+
+    def test_an_unset_field_is_none(self):
+        self.assertIsNone(self._selected(None))
+        self.assertIsNone(self._selected("   "))
+
+    def test_no_field_on_the_site_is_none(self):
+        self.assertIsNone(jira.selected_effort_name(self._fields("max"), None, EFFORT_LEVELS))
+
+    def test_an_unrecognised_value_is_none_and_is_logged(self):
+        logged = []
+        self.assertIsNone(self._selected("ultra", log=logged.append))
+        self.assertTrue(any("ultra" in line for line in logged))
+
+    def test_a_level_outside_the_narrowed_set_reads_as_unset(self):
+        # `valid_effort_levels` here is already narrowed to the card's model by
+        # `_entry_from_issue` — a level real for the field overall but not in
+        # this narrower set must still fall through, which is the mechanism
+        # that actually enforces "only levels the chosen model offers" on the
+        # Jira side.
+        logged = []
+        self.assertIsNone(
+            jira.selected_effort_name(
+                self._fields("max"), self.FIELD_ID, ("low", "medium"), log=logged.append
+            )
+        )
+        self.assertTrue(any("max" in line for line in logged))
+
+
+class EffortFieldTests(StubJiraTestCase):
+    """Creating the Effort field and giving it its fixed option set."""
+
+    def _writes(self):
+        return [call for call in self.state.requests if call[0] in ("POST", "PUT")]
+
+    def test_the_field_is_created_as_a_single_select_with_its_options(self):
+        setup = jira.ensure_effort_field(
+            self.source.client, PROJECT_ID, EFFORT_LEVELS, log=self.logged.append
+        )
+        self.assertTrue(setup.ok)
+        self.assertTrue(setup.created_field)
+        self.assertEqual(sorted(setup.added_options), sorted(EFFORT_LEVELS))
+
+        creation = [
+            call for call in self.state.requests
+            if call[0] == "POST" and call[1] == "/rest/api/3/field"
+        ]
+        self.assertEqual(len(creation), 1)
+        self.assertEqual(creation[0][2]["name"], jira.EFFORT_FIELD_NAME)
+        self.assertEqual(creation[0][2]["type"], jira.SINGLE_SELECT_FIELD_TYPE)
+        self.assertEqual(creation[0][2]["searcherKey"], jira.SINGLE_SELECT_SEARCHER_KEY)
+        self.assertEqual(
+            self.state.options_of(setup.field_id),
+            {level: False for level in EFFORT_LEVELS},
+        )
+
+    def test_the_field_lands_on_the_issue_screen(self):
+        setup = jira.ensure_effort_field(self.source.client, PROJECT_ID, EFFORT_LEVELS)
+        self.assertTrue(setup.attached_to_screen)
+        self.assertIn(setup.field_id, self.state.screen_tab_fields)
+
+    def test_a_second_call_writes_nothing_new(self):
+        jira.ensure_effort_field(self.source.client, PROJECT_ID, EFFORT_LEVELS)
+        before = len(self._writes())
+        setup = jira.ensure_effort_field(self.source.client, PROJECT_ID, EFFORT_LEVELS)
+        self.assertEqual(len(self._writes()), before)
+        self.assertFalse(setup.created_field)
+        self.assertEqual(setup.added_options, [])
+
+    def test_an_existing_field_missing_one_option_gets_only_that_option(self):
+        field_id = self.state.add_field(jira.EFFORT_FIELD_NAME)
+        for level in EFFORT_LEVELS[:-1]:
+            self.state.add_field_option(field_id, level)
+        setup = jira.ensure_effort_field(self.source.client, PROJECT_ID, EFFORT_LEVELS)
+        self.assertEqual(setup.added_options, [EFFORT_LEVELS[-1]])
+
+    def test_a_write_failure_is_reported_rather_than_raised(self):
+        self.state.fail_writes = True
+        setup = jira.ensure_effort_field(self.source.client, PROJECT_ID, EFFORT_LEVELS)
+        self.assertFalse(setup.ok)
+        self.assertTrue(setup.error)
+
+    def test_configure_project_creates_it_but_keeps_it_off_the_card_layout(self):
+        # Same reasoning as the Model field: the board card face holds three
+        # fields, Repository already takes one, and effort is a detail you set
+        # on an open card.
+        jira.configure_project(
+            self.source.client, {"id": PROJECT_ID, "key": PROJECT_KEY}, log=self.logged.append
+        )
+        field = jira.find_effort_field(self.source.client)
+        self.assertIsNotNone(field)
+        self.assertIn(field["id"], self.state.screen_tab_fields)
+        self.assertNotIn(field["id"], [f["fieldId"] for f in self.state.card_layout_fields])
+
+
+class EffortFieldReadBackTests(StubJiraTestCase):
+    """The queue reading a card's effort choice back, end to end through the source."""
+
+    def setUp(self):
+        super().setUp()
+        self.repository_field_id = self.state.add_field(jira.REPOSITORY_FIELD_NAME)
+        self.model_field_id = self.state.add_field(jira.MODEL_FIELD_NAME)
+        self.effort_field_id = self.state.add_field(jira.EFFORT_FIELD_NAME)
+
+    def _add_card(self, model=None, effort=None):
+        key = self.state.add_issue("Do the thing", jira.adf_document("Do the thing."))
+        if model is not None:
+            self.state.issues[key]["fields"][self.model_field_id] = {"value": model}
+        if effort is not None:
+            self.state.issues[key]["fields"][self.effort_field_id] = {"value": effort}
+        return key
+
+    def test_a_card_with_the_effort_set_carries_it_on_the_entry(self):
+        self._add_card(effort="xhigh")
+        entry = self.source.next_todo()
+        self.assertEqual(entry.effort_name, "xhigh")
+
+    def test_a_card_with_no_effort_set_carries_none(self):
+        self._add_card()
+        entry = self.source.next_todo()
+        self.assertIsNone(entry.effort_name)
+
+    def test_an_unrecognised_effort_reads_as_unset(self):
+        self._add_card(effort="ultra")
+        entry = self.source.next_todo()
+        self.assertIsNone(entry.effort_name)
+        self.assertTrue(any("ultra" in line for line in self.logged))
+
+    def test_a_level_the_cards_own_model_does_not_offer_reads_as_unset(self):
+        # Both real models take every level today, so this exercises the
+        # narrowing path via a monkeypatched map — see the equivalent note in
+        # ClaudeEffortForTests on the run-autonomous-work side. Patched on the
+        # shared `autonomous_work_settings` singleton — `JiraQueueSource`
+        # imports it under that plain name (backend/ is on `sys.path`), the
+        # same module every other importer of it sees. A fresh source is built
+        # inside the patch, not `self.source` from `setUp` — the map is read
+        # once at construction, the same snapshot `_valid_model_names` takes.
+        import autonomous_work_settings
+        from unittest.mock import patch
+
+        self._add_card(model="opus", effort="max")
+        with patch.object(autonomous_work_settings, "MODEL_EFFORT_LEVELS", {"opus": ("low",)}):
+            source = jira.JiraQueueSource(self.credentials, PROJECT_KEY, log=self.logged.append)
+            entry = source.next_todo()
+        self.assertIsNone(entry.effort_name)
+
+    def test_the_effort_field_is_asked_for_in_the_search(self):
+        self._add_card(effort="max")
+        self.source.next_todo()
+        searches = [c for c in self.state.requests if c[1] == "/rest/api/3/search/jql"]
+        self.assertIn(self.effort_field_id, searches[0][2]["fields"][0])
+
+    def test_a_site_without_the_effort_field_still_runs_the_queue(self):
+        self.state.fields = [f for f in self.state.fields if f["name"] != jira.EFFORT_FIELD_NAME]
+        source = jira.JiraQueueSource(self.credentials, PROJECT_KEY, log=self.logged.append)
+        self._add_card()
+        entry = source.next_todo()
+        self.assertIsNone(entry.effort_name)
+
+
 class PurgeProjectRemnantsTests(StubJiraTestCase):
     def test_purge_cascades_workflow_scheme_and_workflow(self):
         jira.purge_project_remnants(self.source.client, PROJECT_KEY, log=self.logged.append)

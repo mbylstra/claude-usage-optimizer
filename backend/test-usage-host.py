@@ -463,6 +463,7 @@ def main() -> int:
                         # Not sent in settings_message above — parse_settings fills
                         # these in from defaults, and write_settings persists them.
                         "model": "opus",
+                        "effort": "",
                         "maxPromptDurationHours": 5.0,
                         "appendToAllPrompts": "",
                         "paceThresholdHours": 0.0,
