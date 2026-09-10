@@ -764,6 +764,32 @@ the wrong model spends budget invisibly. Precedence: `AUTONOMOUS_WORK_MODEL`
 (a whole-session override) beats the card, which beats the extension's model
 setting, which beats `opus`.
 
+**A third dropdown, `Effort`, pins a `claude --effort` level the same way.**
+`ensure_effort_field` and `selected_effort_name` are `ensure_model_field` and
+`selected_model_name` with the vocabulary swapped for
+`autonomous_work_settings.VALID_EFFORT_LEVELS` (`low`/`medium`/`high`/`xhigh`/
+`max`), and the precedence in `run-autonomous-work.py`'s `claude_effort_for`
+matches `claude_model_id_for` exactly, one field over: `AUTONOMOUS_WORK_EFFORT`
+beats the card's `Effort` choice, which beats the extension's effort setting,
+which beats no `--effort` flag at all (an install that has never touched the
+setting sends exactly the arguments it always has). The one real difference is
+the constraint the extension's Settings screen enforces live — a level not
+offered for the currently-selected model cannot even be selected there,
+because `MODEL_EFFORT_LEVELS` maps each of `VALID_MODEL_NAMES` to the subset it
+supports (both models currently support all five, so this is architecture
+without a visible effect yet, not dead code: a narrower future model is a data
+change to that one map, not a new mechanism). **Classic Jira single-selects
+cannot filter one dropdown's options by another's value**, so the `Effort`
+field always offers every level regardless of what `Model` is set to; the
+constraint is instead enforced where it can be — `selected_effort_name` is
+handed the levels for the card's *own* `Model` choice (or the full vocabulary,
+if the card leaves `Model` blank), and a level outside that set is logged and
+read back as unset, the same graceful-degradation shape `selected_model_name`
+already uses for a model no longer offered at all. The version actually spent
+is re-validated once more in `claude_effort_for` against whichever model the
+entry *really* resolves to once the session default and any env override are
+folded in, since the Jira source alone cannot see either of those.
+
 **The prompt is the summary and the description together** — the title on its
 own line, a blank line, then the body. Jira forces a summary, so a card typed on
 a phone can be a one-line title with no body at all; a card with real detail

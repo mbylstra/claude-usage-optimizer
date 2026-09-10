@@ -5,6 +5,25 @@ import { DEFAULT_SCHEDULE_TIME, normaliseScheduleTime, type ScheduleTime } from 
  * normaliser — no browser APIs, no I/O.
  */
 
+/** Every `claude --effort` level that exists, low to high. */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * Which of `EFFORT_LEVELS` each model this app offers actually accepts —
+ * mirrors `autonomous_work_settings.MODEL_EFFORT_LEVELS` on the backend,
+ * which the Jira board's `Effort` dropdown and its per-card validation both
+ * check against, so the two cannot drift. Both models currently take the
+ * full range; this stays a per-model map (not a flat list) because a future
+ * model may not, and the Settings screen's effort dropdown already filters
+ * live against whichever model is selected.
+ */
+export const MODEL_EFFORT_LEVELS: Record<'sonnet' | 'opus', readonly EffortLevel[]> = {
+  opus: EFFORT_LEVELS,
+  sonnet: EFFORT_LEVELS,
+};
+
 /** Mirrored to `backend/autonomous-work-settings.json` by the native host. */
 export interface AutonomousWorkSettings {
   /** Local wall-clock time the nightly run fires, if the week is behind pace. */
@@ -22,6 +41,14 @@ export interface AutonomousWorkSettings {
    * headless run then denies every edit and shell command.
    */
   model: 'sonnet' | 'opus';
+  /**
+   * The default `claude --effort` level for `model`, or `''` to send no
+   * `--effort` flag at all and let `claude` pick its own. Must be one of
+   * `MODEL_EFFORT_LEVELS[model]` — never a level `model` does not offer —
+   * which is why every place this is set filters its options by the model
+   * chosen alongside it rather than offering the full `EffortLevel` union.
+   */
+  effort: EffortLevel | '';
   /**
    * The longest a single queued prompt may run before it is killed, in hours.
    * There is no way to tell a stuck prompt from a slow one, so this is a flat
@@ -157,6 +184,8 @@ export interface ExtensionSettings {
 
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
 export const DEFAULT_MODEL = 'opus';
+/** No level — send no `--effort` flag, and let `claude` keep its own default. */
+export const DEFAULT_EFFORT = '';
 export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
 export const DEFAULT_APPEND_TO_ALL_PROMPTS = '';
 export const DEFAULT_PACE_THRESHOLD_HOURS = 0;
@@ -169,6 +198,7 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
   newProjectsDirectory: DEFAULT_NEW_PROJECTS_DIRECTORY,
   model: DEFAULT_MODEL,
+  effort: DEFAULT_EFFORT,
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
   appendToAllPrompts: DEFAULT_APPEND_TO_ALL_PROMPTS,
   paceThresholdHours: DEFAULT_PACE_THRESHOLD_HOURS,
@@ -205,6 +235,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     scheduleTime?: unknown;
     newProjectsDirectory?: unknown;
     model?: unknown;
+    effort?: unknown;
     maxPromptDurationHours?: unknown;
     appendToAllPrompts?: unknown;
     paceThresholdHours?: unknown;
@@ -230,6 +261,18 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       : rawModel === 'sonnet' || rawModel === 'opus'
         ? rawModel
         : DEFAULT_MODEL;
+
+  // Validated against the *chosen* model's own levels, not the flat
+  // EFFORT_LEVELS — a level valid for one model but not this one is exactly
+  // as wrong as a level that never existed. Falls back to DEFAULT_EFFORT
+  // ('', no flag) rather than guessing a level, the same direction every
+  // other fallback in this function takes.
+  const rawEffort = autonomousWorkValue.effort;
+  const validEffortsForModel = MODEL_EFFORT_LEVELS[model];
+  const effort: EffortLevel | '' =
+    typeof rawEffort === 'string' && (validEffortsForModel as readonly string[]).includes(rawEffort)
+      ? (rawEffort as EffortLevel)
+      : DEFAULT_EFFORT;
 
   const maxPromptDurationHours =
     typeof autonomousWorkValue.maxPromptDurationHours === 'number' &&
@@ -282,6 +325,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       scheduleTime: normaliseScheduleTime(autonomousWorkValue.scheduleTime),
       newProjectsDirectory,
       model,
+      effort,
       maxPromptDurationHours,
       appendToAllPrompts,
       paceThresholdHours,

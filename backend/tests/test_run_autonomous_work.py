@@ -1295,6 +1295,78 @@ class ClaudeModelIdForTests(unittest.TestCase):
         self.assertNotIn("--session-id", work.CLAUDE_BASE_ARGUMENTS)
 
 
+class ClaudeEffortForTests(unittest.TestCase):
+    """The `--effort` value one queued entry runs with — see `claude_effort_for`."""
+
+    def _entry(self, model_name=None, effort_name=None):
+        return work.QueueEntry(
+            status=work.STATUS_TODO,
+            handle=0,
+            repository_path=None,
+            prompt="Do it.",
+            model_name=model_name,
+            effort_name=effort_name,
+        )
+
+    def test_an_entry_that_names_nothing_runs_on_the_session_default(self):
+        self.assertEqual(self._entry().effort_name, None)
+        self.assertEqual(work.claude_effort_for(self._entry()), work.CLAUDE_EFFORT)
+
+    def test_an_entry_that_names_a_level_its_model_offers_uses_it(self):
+        self.assertEqual(work.claude_effort_for(self._entry(effort_name="xhigh")), "xhigh")
+        self.assertEqual(
+            work.claude_effort_for(self._entry(model_name="opus", effort_name="max")), "max"
+        )
+
+    def test_an_unrecognised_level_falls_back_to_the_session_default(self):
+        self.assertEqual(
+            work.claude_effort_for(self._entry(effort_name="ultra")), work.CLAUDE_EFFORT
+        )
+
+    def test_a_level_not_offered_for_the_entrys_model_falls_back(self):
+        # Both models this app offers take every level today, so this exercises
+        # the fallback path via a monkeypatched, narrower map rather than a real
+        # gap — the mechanism still has to hold once a model *does* have one.
+        with mock.patch.object(
+            work.autonomous_work_settings, "MODEL_EFFORT_LEVELS", {"opus": ("low", "medium")}
+        ):
+            self.assertEqual(
+                work.claude_effort_for(self._entry(model_name="opus", effort_name="max")),
+                work.CLAUDE_EFFORT,
+            )
+
+    def test_the_env_override_wins_over_the_entry(self):
+        with mock.patch.object(work, "_EFFORT_FORCED_BY_ENV", "low"):
+            self.assertEqual(work.claude_effort_for(self._entry(effort_name="max")), "low")
+
+    def test_the_env_override_is_dropped_if_not_offered_for_the_entrys_model(self):
+        with mock.patch.object(work, "_EFFORT_FORCED_BY_ENV", "low"), mock.patch.object(
+            work.autonomous_work_settings, "MODEL_EFFORT_LEVELS", {"opus": ("xhigh", "max")}
+        ):
+            self.assertEqual(work.claude_effort_for(self._entry(model_name="opus")), None)
+
+    def test_no_effort_resolved_omits_the_flag(self):
+        with mock.patch.object(work, "CLAUDE_EFFORT", None):
+            arguments = work.claude_arguments_for(self._entry(model_name="sonnet"), "session-uuid")
+            self.assertNotIn("--effort", arguments)
+
+    def test_a_resolved_effort_is_inserted_before_the_shared_base(self):
+        with mock.patch.object(work, "CLAUDE_EFFORT", "xhigh"):
+            arguments = work.claude_arguments_for(self._entry(model_name="sonnet"), "session-uuid")
+            self.assertEqual(
+                arguments,
+                [
+                    "--model",
+                    "claude-sonnet-5",
+                    "--session-id",
+                    "session-uuid",
+                    "--effort",
+                    "xhigh",
+                    *work.CLAUDE_BASE_ARGUMENTS,
+                ],
+            )
+
+
 class InteractiveResumeInstructionsTests(unittest.TestCase):
     """The pick-up comment's "take this over by hand" line — see
     `interactive_resume_instructions`."""

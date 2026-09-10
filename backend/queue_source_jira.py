@@ -175,6 +175,21 @@ REPOSITORY_FIELD_SEARCHER_KEY = SINGLE_SELECT_SEARCHER_KEY
 # the card as unset, so it runs on the session model.
 MODEL_FIELD_NAME = "Model"
 
+# The per-card `Effort` dropdown: pick a `claude --effort` level for one
+# prompt, or leave it blank to run on the session's configured effort. Like
+# `Model` its options are a fixed set — `autonomous_work_settings.
+# VALID_EFFORT_LEVELS` — so `ensure_effort_field` only ever adds, never syncs
+# or disables. Unlike Model, "fixed" is a simplification classic Jira forces
+# on us: a single-select field cannot filter its own options by what another
+# field is set to, so this dropdown always offers every level Jira knows
+# about, even though not every level means something for every model. The
+# constraint the request calls for — only the levels the *chosen model*
+# offers — is enforced at read time instead, by `selected_effort_name`
+# against `MODEL_EFFORT_LEVELS` for the card's resolved model, the same
+# graceful-degradation shape `selected_model_name` already uses for a model no
+# longer offered at all.
+EFFORT_FIELD_NAME = "Effort"
+
 REQUEST_TIMEOUT_SECONDS = 30
 # The probe runs inside the native host, on the message loop, so it is held to a
 # much shorter leash than the run's own calls: a host that sat for half a minute
@@ -1275,6 +1290,12 @@ def find_model_field(client):
     return _find_custom_field_by_name(client, MODEL_FIELD_NAME)
 
 
+def find_effort_field(client):
+    # type: (JiraClient) -> dict | None
+    """The Effort custom field on this site, or None if it is not there yet."""
+    return _find_custom_field_by_name(client, EFFORT_FIELD_NAME)
+
+
 def _default_screen_ids(client, project_id):
     # type: (JiraClient, str) -> list[str]
     """Every distinct default screen the project's cards are laid out on.
@@ -1777,6 +1798,157 @@ def selected_model_name(fields, model_field_id, valid_model_names, log=_ignore):
     return None
 
 
+# --------------------------------------------------------------------------- #
+# The Effort field
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class EffortFieldSetup:
+    """What one pass of `ensure_effort_field` did, or could not do. Same shape
+    as `ModelFieldSetup`, for the same reason: a fixed option list means there
+    is only "created it / added the missing options / put it on the screen"."""
+
+    ok: bool
+    field_id: "str | None" = None
+    created_field: bool = False
+    attached_to_screen: bool = False
+    added_options: "list[str]" = field(default_factory=list)
+    error: "str | None" = None
+
+    def describe(self):
+        # type: () -> str
+        if not self.ok:
+            return "Effort field not set up: {}".format(self.error)
+        parts = []
+        if self.created_field:
+            parts.append("created the field")
+        if self.added_options:
+            parts.append("added {}".format(", ".join(self.added_options)))
+        if self.attached_to_screen:
+            parts.append("added it to the issue screen")
+        if not parts:
+            return "Effort field already set up"
+        return "Effort field: " + "; ".join(parts)
+
+
+def ensure_effort_field(client, project_id, effort_levels, log=_ignore):
+    # type: (JiraClient, str, tuple | list, object) -> EffortFieldSetup
+    """Find or create the Effort single-select, give it the fixed option set,
+    and put it on the project's issue screen. Body is `ensure_model_field`'s,
+    field for field — see that function for the re-run-safety and error notes,
+    which apply identically here.
+
+    Deliberately not on the board card layout either, for the same reason:
+    that face holds at most three fields and Repository already takes one.
+    """
+    try:
+        field = find_effort_field(client)
+        created = False
+        if field is None:
+            try:
+                field = client.request(
+                    "POST",
+                    "/rest/api/3/field",
+                    body={
+                        "name": EFFORT_FIELD_NAME,
+                        "description": (
+                            "Which claude --effort level this prompt runs at. Leave blank to "
+                            "use the effort set in the Claude Usage Optimizer extension."
+                        ),
+                        "type": SINGLE_SELECT_FIELD_TYPE,
+                        "searcherKey": SINGLE_SELECT_SEARCHER_KEY,
+                    },
+                )
+                created = True
+                log("Created the '{}' field".format(EFFORT_FIELD_NAME))
+            except JiraError as error:
+                # Same race as `ensure_model_field`: the loser of a create/create
+                # race has to adopt the winner's field rather than add to the pile.
+                field = find_effort_field(client)
+                if field is None:
+                    raise
+                log(
+                    "Another process created the '{}' field first ({}) — using theirs".format(
+                        EFFORT_FIELD_NAME, error.cause
+                    )
+                )
+
+        field_id = str((field or {}).get("id") or "")
+        if not field_id:
+            raise JiraError("Jira returned no id for the '{}' field".format(EFFORT_FIELD_NAME))
+
+        contexts = client.request("GET", "/rest/api/3/field/{}/context".format(field_id))
+        context_values = (contexts or {}).get("values") or []
+        if not context_values:
+            raise JiraError("The '{}' field has no context to hold options".format(field_id))
+        context_id = str((context_values[0] or {}).get("id") or "")
+
+        option_path = "/rest/api/3/field/{}/context/{}/option".format(field_id, context_id)
+        response = client.request("GET", option_path)
+        present = {
+            option["value"].strip().lower()
+            for option in (response or {}).get("values") or []
+            if isinstance(option, dict) and isinstance(option.get("value"), str)
+        }
+        added = []
+        for level in effort_levels:
+            if level.strip().lower() in present:
+                continue
+            client.request(
+                "POST", option_path, body={"options": [{"value": level, "disabled": False}]}
+            )
+            added.append(level)
+        if added:
+            log("Added the '{}' options: {}".format(EFFORT_FIELD_NAME, ", ".join(added)))
+
+        attached = attach_repository_field_to_screens(
+            client, project_id, field_id, log=log, field_name=EFFORT_FIELD_NAME
+        )
+        return EffortFieldSetup(
+            ok=True,
+            field_id=field_id,
+            created_field=created,
+            attached_to_screen=attached,
+            added_options=added,
+        )
+    except WRITE_FAILURES as error:
+        return EffortFieldSetup(ok=False, error=str(error))
+
+
+def selected_effort_name(fields, effort_field_id, valid_effort_levels, log=_ignore):
+    # type: (dict, str | None, tuple | list, object) -> str | None
+    """The effort level a card's Effort dropdown picked, if it is one we
+    recognise. Same shape as `selected_model_name`: an unrecognised value is
+    logged and treated as unset, falling through to the session's configured
+    effort rather than failing the card.
+
+    `valid_effort_levels` is expected to already be narrowed to the card's
+    *resolved model* (`MODEL_EFFORT_LEVELS[model_name]`), not the flat
+    `VALID_EFFORT_LEVELS` — so a level Jira's dropdown offers but this card's
+    model does not support is screened out here, which is the only place in
+    the Jira half of this feature that constraint can actually be enforced
+    (see the note above `EFFORT_FIELD_NAME`).
+    """
+    if not effort_field_id:
+        return None
+    selection = fields.get(effort_field_id)
+    raw = (selection or {}).get("value") if isinstance(selection, dict) else None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    wanted = raw.strip().lower()
+    for level in valid_effort_levels:
+        if level.strip().lower() == wanted:
+            return level
+    log(
+        "Card's '{}' is set to '{}', which is not one of {} for this card's model — "
+        "using the configured effort instead".format(
+            EFFORT_FIELD_NAME, raw.strip(), ", ".join(valid_effort_levels)
+        )
+    )
+    return None
+
+
 class JiraQueueSource:
     """The To Do column, read `ORDER BY Rank ASC` — a `queue_source.QueueSource`.
 
@@ -1798,19 +1970,23 @@ class JiraQueueSource:
         self._statuses = None  # type: ProjectStatuses | None
         self._repository_field_id = None  # type: str | None
         self._model_field_id = None  # type: str | None
-        # Both custom fields are resolved from one `GET /rest/api/3/field` the
-        # first time either id is asked for. This flag is distinct from
+        self._effort_field_id = None  # type: str | None
+        # All three custom fields are resolved from one `GET /rest/api/3/field`
+        # the first time any id is asked for. This flag is distinct from
         # `_..._field_id is None`, which cannot tell "not looked yet" from
         # "looked, and there is no such field" — without it every card would
         # re-ask, and a site without the fields would pay for a round trip
         # per card forever.
         self._looked_for_custom_fields = False
-        # The model-name vocabulary, from the one module that owns it. Imported
-        # inside the method, the way every other `autonomous_work_settings` use
-        # in this file is, to keep module import cheap and side-effect-free.
+        # The model-name and effort-level vocabularies, from the one module
+        # that owns them. Imported inside the method, the way every other
+        # `autonomous_work_settings` use in this file is, to keep module
+        # import cheap and side-effect-free.
         import autonomous_work_settings
 
         self._valid_model_names = tuple(autonomous_work_settings.VALID_MODEL_NAMES)
+        self._model_effort_levels = autonomous_work_settings.MODEL_EFFORT_LEVELS
+        self._valid_effort_levels = tuple(autonomous_work_settings.VALID_EFFORT_LEVELS)
 
     # -- plumbing ----------------------------------------------------------- #
 
@@ -1843,17 +2019,19 @@ class JiraQueueSource:
 
     def _resolve_custom_fields(self):
         # type: () -> None
-        """Resolve the Repository and Model field ids from one field-list call.
+        """Resolve the Repository, Model and Effort field ids from one
+        field-list call.
 
         Lazily done and cached the same way `statuses()` is, and for the same
         reason: it is one call whose answer does not change mid-run, and the JQL
-        search needs the ids to ask for the fields at all. One `GET` covers both,
-        since the endpoint returns every field on the site.
+        search needs the ids to ask for the fields at all. One `GET` covers all
+        three, since the endpoint returns every field on the site.
 
-        Unlike `statuses()`, a failure here is **not** raised. Both fields are
-        refinements over things that work without them — the `REPO:` line and the
-        session's configured model — so a site where they are missing, or
-        momentarily unreadable, falls back rather than taking the whole queue down.
+        Unlike `statuses()`, a failure here is **not** raised. All three fields
+        are refinements over things that work without them — the `REPO:` line,
+        the session's configured model, and its configured effort — so a site
+        where they are missing, or momentarily unreadable, falls back rather
+        than taking the whole queue down.
         """
         if self._looked_for_custom_fields:
             return
@@ -1862,14 +2040,18 @@ class JiraQueueSource:
             all_fields = self.client.request("GET", "/rest/api/3/field")
         except JiraError as error:
             self._log(
-                "Could not look up custom fields ({}) — cards fall back to {} and "
-                "the configured model".format(error.cause, REPOSITORY_FIELD_PREFIX)
+                "Could not look up custom fields ({}) — cards fall back to {}, "
+                "the configured model and the configured effort".format(
+                    error.cause, REPOSITORY_FIELD_PREFIX
+                )
             )
             return
         repository_field = _match_field_by_name(all_fields, REPOSITORY_FIELD_NAME)
         model_field = _match_field_by_name(all_fields, MODEL_FIELD_NAME)
+        effort_field = _match_field_by_name(all_fields, EFFORT_FIELD_NAME)
         self._repository_field_id = str(repository_field.get("id")) if repository_field else None
         self._model_field_id = str(model_field.get("id")) if model_field else None
+        self._effort_field_id = str(effort_field.get("id")) if effort_field else None
 
     def repository_field_id(self):
         # type: () -> str | None
@@ -1882,6 +2064,12 @@ class JiraQueueSource:
         """The Model field's id on this site, or None if it is not there."""
         self._resolve_custom_fields()
         return self._model_field_id
+
+    def effort_field_id(self):
+        # type: () -> str | None
+        """The Effort field's id on this site, or None if it is not there."""
+        self._resolve_custom_fields()
+        return self._effort_field_id
 
     def _search(self, column, limit=50):
         # type: (str, int) -> list[dict]
@@ -1900,6 +2088,9 @@ class JiraQueueSource:
         model_field_id = self.model_field_id()
         if model_field_id:
             wanted_fields += "," + model_field_id
+        effort_field_id = self.effort_field_id()
+        if effort_field_id:
+            wanted_fields += "," + effort_field_id
         try:
             response = self.client.request(
                 "GET",
@@ -1928,10 +2119,30 @@ class JiraQueueSource:
             repository_field_id=self.repository_field_id(),
             repositories=self.repositories,
         )
+        fields = issue.get("fields") or {}
         model_name = selected_model_name(
-            issue.get("fields") or {},
+            fields,
             self.model_field_id(),
             self._valid_model_names,
+            log=self._log,
+        )
+        # Narrowed to the levels this card's own model choice actually offers
+        # when it names one — the only place that narrowing can happen on the
+        # Jira side, per the note above `EFFORT_FIELD_NAME`. A card with no
+        # model set is checked against the full vocabulary instead: which model
+        # it will actually run on is not decided until `run-autonomous-work.py`
+        # resolves the session default (or an `AUTONOMOUS_WORK_MODEL` override),
+        # neither of which this class knows — `claude_effort_for` there is what
+        # re-validates against the model that is *actually* used.
+        valid_effort_levels_for_card = (
+            self._model_effort_levels.get(model_name, self._valid_effort_levels)
+            if model_name
+            else self._valid_effort_levels
+        )
+        effort_name = selected_effort_name(
+            fields,
+            self.effort_field_id(),
+            valid_effort_levels_for_card,
             log=self._log,
         )
         return QueueEntry(
@@ -1940,6 +2151,7 @@ class JiraQueueSource:
             repository_path=repository_path,
             prompt=prompt,
             model_name=model_name,
+            effort_name=effort_name,
         )
 
     # -- reading ------------------------------------------------------------ #
@@ -3259,7 +3471,7 @@ def _set_credentials():
 def configure_project(client, project, log=print, repositories=()):
     # type: (JiraClient, dict, object, list | tuple) -> ProjectStatuses
     """Steps 5–9: issue type scheme, workflow statuses, board columns, Repository
-    field, Model field.
+    field, Model field, Effort field.
 
     Re-run safe: every step is find-or-create / diff-and-patch, and a second
     call against an already-configured project issues zero writes. This is
@@ -3319,6 +3531,12 @@ def configure_project(client, project, log=print, repositories=()):
         client, project_id, autonomous_work_settings.VALID_MODEL_NAMES, log=log
     )
     log(model_setup.describe())
+
+    # The Effort picker — same fixed-option-set shape as Model, one field over.
+    effort_setup = ensure_effort_field(
+        client, project_id, autonomous_work_settings.VALID_EFFORT_LEVELS, log=log
+    )
+    log(effort_setup.describe())
 
     return resolve_project_statuses(client, project_key)
 
@@ -3380,8 +3598,8 @@ def _install(project_key_argument=None):
     settings = autonomous_work_settings.read_settings()
 
     print(
-        "Configuring the issue type scheme, workflow, board columns, Repository "
-        "field and Model field…"
+        "Configuring the issue type scheme, workflow, board columns, Repository, "
+        "Model and Effort fields…"
     )
     try:
         statuses = configure_project(
@@ -3431,6 +3649,16 @@ def _install(project_key_argument=None):
         MODEL_FIELD_NAME, ", ".join(autonomous_work_settings.VALID_MODEL_NAMES)
     ))
     print("card on the model set in the extension's Settings.\n")
+
+    print("And an '{}' dropdown ({}). Leave it blank to run the card at".format(
+        EFFORT_FIELD_NAME, ", ".join(autonomous_work_settings.VALID_EFFORT_LEVELS)
+    ))
+    print(
+        "the effort set in the extension's Settings — only levels its own '{}' "
+        "choice offers apply; an unsupported pick falls back the same way.\n".format(
+            MODEL_FIELD_NAME
+        )
+    )
 
     print("One step is left, and it is not ours to do: point the extension at the")
     print("board. Click its toolbar icon in Chrome, open Settings, set 'Queue source'")
@@ -3577,6 +3805,8 @@ def _list_queue():
             print("       repo: {}".format(entry.repository_path))
         if entry.model_name:
             print("       model: {}".format(entry.model_name))
+        if entry.effort_name:
+            print("       effort: {}".format(entry.effort_name))
     return 0
 
 

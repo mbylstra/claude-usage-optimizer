@@ -65,6 +65,28 @@ DEFAULT_MODEL = "opus"
 # question into the void and gets nothing done. A stored `"haiku"` is coerced
 # to `"sonnet"` in `parse_settings` rather than rejected.
 VALID_MODEL_NAMES = ("opus", "sonnet")
+# The `claude --effort` values that exist at all, in the CLI's own low-to-high
+# order. Not every model offers every level — `MODEL_EFFORT_LEVELS` below is
+# the one place that narrower set lives — but this tuple is what a level is
+# validated to be a *member of* before it is even considered for one.
+VALID_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+# Which of `VALID_EFFORT_LEVELS` each of `VALID_MODEL_NAMES` actually accepts.
+# The settings screen's dropdown and the Jira board's per-card `Effort`
+# dropdown (`queue_source_jira.EFFORT_FIELD_NAME`) both check a choice against
+# the entry naming this model, so the two cannot drift. Both current models
+# take the full range; this stays a per-model map (not a flat tuple) because a
+# future model — an older generation added back, say — may not, and the
+# settings-screen dropdown already filters live against whichever model is
+# selected.
+MODEL_EFFORT_LEVELS = {
+    "opus": VALID_EFFORT_LEVELS,
+    "sonnet": VALID_EFFORT_LEVELS,
+}
+# The empty string, not a level, so an install that has never touched this
+# setting sends no `--effort` flag at all and `claude` keeps picking its own
+# default — the same reasoning that keeps `appendToAllPrompts` empty by
+# default rather than pre-filled with something opinionated.
+DEFAULT_EFFORT = ""
 # Hours, not seconds: the settings screen speaks in hours, and
 # `run-autonomous-work.py` is the one place that converts to seconds. A cap on a
 # single `claude` call, not on the nightly session — a session can run many
@@ -146,6 +168,11 @@ class AutonomousWorkSettings:
     schedule_minute: int = DEFAULT_SCHEDULE_MINUTE
     new_projects_directory: str = DEFAULT_NEW_PROJECTS_DIRECTORY
     model: str = DEFAULT_MODEL
+    """The default effort level for `model`, or `DEFAULT_EFFORT` ("") to send no
+    `--effort` flag at all. Validated against `MODEL_EFFORT_LEVELS[model]`, not
+    the flat `VALID_EFFORT_LEVELS`, so a level that is not offered for the
+    currently-selected model can never be stored here — see `parse_settings`."""
+    effort: str = DEFAULT_EFFORT
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
     append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
     pace_threshold_hours: float = DEFAULT_PACE_THRESHOLD_HOURS
@@ -246,6 +273,19 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     else:
         model = DEFAULT_MODEL
 
+    # Validated against the *chosen* model's own levels, not the flat
+    # VALID_EFFORT_LEVELS — a level valid for one model but not this one is
+    # exactly as wrong as a level that never existed. Falls back to
+    # DEFAULT_EFFORT ("", no flag) rather than guessing a level, the same
+    # direction every other fallback in this function takes.
+    effort_value = settings_data.get("effort")
+    valid_efforts_for_model = MODEL_EFFORT_LEVELS.get(model, VALID_EFFORT_LEVELS)
+    effort = (
+        effort_value
+        if isinstance(effort_value, str) and effort_value in valid_efforts_for_model
+        else DEFAULT_EFFORT
+    )
+
     append_to_all_prompts_value = settings_data.get("appendToAllPrompts")
     append_to_all_prompts = (
         append_to_all_prompts_value
@@ -315,6 +355,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         ),
         new_projects_directory=new_projects_directory,
         model=model,
+        effort=effort,
         max_prompt_duration_hours=_coerce_positive_hours(
             settings_data.get("maxPromptDurationHours"), DEFAULT_MAX_PROMPT_DURATION_HOURS
         ),
@@ -349,6 +390,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "scheduleMinute": settings.schedule_minute,
         "newProjectsDirectory": settings.new_projects_directory,
         "model": settings.model,
+        "effort": settings.effort,
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
         "appendToAllPrompts": settings.append_to_all_prompts,
         "paceThresholdHours": settings.pace_threshold_hours,
@@ -536,6 +578,7 @@ def main() -> int:
     print("Scheduled run:      {}".format(settings.describe_schedule()))
     print("New projects in:    {}".format(settings.new_projects_directory))
     print("Model for runs:     {}".format(settings.model))
+    print("Effort for runs:    {}".format(settings.effort or "(claude's own default)"))
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))

@@ -30,9 +30,11 @@ import {
 import {
   DEFAULT_NEW_PROJECTS_DIRECTORY,
   JIRA_COLUMNS,
+  MODEL_EFFORT_LEVELS,
   isRepositoryDraftComplete,
   repositoryFromDraft,
   type AutonomousWorkSettings,
+  type EffortLevel,
   type JiraColumnKey,
   type QueueSourceName,
   type RepositoryDraft,
@@ -125,6 +127,14 @@ const MAX_PACE_THRESHOLD_HOURS = 168;
  */
 const SELECT_CLASS_NAME =
   'border-input bg-background h-8 rounded-md border px-2 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]';
+
+const EFFORT_LEVEL_LABELS: Record<EffortLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+};
 
 /**
  * The settings screen, shown inside the popup in place of the usage view.
@@ -417,18 +427,55 @@ export function SettingsPage({
               id="model-select"
               className={SELECT_CLASS_NAME}
               value={autonomousWorkSettings.model}
-              onChange={(event) =>
-                onAutonomousWorkSettingsChange({
-                  ...autonomousWorkSettings,
-                  model: event.target.value as 'sonnet' | 'opus',
-                })
-              }
+              onChange={(event) => {
+                const model = event.target.value as 'sonnet' | 'opus';
+                // The effort dropdown below only ever offers levels this model
+                // supports — keeping a level the new model does not offer
+                // would leave the setting pointed at something its own
+                // dropdown can no longer show as selected.
+                const effort = (MODEL_EFFORT_LEVELS[model] as readonly string[]).includes(
+                  autonomousWorkSettings.effort,
+                )
+                  ? autonomousWorkSettings.effort
+                  : '';
+                onAutonomousWorkSettingsChange({ ...autonomousWorkSettings, model, effort });
+              }}
             >
               <option value="sonnet">Sonnet (balanced)</option>
               <option value="opus">Opus (most capable)</option>
             </select>
             <p className="text-muted-foreground text-xs">
               The Claude model to use when running queued prompts automatically.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="effort-select" className="text-sm">
+              Effort for autonomous runs
+            </label>
+            <select
+              id="effort-select"
+              className={SELECT_CLASS_NAME}
+              value={autonomousWorkSettings.effort}
+              onChange={(event) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  effort: event.target.value as EffortLevel | '',
+                })
+              }
+            >
+              <option value="">Default (let Claude decide)</option>
+              {MODEL_EFFORT_LEVELS[autonomousWorkSettings.model].map((level) => (
+                <option key={level} value={level}>
+                  {EFFORT_LEVEL_LABELS[level]}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted-foreground text-xs">
+              How much the model thinks before acting. Only levels {autonomousWorkSettings.model}{' '}
+              supports are offered here; a Jira card can override this per prompt, limited to the
+              levels that card's own Model choice supports (or this list, if the card leaves Model
+              blank).
             </p>
           </div>
 
