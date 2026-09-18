@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { UsagePopup } from '@/components/UsagePopup';
 import { SettingsPage } from '@/components/SettingsPage';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
+import { buildCodexUsagePopupData, type CodexUsagePopupData } from '@/lib/codexUsagePopupData';
 import type { AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
 import { IDLE_FOLDER_ACCESS_STATUS } from '@/lib/folderAccessStatus';
 import type { AutonomousWorkSettingsStatus } from '@/lib/autonomousWorkSettingsStatus';
@@ -47,6 +48,39 @@ const CASES: { label: string; entry: UsageCacheEntry }[] = [
   { label: 'barely started (2%)', entry: sessionEntry(2, 4.9) },
 ];
 
+const CODEX_CASES: { label: string; data: CodexUsagePopupData }[] = [
+  { label: 'codex — loading', data: buildCodexUsagePopupData(null, now) },
+  {
+    label: 'codex — not logged in',
+    data: buildCodexUsagePopupData(
+      {
+        snapshot: null,
+        fetchedAt: null,
+        error: {
+          code: 'NOT_LOGGED_IN',
+          message: 'Codex is not logged in on this machine — run `codex login`.',
+        },
+      },
+      now,
+    ),
+  },
+  {
+    label: 'codex — host not installed',
+    data: buildCodexUsagePopupData(
+      {
+        snapshot: null,
+        fetchedAt: null,
+        error: {
+          code: 'HOST_UNAVAILABLE',
+          message: 'Could not reach the native host. Install it with `just install-usage-host`.',
+        },
+      },
+      now,
+    ),
+  },
+  { label: 'codex — ready', data: buildCodexUsagePopupData(sessionEntry(35, 2), now) },
+];
+
 const AUTONOMOUS_WORK_CASES: {
   label: string;
   status: AutonomousWorkStatus;
@@ -83,6 +117,8 @@ function Column({ dark }: { dark: boolean }) {
             notificationsEnabled={true}
             onNotificationsEnabledChange={() => {}}
             onTestNotification={() => {}}
+            codexUsageEnabled={false}
+            onCodexUsageEnabledChange={() => {}}
             autonomousWorkSettings={DEFAULT_AUTONOMOUS_WORK_SETTINGS}
             onAutonomousWorkSettingsChange={() => {}}
             onSyncSettingsNow={() => {}}
@@ -116,6 +152,29 @@ function Column({ dark }: { dark: boolean }) {
             onRefresh={() => {}}
             onOpenClaude={() => {}}
             onOpenSettings={() => {}}
+          />
+        </div>
+      ))}
+      {CODEX_CASES.map(({ label, data }) => (
+        <div key={label}>
+          <div
+            style={{
+              font: '11px system-ui',
+              color: dark ? '#888' : '#666',
+              padding: '10px 14px 0',
+            }}
+          >
+            {label}
+          </div>
+          <UsagePopup
+            data={buildUsagePopupData(sessionEntry(50, 2.5), now)}
+            now={now}
+            isRefreshing={false}
+            onRefresh={() => {}}
+            onOpenClaude={() => {}}
+            onOpenSettings={() => {}}
+            codexUsageEnabled={true}
+            codexData={data}
           />
         </div>
       ))}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { SettingsPage } from '@/components/SettingsPage';
 import { UsagePopup } from '@/components/UsagePopup';
 import { buildUsagePopupData } from '@/lib/usagePopupData';
+import { buildCodexUsagePopupData } from '@/lib/codexUsagePopupData';
 import {
   DEFAULT_EXTENSION_SETTINGS,
   type AutonomousWorkSettings,
@@ -35,6 +36,7 @@ import {
   writeExtensionSettings,
 } from '@/extension/settingsStorage';
 import { readUsageCache, USAGE_CACHE_CHANGE_KEY } from '@/extension/usageStorage';
+import { readCodexUsageCache, CODEX_USAGE_CACHE_CHANGE_KEY } from '@/extension/codexUsageStorage';
 import {
   deriveJiraCredentialWarning,
   type JiraCredentialStatus,
@@ -81,6 +83,7 @@ export function PopupRoot() {
   const [view, setView] = useState<PopupView>('usage');
   const [cacheEntry, setCacheEntry] = useState<UsageCacheEntry | null>(null);
   const [hasLoadedCache, setHasLoadedCache] = useState(false);
+  const [codexCacheEntry, setCodexCacheEntry] = useState<UsageCacheEntry | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_EXTENSION_SETTINGS);
   const [autonomousWorkStatus, setAutonomousWorkStatus] = useState<AutonomousWorkStatus>(
@@ -233,6 +236,21 @@ export function PopupRoot() {
     };
   }, [requestRefresh]);
 
+  // Paint whatever Codex cache exists, without triggering a refresh of its
+  // own — the alarm and the manual refresh button both already ask for one,
+  // and this effect only needs to show what is already on disk.
+  useEffect(() => {
+    let isMounted = true;
+
+    void readCodexUsageCache().then((entry) => {
+      if (isMounted) setCodexCacheEntry(entry);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -273,6 +291,11 @@ export function PopupRoot() {
       const usageChange = changes[USAGE_CACHE_CHANGE_KEY];
       if (usageChange !== undefined) setCacheEntry(usageChange.newValue as UsageCacheEntry);
 
+      const codexUsageChange = changes[CODEX_USAGE_CACHE_CHANGE_KEY];
+      if (codexUsageChange !== undefined) {
+        setCodexCacheEntry(codexUsageChange.newValue as UsageCacheEntry);
+      }
+
       const settingsChange = changes[SETTINGS_CHANGE_KEY];
       if (settingsChange !== undefined) setSettings(settingsChange.newValue as ExtensionSettings);
     };
@@ -296,6 +319,25 @@ export function PopupRoot() {
       return next;
     });
   }, []);
+
+  const handleCodexUsageEnabledChange = useCallback(
+    (codexUsageEnabled: boolean) => {
+      setSettings((current) => {
+        const next: ExtensionSettings = { ...current, codexUsageEnabled };
+        const written = writeExtensionSettings(next);
+        // Nothing has ever populated the Codex cache while the toggle was
+        // off — `refreshCodexUsage` skips the host entirely when it reads
+        // `codexUsageEnabled: false` — so without this the section would
+        // sit on its loading skeleton until the next five-minute alarm.
+        // Waits for the write to land before asking the service worker to
+        // refresh, since its `readExtensionSettings()` would otherwise race
+        // this one and could still see the old, disabled value.
+        if (codexUsageEnabled) void written.then(() => requestRefresh());
+        return next;
+      });
+    },
+    [requestRefresh],
+  );
 
   // Only the latest edit is worth pushing, so a pending timer is replaced rather
   // than queued behind.
@@ -379,6 +421,7 @@ export function PopupRoot() {
   // Before the cache read resolves we genuinely know nothing — show the loading
   // state rather than flashing "no data yet".
   const data = buildUsagePopupData(hasLoadedCache ? cacheEntry : null, now);
+  const codexData = buildCodexUsagePopupData(codexCacheEntry, now);
   const jiraWarning = deriveJiraCredentialWarning(jiraStatus, settings.autonomousWork.queueSource);
 
   return (
@@ -391,6 +434,8 @@ export function PopupRoot() {
           notificationsEnabled={settings.notificationsEnabled}
           onNotificationsEnabledChange={handleNotificationsEnabledChange}
           onTestNotification={requestTestNotification}
+          codexUsageEnabled={settings.codexUsageEnabled}
+          onCodexUsageEnabledChange={handleCodexUsageEnabledChange}
           autonomousWorkSettings={settings.autonomousWork}
           onAutonomousWorkSettingsChange={handleAutonomousWorkSettingsChange}
           onSyncSettingsNow={handleSyncSettingsNow}
@@ -414,6 +459,8 @@ export function PopupRoot() {
           onOpenClaude={openClaude}
           onOpenSettings={openSettings}
           jiraWarning={jiraWarning}
+          codexUsageEnabled={settings.codexUsageEnabled}
+          codexData={codexData}
         />
       )}
     </div>

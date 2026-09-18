@@ -179,10 +179,20 @@ export interface ExtensionSettings {
    * not implemented yet.
    */
   notificationsEnabled: boolean;
+  /**
+   * Show ChatGPT/Codex 5-hour and weekly usage below the Claude section. A
+   * display preference, not a scheduler input — nothing about it reaches
+   * `backend/autonomous-work-settings.json` or the native host at all. Off by
+   * default: it needs the native host from `just install-usage-host` and a
+   * machine that has run `codex login`, neither of which is true for most
+   * installs. See `plans/codex-subscription-usage.md`.
+   */
+  codexUsageEnabled: boolean;
   autonomousWork: AutonomousWorkSettings;
 }
 
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
+export const DEFAULT_CODEX_USAGE_ENABLED = false;
 export const DEFAULT_MODEL = 'opus';
 /** No level — send no `--effort` flag, and let `claude` keep its own default. */
 export const DEFAULT_EFFORT = '';
@@ -211,6 +221,7 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
 
 export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   notificationsEnabled: false,
+  codexUsageEnabled: DEFAULT_CODEX_USAGE_ENABLED,
   autonomousWork: DEFAULT_AUTONOMOUS_WORK_SETTINGS,
 };
 
@@ -224,8 +235,9 @@ export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
 export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
   if (typeof stored !== 'object' || stored === null) return DEFAULT_EXTENSION_SETTINGS;
 
-  const { notificationsEnabled, autonomousWork } = stored as {
+  const { notificationsEnabled, codexUsageEnabled, autonomousWork } = stored as {
     notificationsEnabled?: unknown;
+    codexUsageEnabled?: unknown;
     autonomousWork?: unknown;
   };
 
@@ -321,6 +333,10 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       typeof notificationsEnabled === 'boolean'
         ? notificationsEnabled
         : DEFAULT_EXTENSION_SETTINGS.notificationsEnabled,
+    // Anything but a real boolean falls back to the default (off) — storage
+    // from a build before this setting existed has no such key.
+    codexUsageEnabled:
+      typeof codexUsageEnabled === 'boolean' ? codexUsageEnabled : DEFAULT_CODEX_USAGE_ENABLED,
     autonomousWork: {
       scheduleTime: normaliseScheduleTime(autonomousWorkValue.scheduleTime),
       newProjectsDirectory,

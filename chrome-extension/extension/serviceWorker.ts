@@ -16,6 +16,7 @@ import {
   type JiraCredentialStatus,
 } from '@/lib/jiraCredentialWarning';
 import { fetchUsageSnapshot, toUsageErrorInfo } from './claudeUsageClient';
+import { fetchCodexUsageSnapshot } from './codexUsageSource';
 import {
   isOpenRunLogMessage,
   isReadJiraStatusMessage,
@@ -54,6 +55,7 @@ import {
   writeLastShownNotification,
   type UsageCacheEntry,
 } from './usageStorage';
+import { readCodexUsageCache, writeCodexUsageCache } from './codexUsageStorage';
 import { readExtensionSettings } from './settingsStorage';
 
 /**
@@ -275,6 +277,34 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
 }
 
 /**
+ * Fetches and persists Codex/ChatGPT usage — display only.
+ *
+ * Deliberately a separate function rather than a branch in `refreshUsage`:
+ * that one also exports to `claude-usage.json` (the scheduler's pace input),
+ * appends to the Claude-shaped usage history, derives the suggested model and
+ * the usage-limit-warning notifications, and updates the Jira credential
+ * badge. None of those are things Codex usage should touch — see
+ * `plans/codex-subscription-usage.md`'s "explicitly out of scope" section —
+ * so this touches only its own cache.
+ */
+async function refreshCodexUsage(): Promise<void> {
+  const settings = await readExtensionSettings();
+  if (!settings.codexUsageEnabled) return; // Don't spawn the host for nothing.
+
+  try {
+    const snapshot = await fetchCodexUsageSnapshot();
+    await writeCodexUsageCache({ snapshot, fetchedAt: new Date().toISOString(), error: null });
+  } catch (error) {
+    const previous = await readCodexUsageCache();
+    await writeCodexUsageCache({
+      snapshot: previous?.snapshot ?? null,
+      fetchedAt: previous?.fetchedAt ?? null,
+      error: toUsageErrorInfo(error),
+    });
+  }
+}
+
+/**
  * Re-push the stored autonomous-work settings to the native host.
  *
  * The popup pushes on every change, so this is pure reconciliation — it covers
@@ -299,18 +329,21 @@ function ensureRefreshAlarm(): void {
 chrome.runtime.onInstalled.addListener(() => {
   ensureRefreshAlarm();
   void refreshUsage();
+  void refreshCodexUsage();
   void reconcileAutonomousWorkSettings();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureRefreshAlarm();
   void refreshUsage();
+  void refreshCodexUsage();
   void reconcileAutonomousWorkSettings();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== REFRESH_ALARM_NAME) return;
   void refreshUsage();
+  void refreshCodexUsage();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -324,6 +357,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           error: toUsageErrorInfo(error),
         } satisfies RefreshUsageResponse),
     );
+    // Alongside, not awaited: the popup's manual refresh button updates both
+    // sections in one press without `RefreshUsageResponse`'s shape having to
+    // widen — the popup picks up the Codex update through the storage
+    // listener, same as an alarm-triggered refresh does.
+    void refreshCodexUsage();
     return true;
   }
 

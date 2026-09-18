@@ -18,6 +18,7 @@ where a starting run replaces that file while the tail is reading it.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
@@ -270,6 +271,74 @@ def check_cancel(results: list) -> None:
         )
 
 
+def check_codex_usage(results: list) -> None:
+    """`getCodexUsage` dispatch, kept off the real network — the deeper logic
+    (window classification, refresh, JWT `exp` parsing) is unit-tested against
+    `codex_usage.py` directly in `backend/tests/test_codex_usage.py`.
+    """
+    print("getCodexUsage message:")
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        missing_auth_file = Path(temporary_directory) / "no-such-auth.json"
+        reply = ask_host(
+            {"type": "getCodexUsage"},
+            {"CODEX_USAGE_AUTH_FILE": str(missing_auth_file)},
+        )
+        results.append(
+            check(
+                "a missing auth.json is a clean NOT_LOGGED_IN, not a crash",
+                bool(
+                    reply
+                    and reply.get("ok") is False
+                    and (reply.get("error") or {}).get("code") == "NOT_LOGGED_IN"
+                ),
+            )
+        )
+
+        # A JWT with no `exp` claim needs no proactive refresh — `token_needs_
+        # refresh` returns False rather than guessing — so dispatch goes
+        # straight to the usage call, pointed at an address nothing listens on.
+        # That keeps this off the real network while still exercising the real
+        # `codex_usage` module end to end, not a mock of it.
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode("ascii")
+        payload = base64.urlsafe_b64encode(json.dumps({"sub": "test"}).encode()).rstrip(b"=").decode(
+            "ascii"
+        )
+        fake_access_token = "{}.{}.".format(header, payload)
+
+        auth_file = Path(temporary_directory) / "auth.json"
+        auth_file.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": fake_access_token,
+                        "refresh_token": "a-refresh-token",
+                        "account_id": "acct-1",
+                    },
+                    "OPENAI_API_KEY": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        reply = ask_host(
+            {"type": "getCodexUsage"},
+            {
+                "CODEX_USAGE_AUTH_FILE": str(auth_file),
+                "CODEX_USAGE_URL_OVERRIDE": "http://127.0.0.1:1",
+            },
+        )
+        results.append(
+            check(
+                "dispatch reaches codex_usage and reports a clean network error",
+                bool(
+                    reply
+                    and reply.get("ok") is False
+                    and (reply.get("error") or {}).get("code") == "NETWORK_ERROR"
+                ),
+            )
+        )
+
+
 def main() -> int:
     results = []
 
@@ -501,6 +570,7 @@ def main() -> int:
 
     check_tail(results)
     check_cancel(results)
+    check_codex_usage(results)
 
     print("unknown message:")
     reply = ask_host({"type": "somethingElse"})

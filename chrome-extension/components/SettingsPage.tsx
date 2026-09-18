@@ -147,6 +147,9 @@ export interface SettingsPageProps {
   notificationsEnabled: boolean;
   onNotificationsEnabledChange: (enabled: boolean) => void;
   onTestNotification: () => void;
+  /** Show ChatGPT/Codex usage below the Claude section in the usage view. */
+  codexUsageEnabled: boolean;
+  onCodexUsageEnabledChange: (enabled: boolean) => void;
   autonomousWorkSettings: AutonomousWorkSettings;
   onAutonomousWorkSettingsChange: (settings: AutonomousWorkSettings) => void;
   /**
@@ -186,6 +189,8 @@ export function SettingsPage({
   notificationsEnabled,
   onNotificationsEnabledChange,
   onTestNotification,
+  codexUsageEnabled,
+  onCodexUsageEnabledChange,
   autonomousWorkSettings,
   onAutonomousWorkSettingsChange,
   onSyncSettingsNow,
@@ -325,6 +330,28 @@ export function SettingsPage({
           <Button variant="outline" size="sm" onClick={onTestNotification}>
             Send test notification
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="flex flex-col gap-4 pt-3.5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-0.5">
+              <label htmlFor="codex-usage-enabled" className="text-sm font-medium">
+                Codex usage
+              </label>
+              <p className="text-muted-foreground text-xs">
+                Show ChatGPT/Codex 5-hour and weekly usage below your Claude usage. Needs the native
+                host from <code>just install-usage-host</code> (already installed if you ran{' '}
+                <code>just setup</code>) and a machine that has run <code>codex login</code>.
+              </p>
+            </div>
+            <Switch
+              id="codex-usage-enabled"
+              checked={codexUsageEnabled}
+              onCheckedChange={onCodexUsageEnabledChange}
+            />
+          </div>
         </CardContent>
       </Card>
 

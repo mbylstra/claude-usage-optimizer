@@ -151,9 +151,21 @@ export interface InactiveWindowStatus {
 
 export type DerivedWindowStatus = ActiveWindowStatus | InactiveWindowStatus;
 
-/** Error codes surfaced by the usage client; the popup maps these to copy. */
+/**
+ * Error codes surfaced by the usage client; the popup maps these to copy.
+ *
+ * `HOST_UNAVAILABLE` is distinct from `NETWORK_ERROR`: it means the native
+ * host itself could not be reached (not installed, or sent no reply), as
+ * opposed to the host running but the upstream service failing — see
+ * `extension/codexUsageSource.ts`, the only source that can produce it.
+ */
 export type UsageErrorCode =
-  'NOT_LOGGED_IN' | 'NO_ORGANIZATIONS' | 'HTTP_ERROR' | 'NETWORK_ERROR' | 'MALFORMED_RESPONSE';
+  | 'NOT_LOGGED_IN'
+  | 'NO_ORGANIZATIONS'
+  | 'HTTP_ERROR'
+  | 'NETWORK_ERROR'
+  | 'MALFORMED_RESPONSE'
+  | 'HOST_UNAVAILABLE';
 
 export interface UsageErrorInfo {
   code: UsageErrorCode;

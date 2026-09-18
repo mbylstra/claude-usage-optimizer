@@ -2,12 +2,15 @@ import { AlertTriangle, ExternalLink, RefreshCw, Settings } from 'lucide-react';
 import { formatTimeAgo } from '@/lib/formatDuration';
 import { SUGGESTED_MODEL_LABELS, type SuggestedModel } from '@/lib/suggestedModel';
 import type { UsagePopupData } from '@/lib/usagePopupData';
+import type { CodexUsagePopupData } from '@/lib/codexUsagePopupData';
 import type { UsageErrorInfo } from '@/lib/usageTypes';
+import { errorGuidance, errorHeadline } from '@/lib/usageErrorCopy';
 import {
   warningReaches,
   NO_JIRA_WARNING,
   type JiraCredentialWarning,
 } from '@/lib/jiraCredentialWarning';
+import { CodexUsageSection } from './CodexUsageSection';
 import { PopupFrame } from './PopupFrame';
 import { UsageWindowCard } from './UsageWindowCard';
 import { Button } from './ui/button';
@@ -35,6 +38,9 @@ export interface UsagePopupProps {
    * calendar reminder rather than a run that did not happen.
    */
   jiraWarning?: JiraCredentialWarning;
+  /** Whether the Codex section should be shown at all — the Settings toggle. */
+  codexUsageEnabled?: boolean;
+  codexData?: CodexUsagePopupData;
 }
 
 const CLAUDE_URL = 'https://claude.ai';
@@ -93,36 +99,6 @@ function PopupHeader({
   );
 }
 
-/** Turns an error code into copy a person can act on. */
-function errorHeadline(error: UsageErrorInfo): string {
-  switch (error.code) {
-    case 'NOT_LOGGED_IN':
-      return 'Not logged in to Claude.ai';
-    case 'NO_ORGANIZATIONS':
-      return 'No Claude.ai account found';
-    case 'NETWORK_ERROR':
-      return 'Could not reach Claude.ai';
-    case 'MALFORMED_RESPONSE':
-      return 'Claude.ai sent something unexpected';
-    case 'HTTP_ERROR':
-      return 'Claude.ai could not report your usage';
-    default:
-      return 'Could not load your usage';
-  }
-}
-
-function errorGuidance(error: UsageErrorInfo): string {
-  switch (error.code) {
-    case 'NOT_LOGGED_IN':
-    case 'NO_ORGANIZATIONS':
-      return 'Sign in to Claude.ai, then refresh.';
-    case 'NETWORK_ERROR':
-      return 'Check your connection and try again.';
-    default:
-      return 'This usually clears up on its own. Try again in a moment.';
-  }
-}
-
 function JiraCredentialBanner({ warning }: { warning: JiraCredentialWarning }) {
   return (
     <div className="border-pace-ahead/40 bg-pace-ahead-surface text-pace-ahead flex items-start gap-1.5 rounded-md border px-2.5 py-1.5 text-xs">
@@ -172,6 +148,8 @@ export function UsagePopup({
   onOpenClaude,
   onOpenSettings,
   jiraWarning = NO_JIRA_WARNING,
+  codexUsageEnabled = false,
+  codexData = { state: 'loading' },
 }: UsagePopupProps) {
   const showsJiraBanner = warningReaches(jiraWarning, 'banner');
   if (data.state === 'loading') {
@@ -232,6 +210,12 @@ export function UsagePopup({
       </div>
 
       {data.suggestedModel != null && <SuggestedModelRow model={data.suggestedModel} />}
+
+      {/* Only while the Claude section itself has something to show — this is
+          not a fourth top-level state, just where the ready branch already
+          is. Codex staying hidden while Claude is loading or erroring is an
+          accepted trade, not a bug. */}
+      {codexUsageEnabled && <CodexUsageSection data={codexData} now={now} />}
 
       <footer className="flex items-center justify-end gap-2">
         <a

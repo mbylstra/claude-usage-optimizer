@@ -48,6 +48,9 @@ import autonomous_work_resume  # noqa: E402  (same)
 # stdlib-only and 3.9-compatible for exactly this reason — see
 # plans/work-queue-as-a-jira-board.md §5.4.
 import queue_source_jira  # noqa: E402  (same)
+# Codex/ChatGPT usage, display-only — see plans/codex-subscription-usage.md.
+# stdlib-only and 3.9-compatible for the same reason as its siblings above.
+import codex_usage  # noqa: E402  (same)
 
 HOST_DIRECTORY = Path(__file__).resolve().parent
 SNAPSHOT_FILE = HOST_DIRECTORY / "claude-usage.json"
@@ -110,6 +113,13 @@ MESSAGE_TYPE_PRIME_FOLDERS = "primeFolderAccess"
 # What the last credential probe found. A read of a local file — the probe itself
 # rides the snapshot message, below.
 MESSAGE_TYPE_JIRA_STATUS = "getJiraStatus"
+# Codex/ChatGPT subscription usage, display-only — see
+# plans/codex-subscription-usage.md. Unlike the snapshot message above, this one
+# does its own network call synchronously on the message loop; it is the same
+# trade `probe_jira_credential` makes, and defensible for the same reason: this
+# process is torn down as soon as it has replied, so a background attempt would
+# just be killed part way through.
+MESSAGE_TYPE_CODEX_USAGE = "getCodexUsage"
 
 # A stat loop rather than a filesystem-watch API: stdlib-only and 3.9-compatible
 # is non-negotiable here, and kqueue plumbing would be an order of magnitude more
@@ -679,6 +689,14 @@ def handle_message(message):
 
     if message_type == MESSAGE_TYPE_JIRA_STATUS:
         return {"ok": True, "status": queue_source_jira.read_status()}
+
+    if message_type == MESSAGE_TYPE_CODEX_USAGE:
+        # Logged before the call, the same way `apply_autonomous_work_settings`
+        # logs the arriving key list before parsing — it answers "did a
+        # getCodexUsage message even arrive?" independent of whether the
+        # service worker relaying it is a stale build.
+        log_message("Received getCodexUsage message")
+        return codex_usage.read_codex_usage(log=log_message)
 
     if message_type == MESSAGE_TYPE_SNAPSHOT:
         write_snapshot(message.get("snapshot"))
