@@ -1685,7 +1685,7 @@ def run_prompt(
             # nothing is lost or deadlocks on a second unread pipe.
             command = (
                 ["codex", "exec", "--json", "--model", CODEX_MODEL, "--sandbox", "workspace-write",
-                 "--ask-for-approval", "never", prompt_text]
+                 "--approve-for-me", prompt_text]
                 if is_codex
                 else ["claude", "-p", prompt_text, *claude_arguments]
             )
