@@ -71,6 +71,12 @@ CODEX_TOKEN_REFRESH_URL = (
 # itself (confirmed in openusage's CodexUsageClient.swift), not a secret.
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
+# A module-scoped flag rather than checking `os.name` at each call site:
+# `os` is a singleton module, so patching `os.name` in a test to exercise the
+# Windows branch would also change what `pathlib.Path()` constructs, breaking
+# every `Path(...)` call in this function. This flag is read once at import.
+_SUPPORTS_POSIX_FILE_MODES = os.name != "nt"
+
 SESSION_WINDOW_SECONDS = 5 * 60 * 60
 WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
@@ -176,12 +182,23 @@ def _write_auth_file(path, credential):
     try:
         handle_descriptor, temporary_name = tempfile.mkstemp(dir=str(path.parent))
         temporary_path = Path(temporary_name)
-        os.fchmod(handle_descriptor, 0o600)
+        # `os.fchmod` does not exist on Windows. Left unguarded, every token
+        # refresh raised `AttributeError` there, swallowed by
+        # `read_codex_usage`'s catch-all into a generic NETWORK_ERROR — see
+        # plans/codex-usage-on-windows.md §4. On Windows the rewritten
+        # `auth.json` is left at the default ACL/permissions: this file
+        # carries a short-lived OAuth token, not a long-lived secret, and is
+        # the same file the Codex CLI itself manages, so skipping an
+        # NTFS-ACL equivalent of 0600 is an accepted scope cut, not an
+        # oversight.
+        if _SUPPORTS_POSIX_FILE_MODES:
+            os.fchmod(handle_descriptor, 0o600)
         with os.fdopen(handle_descriptor, "w", encoding="utf-8") as temp_handle:
             json.dump(raw, temp_handle, indent=2)
             temp_handle.write("\n")
         os.replace(str(temporary_path), str(path))
-        os.chmod(str(path), 0o600)
+        if _SUPPORTS_POSIX_FILE_MODES:
+            os.chmod(str(path), 0o600)
     except BaseException:
         if temporary_path is not None:
             try:

@@ -64,6 +64,7 @@ just sees the host die.
 
 ```sh
 just install-usage-host          # register the native host (needs the extension built)
+just deploy-windows               # copy backend/*.py to a native Windows path, for install_usage_host.py
 just test-usage-host             # exercise the host directly, without Chrome
 just extension-id                # the ID Chrome derives from chrome-extension/dist/
 just uninstall-usage-host

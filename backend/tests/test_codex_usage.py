@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -186,6 +187,27 @@ class AuthFileRoundTripTests(unittest.TestCase):
             self.assertIn("OPENAI_API_KEY", rewritten)
             self.assertNotEqual(rewritten["last_refresh"], "2020-01-01T00:00:00Z")
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_write_skips_chmod_on_windows(self):
+        # `os.fchmod` does not exist on Windows — see
+        # plans/codex-usage-on-windows.md §4. Patching the module-scoped flag
+        # (rather than `os.name` itself, which `pathlib.Path()` also reads,
+        # or actually running on Windows, which CI does not) exercises the
+        # guard without needing a Windows machine.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "auth.json"
+            path.write_text(
+                json.dumps({"tokens": {"access_token": "old", "refresh_token": "old-refresh"}}),
+                encoding="utf-8",
+            )
+            credential = codex_usage._read_auth_file(path)
+            credential["access_token"] = "new"
+
+            with unittest.mock.patch.object(codex_usage, "_SUPPORTS_POSIX_FILE_MODES", False):
+                codex_usage._write_auth_file(path, credential)
+
+            rewritten = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(rewritten["tokens"]["access_token"], "new")
 
 
 class _Handler(BaseHTTPRequestHandler):

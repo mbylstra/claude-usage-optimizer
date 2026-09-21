@@ -40,6 +40,15 @@ of §§2-4 below still apply — only the wrapper's Python invocation changes,
 from a direct `python.exe` call to a `wsl.exe -e python3` call — but that
 should be confirmed before building it, since it changes what "install" means.
 
+**Resolved: A, plus a deploy step, because the repository itself lives in
+WSL.** The actual case was "native Windows Chrome and native Windows Python
+(setup A), but the checkout this plan is built from is under WSL" — a third
+combination the two bullets above don't name, since they're about where
+`codex login` ran, not where the repository lives. `wsl.exe` shelling out was
+never needed: setup A's `.bat` (direct `python.exe`, no WSL involved) is
+exactly right once *some* copy of `backend/*.py` sits on the Windows-visible
+filesystem. `just deploy-windows` is that copy step — see §2.
+
 ## Step 0 — diagnose before touching anything
 
 "Does not appear to be working" could mean the host never starts, or it
@@ -138,6 +147,45 @@ with an `if os == windows` branch in `sh`. Reasons:
 matching the existing recipe's signature (`extension_id=""` optional arg,
 same rewrite-from-template-every-time safety property the root `CLAUDE.md`
 requires of every `install-*` recipe).
+
+**As implemented, §§1-2:** `backend/install_usage_host.py` was built as
+described, but as a **Windows-only** script (refuses to run unless
+`sys.platform == "win32"`) rather than the cross-platform wrapper originally
+imagined — the existing macOS `install-usage-host` justfile recipe was left
+completely untouched rather than routed through it, since the two have no
+logic in common once the folder-drop-vs-registry split is taken seriously,
+and a shared entry point would have meant threading a platform branch through
+one script for no reuse. `just install-usage-host` was **not** changed into a
+wrapper; the Windows path is a separate, explicitly-named command instead
+(see below).
+
+Because the repository lives in WSL (see the resolved setup note above), a
+second piece was needed that the plan didn't anticipate: `just deploy-windows
+[target]` copies `backend/*.py` (code only — never the runtime files
+`usage-host.py` writes next to itself, and never `jira-credentials.json`) to
+a native Windows path, defaulting to `%USERPROFILE%\programs\
+claude-usage-optimizer-backend` (resolved via `cmd.exe` from inside the WSL
+recipe, since there's no reliable way to ask Windows for "the current user's
+profile" other than asking Windows). `install_usage_host.py` is then run from
+*that* deployed copy, on the Windows side, which is what makes its
+`Path(__file__).resolve().parent` a genuine Windows path with no `/mnt/c` ↔
+`C:\` translation logic needed anywhere.
+
+**A real bug, found and fixed during first manual test:** the first version
+of `write_manifest` built the rendered manifest with a plain string
+`.replace()` into the template's raw JSON text — `template.replace(...,
+str(batch_path))` — rather than through `json.dumps`. On Windows,
+`str(batch_path)` is backslash-separated (`C:\Users\...\usage-host.bat`), and
+`\U`, `\p`, `\c` etc. are not valid JSON escape sequences, so the written
+manifest was invalid JSON. Chrome silently refused to parse it: no log entry
+at all (the host process was never spawned), surfacing only as
+`HOST_UNAVAILABLE` in the popup — exactly the failure shape §0 describes for
+"the host never starts," but with a cause outside anything §0 enumerates.
+Fixed by parsing the template with `json.loads`, setting `path` and
+`allowed_origins` as real dict values, and writing back with `json.dumps` —
+letting `json` handle the escaping rather than string substitution. Confirmed
+by round-tripping a real Windows-style path (with backslashes) through the
+fixed function and back through `json.loads`.
 
 ## 3. `extension-id.py` cannot be trusted across the WSL/Windows boundary
 
@@ -265,26 +313,37 @@ a bug that isn't there.
 
 ## Testing
 
-- `backend/tests/test_codex_usage.py` — add a case exercising
-  `_write_auth_file` with the `os.fchmod` guard, running under whatever CI
-  platform is available; if CI is Linux/macOS-only, at minimum add a comment
-  noting the Windows branch is untested by CI and was verified manually
-  (state the date and machine when it's done).
+- `backend/tests/test_codex_usage.py` has a case exercising `_write_auth_file`
+  with the Windows branch (`test_write_skips_chmod_on_windows`), run on Linux
+  by patching a module-scoped `_SUPPORTS_POSIX_FILE_MODES` flag rather than
+  `os.name` itself — patching `os.name` directly was tried first and rejected,
+  since `pathlib.Path()` also reads it to choose `WindowsPath`/`PosixPath`,
+  so patching it mid-test broke every `Path(...)` call in the same function
+  rather than isolating the one guard under test. 23/23 tests pass.
 - Manual, on an actual Windows machine (this cannot be verified from Linux/
   WSL — the whole point is Windows-specific process-spawn and registry
-  behavior):
-  1. `codex login` on Windows (setup A) or confirm credential path for setup
-     B.
+  behavior). **Status: verified working on a real Windows machine (WSL-hosted
+  repo, native Windows Chrome and Python) as of 2026-09-21**, after fixing the
+  manifest-JSON-escaping bug described above — the popup now reports real
+  Codex usage numbers end to end.
+  1. `codex login` on Windows (setup A) — done.
   2. Run the new install script; confirm the registry value and manifest
      both land correctly (`reg query
-     HKCU\Software\Google\Chrome\NativeMessagingHosts\com.claudeusageoptimizer.usagehost`).
+     HKCU\Software\Google\Chrome\NativeMessagingHosts\com.claudeusageoptimizer.usagehost`)
+     — done, after the JSON fix above; the first attempt failed exactly this
+     way (invalid manifest, host never spawned, no log file at all).
   3. Reload the extension, open the popup with Codex usage enabled in
      Settings, confirm `usage-host.log` shows `Received getCodexUsage
-     message` and the popup renders real numbers.
+     message` and the popup renders real numbers — confirmed working.
   4. Force a token refresh (or wait for one) and confirm no `AttributeError`
-     appears in the log.
+     appears in the log — **not yet separately confirmed**; worth checking
+     after the credential has been live roughly an hour.
   5. Confirm the ordinary `snapshot`/settings-save paths still don't crash
-     the host (open Settings, change something, save).
+     the host (open Settings, change something, save) — not yet separately
+     confirmed, though `install_launch_agent(only_if_installed=True)`'s
+     early-return-before-`launchctl` guard was verified by static reading of
+     `autonomous_work_settings.py` (the check precedes the `subprocess.run`
+     call with nothing in between).
 
 ## Explicit non-goals (repeating the constraint so it isn't scope-crept)
 

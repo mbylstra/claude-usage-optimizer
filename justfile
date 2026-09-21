@@ -494,6 +494,39 @@ uninstall-usage-host:
     rm -f "{{ native_host_dir }}/{{ native_host_name }}.json"
     @echo "Removed {{ native_host_name }}"
 
+# Copy backend/*.py to a native Windows path, for Chrome (always a Windows
+# process) to spawn from — see plans/codex-usage-on-windows.md. Only needed
+# when this repository itself lives inside WSL; skip this and run
+# install_usage_host.py directly if the repo is already on the Windows side.
+# Code only, never the runtime files usage-host.py writes next to itself
+# (claude-usage.json, autonomous-work-settings.json, jira-credentials.json,
+# ...) — those belong to the Windows-side copy and must not be clobbered by a
+# re-deploy, and the credential in particular has no business leaving WSL.
+# Defaults under the Windows user's own profile (%USERPROFILE%\programs)
+# rather than C:\ or /mnt/c/Users/<name> hand-typed, since the WSL-visible
+# username under /mnt/c/Users/ does not always match the invoking user and
+# there is no reliable way to ask Windows for "the current user's profile"
+# from here.
+deploy-windows target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    target="{{ target }}"
+    if [ -z "$target" ]; then
+      windows_user_profile="$(cmd.exe /c "echo %USERPROFILE%" 2>/dev/null | tr -d '\r')"
+      if [ -z "$windows_user_profile" ] || [[ "$windows_user_profile" == *%USERPROFILE%* ]]; then
+        echo "Could not ask Windows for %USERPROFILE% (are you in WSL with cmd.exe on PATH?)." >&2
+        echo "Pass a target explicitly: just deploy-windows /mnt/c/path/you/want" >&2
+        exit 1
+      fi
+      target="$(wslpath "$windows_user_profile")/programs/claude-usage-optimizer-backend"
+    fi
+    mkdir -p "$target"
+    cp backend/*.py "$target/"
+    cp "backend/{{ native_host_name }}.json" "$target/"
+    echo "Copied backend/*.py to $target"
+    echo "On the Windows machine, run (from a Windows Python, in that folder):"
+    echo "    python install_usage_host.py THE_ID_CHROME_SHOWS"
+
 # Exercise the native host directly, without Chrome
 [no-exit-message]
 test-usage-host:
