@@ -459,8 +459,26 @@ That is deliberate: the extension can only refresh while Chrome is running, so
 gating on age would mean the nightly job almost never fires on a machine whose
 browser is closed at 2 AM. The trade is that a long-closed browser can have the
 job act on figures from days ago; the age is logged on every decision so that is
-visible after the fact. A missing `weeklyPaceDeltaMs` still skips the run, since
+visible after the fact. A missing pace figure still skips the run, since
 an inactive weekly window is genuinely no data rather than a stale reading.
+
+**The pace gate reads whichever agent's own figure `autonomousWork.agent`
+names** — `weeklyPaceDeltaMs`/`weeklyPaceStatus` for Claude,
+`codexWeeklyPaceDeltaMs`/`codexWeeklyPaceStatus` for Codex, both built the same
+way by `buildUsageSnapshotExport` and selected in `read_pace_snapshot` via
+`pace_snapshot_field_names`. This was not true when the Codex agent switch
+first shipped (`plans/codex-autonomous-work.md` explicitly deferred it as
+"separate work"): every run, Codex included, checked Claude's pace, so a run
+scheduled for Codex could burn through an exhausted Codex week while Claude
+still had headroom, or sit idle while Codex had plenty left. `pace_burn_label`
+splices "Claude" or "Codex" into the gate's log lines and the summary's
+stop-reason text for exactly this reason — the confusion of not being able to
+tell which subscription a stop reason was about is what exposed the bug.
+Fetching the Codex figure costs an extra native-host round trip to Codex's
+usage endpoint, so `fetchCodexSnapshotForPaceGate` in `serviceWorker.ts` only
+makes it when `autonomousWork.agent === 'codex'` — independent of
+`codexUsageEnabled`, which gates the popup's *display* section and has no
+bearing on what the scheduler needs.
 
 **launchd starts jobs with a bare environment.** `uv` and `claude` live in
 `~/.local/bin`, which is why the plist sets `PATH` explicitly. A missing entry

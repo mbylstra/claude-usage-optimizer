@@ -17,6 +17,9 @@ export interface UsageSnapshotExport {
   /** Negative means behind an even burn. Null when the weekly window is inactive. */
   weeklyPaceDeltaMs: number | null;
   weeklyPaceStatus: PaceStatus | null;
+  /** Codex weekly pace delta, if Codex usage is available. Null when inactive or unavailable. */
+  codexWeeklyPaceDeltaMs: number | null;
+  codexWeeklyPaceStatus: PaceStatus | null;
   fiveHourPercent: number | null;
   /**
    * ISO 8601, or null when the API did not report a current session window.
@@ -57,14 +60,22 @@ function percentUsedFor(
 export function buildUsageSnapshotExport(
   snapshot: UsageSnapshot,
   fetchedAt: Date,
+  codexSnapshot?: UsageSnapshot | null,
 ): UsageSnapshotExport {
   const windowStatuses = deriveUsageStatuses(snapshot, fetchedAt);
   const weeklyStatus = findWindowStatus(windowStatuses, 'sevenDay');
+
+  const codexWindowStatuses = codexSnapshot ? deriveUsageStatuses(codexSnapshot, fetchedAt) : [];
+  const codexWeeklyStatus = codexSnapshot
+    ? findWindowStatus(codexWindowStatuses, 'sevenDay')
+    : undefined;
 
   return {
     fetchedAt: fetchedAt.toISOString(),
     weeklyPaceDeltaMs: weeklyStatus?.isActive ? weeklyStatus.paceDeltaMs : null,
     weeklyPaceStatus: weeklyStatus?.isActive ? weeklyStatus.paceStatus : null,
+    codexWeeklyPaceDeltaMs: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceDeltaMs : null,
+    codexWeeklyPaceStatus: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceStatus : null,
     fiveHourPercent: percentUsedFor(windowStatuses, 'fiveHour'),
     fiveHourResetsAt: resetsAtFor(windowStatuses, 'fiveHour'),
     sevenDayPercent: percentUsedFor(windowStatuses, 'sevenDay'),

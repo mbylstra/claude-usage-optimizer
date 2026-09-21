@@ -216,6 +216,31 @@ async function sendTestNotification(): Promise<void> {
 }
 
 /**
+ * Fetches Codex usage for the pace-gate export, but only when the scheduler is
+ * actually configured to run Codex — fetching it otherwise would spawn the
+ * native host and hit Codex's usage endpoint for a figure nothing reads. This
+ * is deliberately independent of `codexUsageEnabled` (the popup's Codex
+ * section toggle): the scheduler needs Codex's pace whenever it is the
+ * configured agent, whether or not the user has chosen to look at the display
+ * section for it.
+ *
+ * A failure here (no Codex CLI login, host unavailable) must not break the
+ * Claude export, so it returns null rather than throwing — the scheduler
+ * already treats a null Codex pace as "no data" and skips a Codex-agent run
+ * rather than guessing, the same as it does for a missing Claude pace.
+ */
+async function fetchCodexSnapshotForPaceGate(): Promise<UsageSnapshot | null> {
+  const settings = await readExtensionSettings();
+  if (settings.autonomousWork.agent !== 'codex') return null;
+
+  try {
+    return await fetchCodexUsageSnapshot();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetches, persists and reflects usage in the toolbar tooltip.
  *
  * On failure the last good snapshot is deliberately kept alongside the error, so
@@ -235,7 +260,8 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
     await writeUsageCache(entry);
     await appendUsageHistorySample(snapshot, fetchedAt);
     await applyToolbarTitle(snapshot);
-    await exportUsageSnapshot(snapshot, fetchedAtDate);
+    const codexSnapshotForExport = await fetchCodexSnapshotForPaceGate();
+    await exportUsageSnapshot(snapshot, fetchedAtDate, codexSnapshotForExport);
 
     const windows = deriveUsageStatuses(snapshot, fetchedAtDate);
     const newModel = deriveSuggestedModel(windows);

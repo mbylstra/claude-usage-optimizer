@@ -168,16 +168,39 @@ class DescribeAgeTests(unittest.TestCase):
 class DescribePaceTests(unittest.TestCase):
     def test_behind(self):
         self.assertEqual(
-            work.describe_pace(-2 * work.MILLISECONDS_PER_HOUR), "2.0h behind an even weekly burn"
+            work.describe_pace(-2 * work.MILLISECONDS_PER_HOUR, "claude"),
+            "2.0h behind an even Claude weekly burn",
         )
 
     def test_ahead(self):
         self.assertEqual(
-            work.describe_pace(3 * work.MILLISECONDS_PER_HOUR), "3.0h ahead of an even weekly burn"
+            work.describe_pace(3 * work.MILLISECONDS_PER_HOUR, "claude"),
+            "3.0h ahead of an even Claude weekly burn",
         )
 
     def test_exactly_zero_reads_as_ahead(self):
-        self.assertEqual(work.describe_pace(0), "0.0h ahead of an even weekly burn")
+        self.assertEqual(work.describe_pace(0, "claude"), "0.0h ahead of an even Claude weekly burn")
+
+    def test_codex_agent_gets_its_own_label(self):
+        self.assertEqual(
+            work.describe_pace(-2 * work.MILLISECONDS_PER_HOUR, "codex"),
+            "2.0h behind an even Codex weekly burn",
+        )
+
+
+class PaceSnapshotFieldNamesTests(unittest.TestCase):
+    """Which JSON keys each agent's pace is read from — the crux of the fix."""
+
+    def test_claude_reads_the_unprefixed_fields(self):
+        self.assertEqual(
+            work.pace_snapshot_field_names("claude"), ("weeklyPaceDeltaMs", "weeklyPaceStatus")
+        )
+
+    def test_codex_reads_the_codex_prefixed_fields(self):
+        self.assertEqual(
+            work.pace_snapshot_field_names("codex"),
+            ("codexWeeklyPaceDeltaMs", "codexWeeklyPaceStatus"),
+        )
 
 
 class EvaluatePaceGateTests(unittest.TestCase):
@@ -194,12 +217,13 @@ class EvaluatePaceGateTests(unittest.TestCase):
             age_seconds=age_seconds,
         )
 
-    def _evaluate(self, pace_snapshot, force=False):
+    def _evaluate(self, pace_snapshot, force=False, agent="claude"):
         return work.evaluate_pace_gate(
             pace_snapshot,
             force=force,
             pace_threshold_ms=self.THRESHOLD_MS,
             five_hour_exhausted_percent=self.FIVE_HOUR_EXHAUSTED_PERCENT,
+            agent=agent,
         )
 
     def test_force_bypasses_everything(self):
@@ -232,6 +256,15 @@ class EvaluatePaceGateTests(unittest.TestCase):
     def test_exactly_at_threshold_counts_as_behind_not_on_pace(self):
         result = self._evaluate(self._snapshot(delta_ms=self.THRESHOLD_MS))
         self.assertTrue(result.ok)
+
+    def test_detail_names_the_agent_the_snapshot_was_read_for(self):
+        # The bug this whole feature exists to fix: a Codex-agent run's stop
+        # reason must say "Codex", not silently describe Claude's pace.
+        result = self._evaluate(
+            self._snapshot(delta_ms=-1 * work.MILLISECONDS_PER_HOUR), agent="codex"
+        )
+        self.assertIn("Codex", result.detail)
+        self.assertNotIn("Claude", result.detail)
 
 
 class ParseResetTimeTests(unittest.TestCase):
@@ -376,7 +409,7 @@ class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
                 "fiveHourResetsAt": "2026-08-25T04:00:00.000Z",
             }
         )
-        snapshot = work.read_pace_snapshot()
+        snapshot = work.read_pace_snapshot("claude")
         self.assertEqual(
             snapshot.five_hour_resets_at,
             datetime(2026, 8, 25, 4, 0, tzinfo=timezone.utc),
@@ -384,9 +417,37 @@ class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
 
     def test_an_extension_that_predates_the_field_still_reads(self):
         self._write_snapshot({"fetchedAt": "2026-08-25T01:00:00.000Z", "weeklyPaceDeltaMs": -1})
-        snapshot = work.read_pace_snapshot()
+        snapshot = work.read_pace_snapshot("claude")
         self.assertIsNotNone(snapshot)
         self.assertIsNone(snapshot.five_hour_resets_at)
+
+    def test_codex_agent_reads_the_codex_prefixed_pace_field(self):
+        self._write_snapshot(
+            {
+                "fetchedAt": "2026-08-25T01:00:00.000Z",
+                "weeklyPaceDeltaMs": -3600000,
+                "weeklyPaceStatus": "behind",
+                "codexWeeklyPaceDeltaMs": 7200000,
+                "codexWeeklyPaceStatus": "ahead",
+            }
+        )
+        snapshot = work.read_pace_snapshot("codex")
+        self.assertEqual(snapshot.weekly_pace_delta_ms, 7200000)
+        self.assertEqual(snapshot.weekly_pace_status, "ahead")
+
+    def test_codex_agent_with_no_codex_pace_reported_is_no_snapshot(self):
+        # A Claude-only pace figure must not be silently used as a stand-in for
+        # Codex's — that is exactly the bug being fixed here.
+        self._write_snapshot(
+            {"fetchedAt": "2026-08-25T01:00:00.000Z", "weeklyPaceDeltaMs": -3600000}
+        )
+        self.assertIsNone(work.read_pace_snapshot("codex"))
+
+    def test_claude_agent_ignores_a_codex_only_pace_figure(self):
+        self._write_snapshot(
+            {"fetchedAt": "2026-08-25T01:00:00.000Z", "codexWeeklyPaceDeltaMs": -3600000}
+        )
+        self.assertIsNone(work.read_pace_snapshot("claude"))
 
 
 class ParseQueueTests(unittest.TestCase):

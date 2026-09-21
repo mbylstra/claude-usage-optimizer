@@ -626,14 +626,40 @@ def describe_age(age_seconds: float | None) -> str:
     return f"{age_seconds / 86_400:.1f} days old"
 
 
-def read_pace_snapshot() -> PaceSnapshot | None:
+def pace_snapshot_field_names(agent: str) -> tuple[str, str]:
+    """The snapshot's JSON keys for this agent's weekly pace delta and status.
+
+    Claude and Codex burn from separate subscriptions, so the extension exports
+    a pace figure for each — `weeklyPaceDeltaMs`/`weeklyPaceStatus` for Claude,
+    `codexWeeklyPaceDeltaMs`/`codexWeeklyPaceStatus` for Codex, both built the
+    same way in `buildUsageSnapshotExport`. The gate has to read whichever one
+    the configured agent actually spends from: reading Claude's while running
+    Codex prompts would let the scheduler burn through an exhausted Codex week
+    on the strength of Claude still having headroom, or the reverse.
+    """
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX:
+        return "codexWeeklyPaceDeltaMs", "codexWeeklyPaceStatus"
+    return "weeklyPaceDeltaMs", "weeklyPaceStatus"
+
+
+def pace_burn_label(agent: str) -> str:
+    """"Claude" or "Codex" — spliced into the gate's log lines and the summary's
+    stop-reason text, so which subscription's pace a decision was made against
+    is visible at a glance rather than assumed."""
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX:
+        return "Codex"
+    return "Claude"
+
+
+def read_pace_snapshot(agent: str) -> PaceSnapshot | None:
     """Load the extension's export, or None if it is absent, unreadable or has no pace.
 
-    The newest snapshot is used however old it is. There is no freshness gate,
-    because the extension can only refresh while Chrome is running: gating on age
-    would mean the nightly job almost never fires on a machine whose browser is
-    closed at 2 AM. The age is logged so a run against week-old figures is at
-    least visible in the log.
+    Reads whichever agent's weekly figure `agent` names — see
+    `pace_snapshot_field_names`. The newest snapshot is used however old it is.
+    There is no freshness gate, because the extension can only refresh while
+    Chrome is running: gating on age would mean the nightly job almost never
+    fires on a machine whose browser is closed at 2 AM. The age is logged so a
+    run against week-old figures is at least visible in the log.
     """
     if not USAGE_SNAPSHOT_FILE.exists():
         log_message(f"No usage snapshot at {USAGE_SNAPSHOT_FILE} — is the extension running?")
@@ -652,14 +678,20 @@ def read_pace_snapshot() -> PaceSnapshot | None:
     # An unreadable timestamp costs us a log line, not the run.
     age_seconds = snapshot_age_seconds(snapshot_data.get("fetchedAt"))
 
-    pace_delta = snapshot_data.get("weeklyPaceDeltaMs")
+    pace_delta_field, pace_status_field = pace_snapshot_field_names(agent)
+    pace_delta = snapshot_data.get(pace_delta_field)
     if not isinstance(pace_delta, (int, float)):
         # Null is the honest answer when the weekly window is not currently
-        # running; acting on a guess of zero would be worse than doing nothing.
-        log_message("Usage snapshot has no weekly pace delta (weekly window inactive) — skipping")
+        # running (or, for Codex, when the extension could not reach it at
+        # all); acting on a guess of zero would be worse than doing nothing.
+        burn_label = pace_burn_label(agent)
+        log_message(
+            f"Usage snapshot has no {burn_label} weekly pace delta "
+            f"({burn_label} weekly window inactive or unavailable) — skipping"
+        )
         return None
 
-    weekly_pace_status = snapshot_data.get("weeklyPaceStatus")
+    weekly_pace_status = snapshot_data.get(pace_status_field)
     five_hour_percent = snapshot_data.get("fiveHourPercent")
     return PaceSnapshot(
         weekly_pace_delta_ms=float(pace_delta),
@@ -672,10 +704,10 @@ def read_pace_snapshot() -> PaceSnapshot | None:
     )
 
 
-def describe_pace(pace_delta_ms: float) -> str:
+def describe_pace(pace_delta_ms: float, agent: str) -> str:
     hours = abs(pace_delta_ms) / MILLISECONDS_PER_HOUR
     direction = "behind" if pace_delta_ms < 0 else "ahead of"
-    return f"{hours:.1f}h {direction} an even weekly burn"
+    return f"{hours:.1f}h {direction} an even {pace_burn_label(agent)} weekly burn"
 
 
 @dataclass(frozen=True)
@@ -700,8 +732,13 @@ def evaluate_pace_gate(
     force: bool,
     pace_threshold_ms: float,
     five_hour_exhausted_percent: float,
+    agent: str,
 ) -> GateResult:
     """Pure decision logic behind `check_pace_gate` — no I/O, no logging.
+
+    `agent` only shapes the wording (via `describe_pace`) — `pace_snapshot` has
+    already been read against the right agent's figure by `read_pace_snapshot`,
+    so the threshold arithmetic itself is agent-agnostic.
 
     Split out so the threshold arithmetic (the part most worth getting right)
     can be unit-tested against explicit snapshots and thresholds, without
@@ -715,7 +752,7 @@ def evaluate_pace_gate(
         return GateResult(False, "noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
 
     snapshot_description = (
-        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms)} "
+        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms, agent)} "
         f"(snapshot {describe_age(pace_snapshot.age_seconds)})"
     )
 
@@ -723,7 +760,7 @@ def evaluate_pace_gate(
         return GateResult(
             False,
             "onPace",
-            f"{snapshot_description}, threshold is {describe_pace(pace_threshold_ms)}",
+            f"{snapshot_description}, threshold is {describe_pace(pace_threshold_ms, agent)}",
         )
 
     if (
@@ -754,12 +791,13 @@ def check_pace_gate(force: bool) -> GateResult:
         log_message("Pace gate bypassed (--force)")
         return GateResult(ok=True)
 
-    pace_snapshot = read_pace_snapshot()
+    pace_snapshot = read_pace_snapshot(AUTONOMOUS_WORK_AGENT)
     result = evaluate_pace_gate(
         pace_snapshot,
         force=False,
         pace_threshold_ms=PACE_THRESHOLD_MS,
         five_hour_exhausted_percent=FIVE_HOUR_EXHAUSTED_PERCENT,
+        agent=AUTONOMOUS_WORK_AGENT,
     )
 
     if pace_snapshot is None:

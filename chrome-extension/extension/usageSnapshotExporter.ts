@@ -42,9 +42,13 @@ const PRIME_FOLDER_ACCESS_MESSAGE_TYPE = 'primeFolderAccess';
 const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
 const JIRA_STATUS_MESSAGE_TYPE = 'getJiraStatus';
 
-export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Date): Promise<void> {
+export async function exportUsageSnapshot(
+  snapshot: UsageSnapshot,
+  fetchedAt: Date,
+  codexSnapshot?: UsageSnapshot | null,
+): Promise<void> {
   try {
-    const exported = buildUsageSnapshotExport(snapshot, fetchedAt);
+    const exported = buildUsageSnapshotExport(snapshot, fetchedAt, codexSnapshot);
     const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
       type: SNAPSHOT_MESSAGE_TYPE,
       snapshot: exported,
