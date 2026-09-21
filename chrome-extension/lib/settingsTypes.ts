@@ -7,6 +7,7 @@ import { DEFAULT_SCHEDULE_TIME, normaliseScheduleTime, type ScheduleTime } from 
 
 /** Every `claude --effort` level that exists, low to high. */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type AutonomousWorkAgent = 'claude' | 'codex';
 
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -34,6 +35,8 @@ export interface AutonomousWorkSettings {
    * that runs the work rather than here.
    */
   newProjectsDirectory: string;
+  /** The CLI used for queued autonomous work. */
+  agent: AutonomousWorkAgent;
   /**
    * The Claude model to use for autonomous runs. Haiku is not offered: the
    * scheduler runs `claude -p` under auto permission mode, which needs
@@ -194,6 +197,7 @@ export interface ExtensionSettings {
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
 export const DEFAULT_CODEX_USAGE_ENABLED = false;
 export const DEFAULT_MODEL = 'opus';
+export const DEFAULT_AUTONOMOUS_WORK_AGENT: AutonomousWorkAgent = 'claude';
 /** No level — send no `--effort` flag, and let `claude` keep its own default. */
 export const DEFAULT_EFFORT = '';
 export const DEFAULT_MAX_PROMPT_DURATION_HOURS = 5;
@@ -207,6 +211,7 @@ export const DEFAULT_REPOSITORIES: RepositoryOption[] = [];
 export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   scheduleTime: DEFAULT_SCHEDULE_TIME,
   newProjectsDirectory: DEFAULT_NEW_PROJECTS_DIRECTORY,
+  agent: DEFAULT_AUTONOMOUS_WORK_AGENT,
   model: DEFAULT_MODEL,
   effort: DEFAULT_EFFORT,
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
@@ -246,6 +251,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
   ) as {
     scheduleTime?: unknown;
     newProjectsDirectory?: unknown;
+    agent?: unknown;
     model?: unknown;
     effort?: unknown;
     maxPromptDurationHours?: unknown;
@@ -263,6 +269,9 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     autonomousWorkValue.newProjectsDirectory.trim() !== ''
       ? autonomousWorkValue.newProjectsDirectory
       : DEFAULT_NEW_PROJECTS_DIRECTORY;
+
+  const agent: AutonomousWorkAgent =
+    autonomousWorkValue.agent === 'codex' ? 'codex' : DEFAULT_AUTONOMOUS_WORK_AGENT;
 
   // A stored 'haiku' (no longer offered) lands on 'sonnet', the nearest still-
   // valid model, rather than jumping to DEFAULT_MODEL — which is the priciest.
@@ -340,6 +349,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     autonomousWork: {
       scheduleTime: normaliseScheduleTime(autonomousWorkValue.scheduleTime),
       newProjectsDirectory,
+      agent,
       model,
       effort,
       maxPromptDurationHours,

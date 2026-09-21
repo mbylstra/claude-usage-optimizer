@@ -120,6 +120,13 @@ class DescribeStopReasonTests(unittest.TestCase):
 
 
 class RenderSessionSummaryTests(unittest.TestCase):
+    def test_attempt_identifies_codex_and_its_pinned_model(self):
+        session = build_session()
+        session.record_attempt(build_attempt(agent="codex", model="gpt-5.6-sol", turns=None, cost_usd=None))
+        rendered = summary_module.render_session_summary(session)
+        self.assertIn("**Agent:** Codex (gpt-5.6-sol)", rendered)
+        self.assertNotIn("turns", rendered)
+
     def test_a_scheduled_resume_is_stated_under_why_it_stopped(self):
         # Otherwise the queue starts again hours later with nothing in the
         # morning's file to say why.

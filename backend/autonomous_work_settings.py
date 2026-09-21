@@ -52,6 +52,10 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
 DEFAULT_MODEL = "opus"
+AUTONOMOUS_WORK_AGENT_CLAUDE = "claude"
+AUTONOMOUS_WORK_AGENT_CODEX = "codex"
+AUTONOMOUS_WORK_AGENTS = (AUTONOMOUS_WORK_AGENT_CLAUDE, AUTONOMOUS_WORK_AGENT_CODEX)
+DEFAULT_AUTONOMOUS_WORK_AGENT = AUTONOMOUS_WORK_AGENT_CLAUDE
 # The Claude models a run may be pinned to. The one home both the settings
 # screen's validation and the Jira board's per-card `Model` dropdown
 # (`queue_source_jira.MODEL_FIELD_NAME`) check against, so the two cannot drift.
@@ -167,6 +171,7 @@ class AutonomousWorkSettings:
     schedule_hour: int = DEFAULT_SCHEDULE_HOUR
     schedule_minute: int = DEFAULT_SCHEDULE_MINUTE
     new_projects_directory: str = DEFAULT_NEW_PROJECTS_DIRECTORY
+    agent: str = DEFAULT_AUTONOMOUS_WORK_AGENT
     model: str = DEFAULT_MODEL
     """The default effort level for `model`, or `DEFAULT_EFFORT` ("") to send no
     `--effort` flag at all. Validated against `MODEL_EFFORT_LEVELS[model]`, not
@@ -273,6 +278,9 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     else:
         model = DEFAULT_MODEL
 
+    agent_value = settings_data.get("agent")
+    agent = agent_value if agent_value in AUTONOMOUS_WORK_AGENTS else DEFAULT_AUTONOMOUS_WORK_AGENT
+
     # Validated against the *chosen* model's own levels, not the flat
     # VALID_EFFORT_LEVELS — a level valid for one model but not this one is
     # exactly as wrong as a level that never existed. Falls back to
@@ -354,6 +362,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
             settings_data.get("scheduleMinute"), DEFAULT_SCHEDULE_MINUTE, 59
         ),
         new_projects_directory=new_projects_directory,
+        agent=agent,
         model=model,
         effort=effort,
         max_prompt_duration_hours=_coerce_positive_hours(
@@ -389,6 +398,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "scheduleHour": settings.schedule_hour,
         "scheduleMinute": settings.schedule_minute,
         "newProjectsDirectory": settings.new_projects_directory,
+        "agent": settings.agent,
         "model": settings.model,
         "effort": settings.effort,
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
@@ -577,8 +587,9 @@ def main() -> int:
 
     print("Scheduled run:      {}".format(settings.describe_schedule()))
     print("New projects in:    {}".format(settings.new_projects_directory))
-    print("Model for runs:     {}".format(settings.model))
-    print("Effort for runs:    {}".format(settings.effort or "(claude's own default)"))
+    print("Agent for runs:     {}".format(settings.agent))
+    print("Claude model:       {}".format(settings.model))
+    print("Claude effort:      {}".format(settings.effort or "(claude's own default)"))
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))

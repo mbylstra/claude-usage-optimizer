@@ -25,7 +25,7 @@
   Every placeholder here is substituted textually, so do not name one in prose.
 
   PATH matters more than anything else here: launchd starts jobs with a bare
-  environment, and both `uv` and `claude` install under the home directory
+  environment, and `uv`, `claude`, and `codex` install under the home directory
   rather than on the default path. A missing PATH entry shows up as
   "command not found" in system.log and nothing else.
 -->

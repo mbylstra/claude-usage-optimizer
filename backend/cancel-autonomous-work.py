@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stop any in-flight autonomous work run.
 
-Killing the scheduler alone is not enough. It spawns `claude` as a child, and
+Killing the scheduler alone is not enough. It spawns Claude or Codex as a child, and
 the host starts the scheduler in its own session (so the run survives Chrome
 tearing the native host down), which means a group signal aimed at the scheduler
 does not reliably reach `claude` — it has been observed to outlive one and keep
@@ -35,6 +35,7 @@ PROCESS_PATTERNS = [
     re.compile(r"run-autonomous-work\.py"),
     re.compile(r"claude-usage-autonomous-work"),
     re.compile(r"^claude -p |/claude -p "),
+    re.compile(r"^codex exec |/codex exec "),
 ]
 
 TERM_GRACE_SECONDS = 3.0
@@ -100,7 +101,7 @@ def main() -> int:
             return 0
         time.sleep(POLL_INTERVAL_SECONDS)
 
-    # `claude` in particular has been seen to ignore SIGTERM here.
+    # A child CLI can outlive SIGTERM here.
     survivors = running_processes()
     for pid, command in survivors:
         print("Force-killing {}  {}".format(pid, command[:90]))

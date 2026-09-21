@@ -31,6 +31,8 @@ export interface RunStartedEvent {
   isNewProject: boolean;
   prompt: string;
   model: string;
+  /** Missing only in retained histories written before provider support. */
+  agent?: 'claude' | 'codex';
 }
 
 /** One stream-json event, exactly as `claude` emitted it. */
@@ -46,6 +48,22 @@ export interface ClaudeOutputEvent {
   type: 'claudeOutput';
   runId: string;
   at: string;
+  text: string;
+}
+
+/** Provider-neutral envelopes written by current scheduler versions. */
+export interface AgentEventEnvelope {
+  type: 'agentEvent';
+  runId: string;
+  at: string;
+  agent: 'claude' | 'codex';
+  event: Record<string, unknown>;
+}
+export interface AgentOutputEvent {
+  type: 'agentOutput';
+  runId: string;
+  at: string;
+  agent: 'claude' | 'codex';
   text: string;
 }
 
@@ -90,6 +108,8 @@ export type AutonomousRunEvent =
   | RunStartedEvent
   | ClaudeEventEnvelope
   | ClaudeOutputEvent
+  | AgentEventEnvelope
+  | AgentOutputEvent
   | RunFinishedEvent
   | RunSkippedEvent
   | ResumeScheduledEvent;
@@ -154,6 +174,7 @@ export function parseAutonomousRunEvent(value: unknown): AutonomousRunEvent | nu
         isNewProject: readBoolean(source, 'isNewProject'),
         prompt: readString(source, 'prompt'),
         model: readString(source, 'model'),
+        agent: source.agent === 'codex' ? 'codex' : 'claude',
       };
 
     case 'claudeEvent': {
@@ -164,6 +185,27 @@ export function parseAutonomousRunEvent(value: unknown): AutonomousRunEvent | nu
 
     case 'claudeOutput':
       return { type: 'claudeOutput', runId, at, text: readString(source, 'text') };
+
+    case 'agentEvent': {
+      const agentEvent = source.event;
+      if (typeof agentEvent !== 'object' || agentEvent === null) return null;
+      return {
+        type: 'agentEvent',
+        runId,
+        at,
+        agent: source.agent === 'codex' ? 'codex' : 'claude',
+        event: agentEvent as Record<string, unknown>,
+      };
+    }
+
+    case 'agentOutput':
+      return {
+        type: 'agentOutput',
+        runId,
+        at,
+        agent: source.agent === 'codex' ? 'codex' : 'claude',
+        text: readString(source, 'text'),
+      };
 
     case 'runFinished': {
       const outcome = readString(source, 'outcome');

@@ -104,6 +104,8 @@ class PromptAttempt:
     result_text: str | None
     started_at: datetime
     finished_at: datetime
+    agent: str = "claude"
+    model: str = ""
     turns: int | None = None
     cost_usd: float | None = None
 
@@ -206,6 +208,7 @@ def render_attempt(attempt: PromptAttempt) -> list[str]:
     lines = [f"### {label} — {prompt_title(attempt.prompt)}", ""]
 
     facts = [
+        f"- **Agent:** {attempt.agent.title()}" + (f" ({attempt.model})" if attempt.model else ""),
         f"- Ran {attempt.started_at:%H:%M}–{attempt.finished_at:%H:%M}"
         f" ({describe_duration((attempt.finished_at - attempt.started_at).total_seconds())})",
         f"- Working directory: `{attempt.working_directory}`"
@@ -225,7 +228,7 @@ def render_attempt(attempt: PromptAttempt) -> list[str]:
         lines.extend([heading, "", truncate(attempt.result_text, RESULT_TEXT_CHARACTER_LIMIT), ""])
     else:
         lines.extend(
-            ["Claude produced no closing message — see `backend/autonomous-work.log`.", ""]
+            [f"{attempt.agent.title()} produced no closing message — see `backend/autonomous-work.log`.", ""]
         )
 
     return lines

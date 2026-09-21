@@ -300,6 +300,7 @@ export function SettingsPage({
   };
 
   const usesJira = autonomousWorkSettings.queueSource === 'jira';
+  const usesCodex = autonomousWorkSettings.agent === 'codex';
 
   return (
     <PopupFrame>
@@ -360,10 +361,31 @@ export function SettingsPage({
           <div className="flex flex-col gap-0.5">
             <h2 className="text-sm font-medium">Autonomous work</h2>
             <p className="text-muted-foreground text-xs">
-              A run starts automatically at{' '}
+              {usesCodex ? 'Codex (Sol)' : 'Claude'} runs automatically at{' '}
               {describeScheduleTime(autonomousWorkSettings.scheduleTime)} when the week is far
               enough behind pace.
             </p>
+          </div>
+
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-0.5">
+              <label htmlFor="autonomous-work-agent" className="text-sm font-medium">
+                Use Codex for autonomous work
+              </label>
+              <p className="text-muted-foreground text-xs">
+                Codex uses Sol for now. This does not affect the separate Codex usage display.
+              </p>
+            </div>
+            <Switch
+              id="autonomous-work-agent"
+              checked={usesCodex}
+              onCheckedChange={(checked) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  agent: checked ? 'codex' : 'claude',
+                })
+              }
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4">
@@ -448,11 +470,12 @@ export function SettingsPage({
 
           <div className="flex flex-col gap-1">
             <label htmlFor="model-select" className="text-sm">
-              Model for autonomous runs
+              Claude model for autonomous runs
             </label>
             <select
               id="model-select"
               className={SELECT_CLASS_NAME}
+              disabled={usesCodex}
               value={autonomousWorkSettings.model}
               onChange={(event) => {
                 const model = event.target.value as 'sonnet' | 'opus';
@@ -472,17 +495,20 @@ export function SettingsPage({
               <option value="opus">Opus (most capable)</option>
             </select>
             <p className="text-muted-foreground text-xs">
-              The Claude model to use when running queued prompts automatically.
+              {usesCodex
+                ? 'Codex is currently pinned to Sol. Your Claude model choice is preserved.'
+                : 'The Claude model to use when running queued prompts automatically.'}
             </p>
           </div>
 
           <div className="flex flex-col gap-1">
             <label htmlFor="effort-select" className="text-sm">
-              Effort for autonomous runs
+              Claude effort for autonomous runs
             </label>
             <select
               id="effort-select"
               className={SELECT_CLASS_NAME}
+              disabled={usesCodex}
               value={autonomousWorkSettings.effort}
               onChange={(event) =>
                 onAutonomousWorkSettingsChange({
@@ -499,10 +525,16 @@ export function SettingsPage({
               ))}
             </select>
             <p className="text-muted-foreground text-xs">
-              How much the model thinks before acting. Only levels {autonomousWorkSettings.model}{' '}
-              supports are offered here; a Jira card can override this per prompt, limited to the
-              levels that card's own Model choice supports (or this list, if the card leaves Model
-              blank).
+              {usesCodex ? (
+                'Codex is currently pinned to Sol; Claude effort and Jira overrides are ignored.'
+              ) : (
+                <>
+                  How much the model thinks before acting. Only levels{' '}
+                  {autonomousWorkSettings.model} supports are offered here; a Jira card can override
+                  this per prompt, limited to the levels that card's own Model choice supports (or
+                  this list, if the card leaves Model blank).
+                </>
+              )}
             </p>
           </div>
 

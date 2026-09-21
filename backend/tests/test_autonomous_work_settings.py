@@ -63,6 +63,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "scheduleHour": 3,
                 "scheduleMinute": 45,
                 "newProjectsDirectory": "~/code/projects",
+                "agent": "codex",
                 "model": "sonnet",
                 "effort": "xhigh",
                 "maxPromptDurationHours": 2.5,
@@ -78,6 +79,7 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.schedule_hour, 3)
         self.assertEqual(result.schedule_minute, 45)
         self.assertEqual(result.new_projects_directory, "~/code/projects")
+        self.assertEqual(result.agent, "codex")
         self.assertEqual(result.model, "sonnet")
         self.assertEqual(result.effort, "xhigh")
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
@@ -103,6 +105,16 @@ class ParseSettingsTests(unittest.TestCase):
     def test_a_missing_queue_source_is_the_file(self):
         self.assertEqual(
             settings_module.parse_settings({}).queue_source, settings_module.QUEUE_SOURCE_FILE
+        )
+
+    def test_missing_or_malformed_agent_falls_back_to_claude(self):
+        self.assertEqual(
+            settings_module.parse_settings({}).agent,
+            settings_module.AUTONOMOUS_WORK_AGENT_CLAUDE,
+        )
+        self.assertEqual(
+            settings_module.parse_settings({"agent": "other"}).agent,
+            settings_module.AUTONOMOUS_WORK_AGENT_CLAUDE,
         )
 
     def test_blank_and_non_string_status_names_are_dropped(self):

@@ -60,6 +60,7 @@ function RunHeader({ model }: { model: AutonomousRunViewModel }) {
     model.elapsedMs === null ? null : formatStopwatch(model.elapsedMs),
     cost,
     model.turns === null ? null : `${model.turns} turns`,
+    model.agent === null ? null : model.agent === 'codex' ? 'Codex' : 'Claude',
     model.model,
   ].filter((fact): fact is string => fact !== null && fact !== '');
 

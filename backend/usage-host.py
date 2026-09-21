@@ -581,11 +581,12 @@ def apply_autonomous_work_settings(message):
     # the only view of what the extension actually sent, as opposed to what the
     # popup was showing.
     log_message(
-        "Settings updated: run at {}, new projects in {}, model {}, max {}h per prompt, "
+        "Settings updated: run at {}, new projects in {}, agent {}, Claude model {}, max {}h per prompt, "
         "pace threshold {}h, resume after reset {}, {} chars appended to prompts, queue in {}, "
         "{} repositories, ({})".format(
             settings.describe_schedule(),
             settings.new_projects_directory,
+            settings.agent,
             settings.model,
             settings.max_prompt_duration_hours,
             settings.pace_threshold_hours,

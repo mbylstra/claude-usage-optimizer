@@ -203,9 +203,13 @@ _settings = autonomous_work_settings.read_settings()
 # row and is bounded separately above, by pace and the usage window. There is no
 # way to tell a stuck prompt from a slow one, so this is a flat ceiling on
 # wall-clock time, not an inactivity timeout.
-CLAUDE_MAX_PROMPT_DURATION_SECONDS = environment_int_override(
+AUTONOMOUS_PROMPT_TIMEOUT_SECONDS = environment_int_override(
     "AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS"
 ) or int(_settings.max_prompt_duration_hours * 3600)
+# Kept as an alias for integrations that imported the old name.
+CLAUDE_MAX_PROMPT_DURATION_SECONDS = AUTONOMOUS_PROMPT_TIMEOUT_SECONDS
+CODEX_MODEL = "gpt-5.6-sol"
+AUTONOMOUS_WORK_AGENT = _settings.agent
 # Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
 # which is tuned for interactive use and has already silently switched a nightly
 # run to Haiku. The whole point is to spend the weekly window, so the model this
@@ -514,6 +518,7 @@ class RunEventStream:
         prompt: str,
         forced: bool,
         model: str = CLAUDE_MODEL,
+        agent: str = "claude",
     ) -> None:
         self.emit(
             "runStarted",
@@ -525,15 +530,23 @@ class RunEventStream:
             # The model this prompt actually runs on — a queued entry may have
             # overridden the session default, so this is not always CLAUDE_MODEL.
             model=model,
+            agent=agent,
         )
 
+    def agent_event(self, agent: str, event: dict) -> None:
+        """One provider event, verbatim, for the provider-aware viewer."""
+        self.emit("agentEvent", agent=agent, event=event)
+
+    def agent_output(self, agent: str, text: str) -> None:
+        """A provider line that was not JSON — merged stderr, usually."""
+        self.emit("agentOutput", agent=agent, text=text)
+
+    # Compatibility helpers for callers outside this file.
     def claude_event(self, event: dict) -> None:
-        """One stream-json event, verbatim, so the viewer sees exactly what claude said."""
-        self.emit("claudeEvent", event=event)
+        self.agent_event("claude", event)
 
     def claude_output(self, text: str) -> None:
-        """A line claude emitted that was not JSON — merged stderr, usually."""
-        self.emit("claudeOutput", text=text)
+        self.agent_output("claude", text)
 
     def finished(self, outcome: str, exit_code: int, queue_status: str | None = None) -> None:
         self.emit("runFinished", outcome=outcome, exitCode=exit_code, queueStatus=queue_status)
@@ -1503,6 +1516,41 @@ class ClaudeOutputCollector:
         return self.session_limit_notice is not None
 
 
+class CodexOutputCollector:
+    """The useful, provider-neutral parts of Codex's JSONL event stream."""
+
+    def __init__(self) -> None:
+        self.thread_id: str | None = None
+        self.latest_assistant_text: str | None = None
+        self.failure_detail: str | None = None
+        self.turns: int | None = None
+        self.cost_usd: float | None = None
+
+    def observe(self, event: dict) -> None:
+        event_type = event.get("type")
+        if event_type == "thread.started":
+            thread_id = event.get("thread_id")
+            if isinstance(thread_id, str) and thread_id:
+                self.thread_id = thread_id
+        elif event_type in ("turn.failed", "error"):
+            detail = event.get("error") or event.get("message")
+            self.failure_detail = detail if isinstance(detail, str) else "Codex reported a failed turn"
+        elif event_type == "item.completed":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str) and text.strip():
+                    self.latest_assistant_text = text.strip()
+
+    @property
+    def closing_text(self) -> str | None:
+        return self.failure_detail or self.latest_assistant_text
+
+    @property
+    def hit_session_limit(self) -> bool:
+        return False
+
+
 @dataclass(frozen=True)
 class PromptRunResult:
     """One prompt's outcome, plus what the day's summary reports about it.
@@ -1523,7 +1571,7 @@ class PromptRunResult:
     unmerged_branch: str | None = None
 
 
-def run_claude(
+def run_prompt(
     entry: QueueEntry,
     prompt_text: str,
     working_directory: Path,
@@ -1544,12 +1592,15 @@ def run_claude(
     `claude` runs under is the same one the pick-up comment told a person to
     `claude --resume`.
     """
+    agent = AUTONOMOUS_WORK_AGENT
+    is_codex = agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+    provider_model = CODEX_MODEL if is_codex else claude_model_id_for(entry)
     claude_arguments = claude_arguments_for(entry, session_id)
     events.started(
-        working_directory, is_new_project, prompt_text, forced, claude_model_id_for(entry)
+        working_directory, is_new_project, prompt_text, forced, provider_model, agent
     )
     started_at = datetime.now()
-    output = ClaudeOutputCollector()
+    output = CodexOutputCollector() if is_codex else ClaudeOutputCollector()
     # Taken before the directory is prepared, so a new project reads as the empty
     # thing it is rather than as the repository `git init` is about to make. Any
     # repository already here is recorded as it stands, which is what keeps a
@@ -1613,6 +1664,8 @@ def run_claude(
                 result_text=output.closing_text,
                 started_at=started_at,
                 finished_at=datetime.now(),
+                agent=agent,
+                model=provider_model,
                 turns=output.turns,
                 cost_usd=output.cost_usd,
             )
@@ -1630,8 +1683,14 @@ def run_claude(
             # only once the run is over, which is useless to follow;
             # `stream-json` emits an event per step. stderr is merged in so
             # nothing is lost or deadlocks on a second unread pipe.
+            command = (
+                ["codex", "exec", "--json", "--model", CODEX_MODEL, "--sandbox", "workspace-write",
+                 "--ask-for-approval", "never", prompt_text]
+                if is_codex
+                else ["claude", "-p", prompt_text, *claude_arguments]
+            )
             process = subprocess.Popen(
-                ["claude", "-p", prompt_text, *claude_arguments],
+                command,
                 cwd=working_directory,
                 # Without this `claude` spends three seconds waiting on an
                 # inherited stdin that is never going to produce anything, and
@@ -1643,9 +1702,12 @@ def run_claude(
                 bufsize=1,
             )
         except FileNotFoundError:
-            message = "`claude` not found on PATH — check the launchd PATH setting"
+            message = (
+                "`codex` not found on PATH — install/login to Codex CLI and check the launchd PATH setting"
+                if is_codex else "`claude` not found on PATH — check the launchd PATH setting"
+            )
             log_message(message)
-            events.claude_output(message)
+            events.agent_output(agent, message)
             return run_result(1, "error", result_text=message)
 
         # System sleep freezes the network connection carrying claude's response
@@ -1673,7 +1735,7 @@ def run_claude(
             ran_too_long = True
             process.kill()
 
-        watchdog = threading.Timer(CLAUDE_MAX_PROMPT_DURATION_SECONDS, kill_for_max_duration)
+        watchdog = threading.Timer(AUTONOMOUS_PROMPT_TIMEOUT_SECONDS, kill_for_max_duration)
         watchdog.daemon = True
         watchdog.start()
 
@@ -1693,13 +1755,13 @@ def run_claude(
                         event = json.loads(stripped_line)
                     except json.JSONDecodeError:
                         log_message(f"  {shorten(stripped_line)}")  # plain stderr text
-                        events.claude_output(stripped_line)
+                        events.agent_output(agent, stripped_line)
                         if BACKGROUND_TASK_TIMEOUT_MARKER in stripped_line:
                             background_task_timed_out = True
                         continue
 
                     if isinstance(event, dict):
-                        events.claude_event(event)
+                        events.agent_event(agent, event)
                         output.observe(event)
                         for summary in summarise_stream_event(event):
                             log_message(summary)
@@ -1708,9 +1770,13 @@ def run_claude(
         finally:
             watchdog.cancel()
 
-        result_exit_code, outcome = determine_outcome(
-            exit_code, ran_too_long, background_task_timed_out, output.hit_session_limit
-        )
+        if is_codex:
+            result_exit_code = 0 if exit_code == 0 and output.failure_detail is None and not ran_too_long else exit_code or 1
+            outcome = "completed" if result_exit_code == 0 else "timeout" if ran_too_long else "error"
+        else:
+            result_exit_code, outcome = determine_outcome(
+                exit_code, ran_too_long, background_task_timed_out, output.hit_session_limit
+            )
 
         if output.hit_session_limit:
             log_message(
@@ -1718,7 +1784,7 @@ def run_claude(
                 "— the queue entry is left as todo"
             )
         elif ran_too_long:
-            log_message(f"Prompt exceeded the {CLAUDE_MAX_PROMPT_DURATION_SECONDS}s max run time and was killed")
+            log_message(f"Prompt exceeded the {AUTONOMOUS_PROMPT_TIMEOUT_SECONDS}s max run time and was killed")
         elif exit_code == 0 and background_task_timed_out:
             # The CLI ends the turn (and so the process, with exit code 0) the
             # instant it kills a stuck background task — see
@@ -1744,6 +1810,10 @@ def run_claude(
         )
     finally:
         signal.signal(signal.SIGTERM, previous_termination_handler)
+
+
+# Older test harnesses and integrations call this name directly.
+run_claude = run_prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -1957,11 +2027,13 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
-        effort = claude_effort_for(next_entry)
+        is_codex = AUTONOMOUS_WORK_AGENT == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+        effort = None if is_codex else claude_effort_for(next_entry)
+        model = CODEX_MODEL if is_codex else claude_model_id_for(next_entry)
         effort_description = f" at {effort} effort" if effort else ""
         log_message(
             f"Dry run — would execute in {destination} "
-            f"on model {claude_model_id_for(next_entry)}{effort_description}:\n"
+            f"with {AUTONOMOUS_WORK_AGENT} on model {model}{effort_description}:\n"
             f"{build_prompt(next_entry.prompt)}"
         )
         return 0
@@ -2062,7 +2134,7 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         # Built once here and threaded through to both the pick-up and the run:
-        # `QUEUE.start` quotes it back onto the card, `run_claude` sends it. A
+        # `QUEUE.start` quotes it back onto the card, `run_prompt` sends it. A
         # second `build_prompt` call for the comment would let the two drift.
         prompt_text = build_prompt(next_entry.prompt)
         # Minted here rather than left for `claude` to generate, so the pick-up
@@ -2075,12 +2147,17 @@ def main() -> int:
         # by-hand resume line recorded in a pick-up comment — and nothing at all
         # for a file, which has no such column and deliberately leaves the STATUS
         # line alone until the outcome is known.
+        resume_instructions = (
+            None
+            if AUTONOMOUS_WORK_AGENT == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            else interactive_resume_instructions(working_directory, claude_session_id)
+        )
         QUEUE.start(
             next_entry,
             prompt_text,
-            interactive_resume_instructions(working_directory, claude_session_id),
+            resume_instructions,
         )
-        prompt_result = run_claude(
+        prompt_result = run_prompt(
             next_entry,
             prompt_text,
             working_directory,
@@ -2121,6 +2198,8 @@ def main() -> int:
                 result_text=prompt_result.result_text,
                 started_at=prompt_result.started_at,
                 finished_at=prompt_result.finished_at,
+                agent=AUTONOMOUS_WORK_AGENT,
+                model=(CODEX_MODEL if AUTONOMOUS_WORK_AGENT == "codex" else claude_model_id_for(next_entry)),
                 turns=prompt_result.turns,
                 cost_usd=prompt_result.cost_usd,
             )
