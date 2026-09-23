@@ -1883,11 +1883,13 @@ def run_prompt(
         return run_result(
             result_exit_code,
             outcome,
-            # The limit notice wins over the closing message where there is
-            # one: it names which limit was hit and when it lifts, where the
-            # result event of a refused turn carries only the CLI's own generic
-            # error. That notice is the entire account of a prompt that never ran.
-            result_text=output.session_limit_notice or output.closing_text,
+            # For Claude, a limit notice wins over the closing message: it names
+            # which limit was hit and when it lifts. Codex has no such notice.
+            result_text=(
+                output.closing_text
+                if is_codex
+                else output.session_limit_notice or output.closing_text
+            ),
             turns=output.turns,
             cost_usd=output.cost_usd,
         )

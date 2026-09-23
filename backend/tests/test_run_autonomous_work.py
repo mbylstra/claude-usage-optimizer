@@ -1006,6 +1006,54 @@ class ClaudeOutputCollectorTests(unittest.TestCase):
         self.assertIsNone(collector.session_limit_notice)
 
 
+class CodexPromptCompletionTests(unittest.TestCase):
+    def test_successful_codex_run_reaches_a_completed_queue_status(self):
+        # Previously run_prompt crashed after the CLI exited: it read Claude's
+        # session_limit_notice from a CodexOutputCollector before main could
+        # move the Jira card out of In Progress.
+        with tempfile.TemporaryDirectory() as directory:
+            working_directory = Path(directory)
+            process = mock.Mock()
+            process.pid = 123
+            process.stdout = [
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "Work finished."},
+                    }
+                ) + "\n"
+            ]
+            process.wait.return_value = 0
+            entry = work.QueueEntry(
+                status=work.STATUS_TODO,
+                handle="FCP-101",
+                repository_path=working_directory,
+                prompt="Do the work.",
+            )
+            session = work.autonomous_work_summary.SessionSummary(datetime.now(), forced=True)
+            with mock.patch.object(work.subprocess, "Popen", return_value=process), mock.patch.object(
+                work, "capture_git_checkpoint", return_value=work.GitCheckpoint(None, None)
+            ), mock.patch.object(work, "unmerged_branch_after_run", return_value=None):
+                result = work.run_prompt(
+                    entry,
+                    "Do the work.",
+                    working_directory,
+                    False,
+                    work.RunEventStream(run_id="test", enabled=False),
+                    True,
+                    session,
+                    "session-id",
+                    "codex",
+                )
+
+        self.assertEqual(result.outcome, "completed")
+        self.assertEqual(result.result_text, "Work finished.")
+        self.assertEqual(
+            work.queue_status_for_outcome(result.outcome, result.unmerged_branch),
+            work.STATUS_COMPLETED,
+        )
+
+
 class RemainingTodoPromptsTests(unittest.TestCase):
     def setUp(self):
         work.QUEUE_FILE.write_text(
