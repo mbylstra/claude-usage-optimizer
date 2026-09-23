@@ -1323,7 +1323,7 @@ class ClaudeModelIdForTests(unittest.TestCase):
 
     def test_an_entry_that_names_a_model_runs_on_that_model(self):
         self.assertEqual(work.claude_model_id_for(self._entry("sonnet")), "claude-sonnet-5")
-        self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-opus-5")
+        self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-opus-5-5")
 
     def test_an_entry_that_names_nothing_runs_on_the_session_default(self):
         self.assertEqual(work.claude_model_id_for(self._entry(None)), work.CLAUDE_MODEL)

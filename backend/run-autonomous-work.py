@@ -285,7 +285,7 @@ MANDATORY_PROMPT_SUFFIX = (
 # falls through: an entry to `CLAUDE_MODEL`, the session default to opus.
 _MODEL_ID_MAP = {
     "sonnet": "claude-sonnet-5",
-    "opus": "claude-opus-5",
+    "opus": "claude-opus-5-5",
 }
 CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
 
