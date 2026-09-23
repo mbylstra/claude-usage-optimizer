@@ -62,6 +62,7 @@ function Panel({
           events={events}
           streamStatus={streamStatus}
           cancelStatus={cancelStatus}
+          isWaitingForRun={false}
           onCancel={() => {}}
         />
       </div>

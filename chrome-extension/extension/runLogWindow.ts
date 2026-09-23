@@ -7,7 +7,10 @@
  * URLs would.
  */
 
+import { RESET_RUN_LOG_MESSAGE } from './messages';
+
 const RUN_LOG_PAGE = 'run-log.html';
+const STARTED_AFTER_QUERY_PARAMETER = 'startedAfter';
 
 /** Roughly the proportions of a terminal running `just autonomous-log`. */
 const WINDOW_WIDTH_PX = 520;
@@ -44,12 +47,26 @@ async function focusExistingWindow(windowId: number): Promise<boolean> {
  * Show the run log, focusing the window that is already open rather than
  * opening a second one.
  */
-export async function openRunLogWindow(): Promise<void> {
+export async function openRunLogWindow(startedAfter?: string): Promise<void> {
   const existingWindowId = await readRunLogWindowId();
-  if (existingWindowId !== null && (await focusExistingWindow(existingWindowId))) return;
+  if (existingWindowId !== null && (await focusExistingWindow(existingWindowId))) {
+    if (startedAfter !== undefined) {
+      // Runtime messages reach the extension page without needing tabs access.
+      // The popup and worker may also see it, but only RunLogRoot handles it.
+      await chrome.runtime
+        .sendMessage({ type: RESET_RUN_LOG_MESSAGE, startedAfter })
+        .catch(() => undefined);
+    }
+    return;
+  }
+
+  const runLogUrl = new URL(chrome.runtime.getURL(RUN_LOG_PAGE));
+  if (startedAfter !== undefined) {
+    runLogUrl.searchParams.set(STARTED_AFTER_QUERY_PARAMETER, startedAfter);
+  }
 
   const created = await chrome.windows.create({
-    url: chrome.runtime.getURL(RUN_LOG_PAGE),
+    url: runLogUrl.toString(),
     type: 'popup',
     width: WINDOW_WIDTH_PX,
     height: WINDOW_HEIGHT_PX,

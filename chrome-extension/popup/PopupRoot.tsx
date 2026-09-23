@@ -150,11 +150,22 @@ export function PopupRoot() {
     });
   }, []);
 
+  /**
+   * Open the viewer for a run just accepted by the host. The click time lets
+   * the viewer hide the previous replay while launchd gets the new job moving.
+   */
+  const openRunLogForStartedRun = useCallback((startedAfter: string) => {
+    chrome.runtime.sendMessage({ type: OPEN_RUN_LOG_MESSAGE, startedAfter }, () => {
+      void chrome.runtime.lastError;
+    });
+  }, []);
+
   const startAutonomousRun = useCallback(
     (
       messageType: typeof RUN_AUTONOMOUS_WORK_MESSAGE | typeof RUN_FULL_AUTONOMOUS_WORK_MESSAGE,
       setStatus: (status: AutonomousWorkStatus) => void,
     ) => {
+      const startedAfter = new Date().toISOString();
       setStatus({ kind: 'starting' });
       chrome.runtime.sendMessage({ type: messageType }, (response?: RunAutonomousWorkResponse) => {
         if (chrome.runtime.lastError !== undefined) {
@@ -172,10 +183,10 @@ export function PopupRoot() {
         setStatus({ kind: 'started' });
         // Only once the host has accepted: a window that opens on a failed
         // start would show an empty log and say nothing about why.
-        openRunLog();
+        openRunLogForStartedRun(startedAfter);
       });
     },
-    [openRunLog],
+    [openRunLogForStartedRun],
   );
 
   const runAutonomousWork = useCallback(

@@ -44,6 +44,8 @@ export interface RunFullAutonomousWorkMessage {
 
 export const OPEN_RUN_LOG_MESSAGE = 'OPEN_RUN_LOG' as const;
 
+export const RESET_RUN_LOG_MESSAGE = 'RESET_RUN_LOG' as const;
+
 /**
  * Show the window that streams the current run.
  *
@@ -53,6 +55,18 @@ export const OPEN_RUN_LOG_MESSAGE = 'OPEN_RUN_LOG' as const;
  */
 export interface OpenRunLogMessage {
   type: typeof OPEN_RUN_LOG_MESSAGE;
+  /**
+   * A manual run was requested at this instant. Events older than it belong to
+   * the previous run and must not be replayed while launchd is starting.
+   * Absent for the plain "View run" action, which deliberately replays history.
+   */
+  startedAfter?: string;
+}
+
+/** Sent by the service worker to an already-open run-log window. */
+export interface ResetRunLogMessage {
+  type: typeof RESET_RUN_LOG_MESSAGE;
+  startedAfter: string;
 }
 
 export const PRIME_FOLDER_ACCESS_MESSAGE = 'PRIME_FOLDER_ACCESS' as const;
@@ -194,10 +208,24 @@ export function isRunFullAutonomousWorkMessage(
 }
 
 export function isOpenRunLogMessage(message: unknown): message is OpenRunLogMessage {
+  if (
+    typeof message !== 'object' ||
+    message === null ||
+    (message as { type?: unknown }).type !== OPEN_RUN_LOG_MESSAGE
+  ) {
+    return false;
+  }
+
+  const startedAfter = (message as { startedAfter?: unknown }).startedAfter;
+  return startedAfter === undefined || typeof startedAfter === 'string';
+}
+
+export function isResetRunLogMessage(message: unknown): message is ResetRunLogMessage {
   return (
     typeof message === 'object' &&
     message !== null &&
-    (message as { type?: unknown }).type === OPEN_RUN_LOG_MESSAGE
+    (message as { type?: unknown }).type === RESET_RUN_LOG_MESSAGE &&
+    typeof (message as { startedAfter?: unknown }).startedAfter === 'string'
   );
 }
 

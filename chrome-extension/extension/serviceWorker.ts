@@ -413,7 +413,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (isOpenRunLogMessage(message)) {
-    openRunLogWindow().then(
+    openRunLogWindow(message.startedAfter).then(
       () => sendResponse({ opened: true } satisfies OpenRunLogResponse),
       (error: unknown) =>
         sendResponse({ opened: false, error: String(error) } satisfies OpenRunLogResponse),

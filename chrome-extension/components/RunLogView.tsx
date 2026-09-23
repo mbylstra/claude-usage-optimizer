@@ -37,6 +37,7 @@ export interface RunLogViewProps {
   events: readonly AutonomousRunEvent[];
   streamStatus: RunStreamStatus;
   cancelStatus: RunCancelStatus;
+  isWaitingForRun: boolean;
   onCancel: () => void;
 }
 
@@ -100,6 +101,7 @@ export function RunLogView({
   events,
   streamStatus,
   cancelStatus,
+  isWaitingForRun,
   onCancel,
 }: RunLogViewProps) {
   const [isShowingRawEvents, setIsShowingRawEvents] = useState(false);
@@ -171,8 +173,15 @@ export function RunLogView({
 
           {model.timeline.length === 0 && !isShowingRawEvents && (
             <p className="text-muted-foreground px-3.5 py-6 text-center text-xs">
-              No run has been recorded yet. Press <span className="font-medium">Do next todo</span>{' '}
-              or <span className="font-medium">Trigger a full run</span> in the popup to start one.
+              {isWaitingForRun ? (
+                'Waiting for the run to start…'
+              ) : (
+                <>
+                  No run has been recorded yet. Press{' '}
+                  <span className="font-medium">Do next todo</span> or{' '}
+                  <span className="font-medium">Trigger a full run</span> in the popup to start one.
+                </>
+              )}
             </p>
           )}
         </div>
