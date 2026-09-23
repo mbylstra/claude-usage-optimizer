@@ -208,7 +208,7 @@ AUTONOMOUS_PROMPT_TIMEOUT_SECONDS = environment_int_override(
 ) or int(_settings.max_prompt_duration_hours * 3600)
 # Kept as an alias for integrations that imported the old name.
 CLAUDE_MAX_PROMPT_DURATION_SECONDS = AUTONOMOUS_PROMPT_TIMEOUT_SECONDS
-CODEX_MODEL = "gpt-5.6-sol"
+CODEX_MODEL = "gpt-6-sol"
 AUTONOMOUS_WORK_AGENT = _settings.agent
 # Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
 # which is tuned for interactive use and has already silently switched a nightly
