@@ -361,32 +361,46 @@ export function SettingsPage({
           <div className="flex flex-col gap-0.5">
             <h2 className="text-sm font-medium">Autonomous work</h2>
             <p className="text-muted-foreground text-xs">
-              {usesCodex ? 'Codex (Sol)' : 'Claude'} runs automatically at{' '}
-              {describeScheduleTime(autonomousWorkSettings.scheduleTime)} when the week is far
-              enough behind pace.
+              {autonomousWorkSettings.agent === 'behindPace'
+                ? 'The agent further behind pace'
+                : usesCodex
+                  ? 'Codex (Sol)'
+                  : 'Claude'}{' '}
+              runs automatically at {describeScheduleTime(autonomousWorkSettings.scheduleTime)} when
+              the week is far enough behind pace.
             </p>
           </div>
 
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-0.5">
-              <label htmlFor="autonomous-work-agent" className="text-sm font-medium">
-                Use Codex for autonomous work
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium">Agent for autonomous work</legend>
+            {(
+              [
+                ['claude', 'Claude'],
+                ['codex', 'Codex'],
+                ['behindPace', 'Whichever one is further behind pace'],
+              ] as const
+            ).map(([agent, label]) => (
+              <label key={agent} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="autonomous-work-agent"
+                  value={agent}
+                  checked={autonomousWorkSettings.agent === agent}
+                  onChange={() =>
+                    onAutonomousWorkSettingsChange({
+                      ...autonomousWorkSettings,
+                      agent,
+                    })
+                  }
+                />
+                {label}
               </label>
-              <p className="text-muted-foreground text-xs">
-                Codex uses Sol for now. This does not affect the separate Codex usage display.
-              </p>
-            </div>
-            <Switch
-              id="autonomous-work-agent"
-              checked={usesCodex}
-              onCheckedChange={(checked) =>
-                onAutonomousWorkSettingsChange({
-                  ...autonomousWorkSettings,
-                  agent: checked ? 'codex' : 'claude',
-                })
-              }
-            />
-          </div>
+            ))}
+            <p className="text-muted-foreground text-xs">
+              Codex uses Sol. The automatic choice compares weekly pace before each prompt. This
+              does not affect the separate Codex usage display.
+            </p>
+          </fieldset>
 
           <div className="flex items-center justify-between gap-4">
             <label htmlFor="schedule-time" className="text-sm">

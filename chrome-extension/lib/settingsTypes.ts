@@ -7,7 +7,7 @@ import { DEFAULT_SCHEDULE_TIME, normaliseScheduleTime, type ScheduleTime } from 
 
 /** Every `claude --effort` level that exists, low to high. */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-export type AutonomousWorkAgent = 'claude' | 'codex';
+export type AutonomousWorkAgent = 'claude' | 'codex' | 'behindPace';
 
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -271,7 +271,9 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       : DEFAULT_NEW_PROJECTS_DIRECTORY;
 
   const agent: AutonomousWorkAgent =
-    autonomousWorkValue.agent === 'codex' ? 'codex' : DEFAULT_AUTONOMOUS_WORK_AGENT;
+    autonomousWorkValue.agent === 'codex' || autonomousWorkValue.agent === 'behindPace'
+      ? autonomousWorkValue.agent
+      : DEFAULT_AUTONOMOUS_WORK_AGENT;
 
   // A stored 'haiku' (no longer offered) lands on 'sonnet', the nearest still-
   // valid model, rather than jumping to DEFAULT_MODEL — which is the priciest.

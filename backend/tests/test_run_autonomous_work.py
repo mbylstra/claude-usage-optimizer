@@ -203,6 +203,44 @@ class PaceSnapshotFieldNamesTests(unittest.TestCase):
         )
 
 
+class ChooseAgentByPaceTests(unittest.TestCase):
+    def snapshot(self, hours_behind, five_hour_percent=20):
+        return work.PaceSnapshot(
+            weekly_pace_delta_ms=-hours_behind * work.MILLISECONDS_PER_HOUR,
+            weekly_pace_status="behind",
+            five_hour_percent=five_hour_percent,
+            age_seconds=60,
+        )
+
+    def test_larger_deficit_wins_and_tie_favours_claude(self):
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(2), self.snapshot(4)), "codex")
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(4), self.snapshot(2)), "claude")
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(2), self.snapshot(2)), "claude")
+
+    def test_usable_agent_wins_when_other_is_missing_or_exhausted(self):
+        self.assertEqual(work.choose_agent_by_pace(None, self.snapshot(2)), "codex")
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(2), None), "claude")
+        self.assertEqual(
+            work.choose_agent_by_pace(self.snapshot(4, 100), self.snapshot(2)), "codex"
+        )
+
+    def test_force_selects_larger_deficit_even_when_session_is_full(self):
+        self.assertEqual(
+            work.choose_agent_by_pace(self.snapshot(4, 100), self.snapshot(2), force=True),
+            "claude",
+        )
+
+    def test_gate_uses_the_selected_agents_snapshot(self):
+        snapshots = {"claude": self.snapshot(2), "codex": self.snapshot(4)}
+        with mock.patch.object(work, "AUTONOMOUS_WORK_AGENT", "behindPace"), mock.patch.object(
+            work, "read_pace_snapshot", side_effect=snapshots.get
+        ):
+            result = work.check_pace_gate(False)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.agent, "codex")
+        self.assertIs(result.snapshot, snapshots["codex"])
+
+
 class EvaluatePaceGateTests(unittest.TestCase):
     """The threshold arithmetic behind `check_pace_gate`, isolated from I/O and logging."""
 
@@ -429,11 +467,17 @@ class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
                 "weeklyPaceStatus": "behind",
                 "codexWeeklyPaceDeltaMs": 7200000,
                 "codexWeeklyPaceStatus": "ahead",
+                "fiveHourPercent": 100,
+                "codexFiveHourPercent": 32,
+                "fiveHourResetsAt": "2026-08-25T04:00:00.000Z",
+                "codexFiveHourResetsAt": "2026-08-25T05:00:00.000Z",
             }
         )
         snapshot = work.read_pace_snapshot("codex")
         self.assertEqual(snapshot.weekly_pace_delta_ms, 7200000)
         self.assertEqual(snapshot.weekly_pace_status, "ahead")
+        self.assertEqual(snapshot.five_hour_percent, 32)
+        self.assertEqual(snapshot.five_hour_resets_at, datetime(2026, 8, 25, 5, tzinfo=timezone.utc))
 
     def test_codex_agent_with_no_codex_pace_reported_is_no_snapshot(self):
         # A Claude-only pace figure must not be silently used as a stand-in for

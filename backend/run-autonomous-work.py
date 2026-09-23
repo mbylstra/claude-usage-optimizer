@@ -692,7 +692,10 @@ def read_pace_snapshot(agent: str) -> PaceSnapshot | None:
         return None
 
     weekly_pace_status = snapshot_data.get(pace_status_field)
-    five_hour_percent = snapshot_data.get("fiveHourPercent")
+    five_hour_percent = snapshot_data.get(
+        "codexFiveHourPercent" if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+        else "fiveHourPercent"
+    )
     return PaceSnapshot(
         weekly_pace_delta_ms=float(pace_delta),
         weekly_pace_status=weekly_pace_status if isinstance(weekly_pace_status, str) else None,
@@ -700,7 +703,11 @@ def read_pace_snapshot(agent: str) -> PaceSnapshot | None:
             float(five_hour_percent) if isinstance(five_hour_percent, (int, float)) else None
         ),
         age_seconds=age_seconds,
-        five_hour_resets_at=parse_iso_timestamp(snapshot_data.get("fiveHourResetsAt")),
+        five_hour_resets_at=parse_iso_timestamp(snapshot_data.get(
+            "codexFiveHourResetsAt"
+            if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            else "fiveHourResetsAt"
+        )),
     )
 
 
@@ -724,6 +731,34 @@ class GateResult:
     same file a second later.
     """
     snapshot: PaceSnapshot | None = None
+    agent: str | None = None
+
+
+def choose_agent_by_pace(
+    claude_snapshot: PaceSnapshot | None, codex_snapshot: PaceSnapshot | None,
+    *, force: bool = False,
+) -> str:
+    """Choose the largest runnable deficit; ties and missing data favour Claude."""
+    snapshots = (
+        (autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE, claude_snapshot),
+        (autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX, codex_snapshot),
+    )
+    available = [(agent, snapshot) for agent, snapshot in snapshots if snapshot is not None]
+    runnable = [
+        (agent, snapshot)
+        for agent, snapshot in available
+        if force or evaluate_pace_gate(
+            snapshot,
+            force=False,
+            pace_threshold_ms=PACE_THRESHOLD_MS,
+            five_hour_exhausted_percent=FIVE_HOUR_EXHAUSTED_PERCENT,
+            agent=agent,
+        ).ok
+    ]
+    candidates = runnable or available
+    if not candidates:
+        return autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
+    return min(candidates, key=lambda pair: pair[1].weekly_pace_delta_ms)[0]
 
 
 def evaluate_pace_gate(
@@ -787,21 +822,31 @@ def check_pace_gate(force: bool) -> GateResult:
     window itself filled up. The latter does not refill early, so filling it
     ends the run rather than leaving it to wait out the reset.
     """
+    agent = AUTONOMOUS_WORK_AGENT
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_BEHIND_PACE:
+        claude_snapshot = read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE)
+        codex_snapshot = read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX)
+        agent = choose_agent_by_pace(claude_snapshot, codex_snapshot, force=force)
+        pace_snapshot = (
+            codex_snapshot if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            else claude_snapshot
+        )
+        log_message(f"Automatic agent choice: {pace_burn_label(agent)}")
+    else:
+        pace_snapshot = None if force else read_pace_snapshot(agent)
     if force:
         log_message("Pace gate bypassed (--force)")
-        return GateResult(ok=True)
-
-    pace_snapshot = read_pace_snapshot(AUTONOMOUS_WORK_AGENT)
+        return GateResult(ok=True, agent=agent)
     result = evaluate_pace_gate(
         pace_snapshot,
         force=False,
         pace_threshold_ms=PACE_THRESHOLD_MS,
         five_hour_exhausted_percent=FIVE_HOUR_EXHAUSTED_PERCENT,
-        agent=AUTONOMOUS_WORK_AGENT,
+        agent=agent,
     )
 
     if pace_snapshot is None:
-        return result  # read_pace_snapshot() already logged why
+        return replace(result, agent=agent)  # read_pace_snapshot() already logged why
 
     if result.reason == "onPace":
         log_message(f"On pace — {result.detail}")
@@ -810,7 +855,7 @@ def check_pace_gate(force: bool) -> GateResult:
     elif result.ok:
         log_message(f"Behind pace — {result.detail}")
 
-    return replace(result, snapshot=pace_snapshot)
+    return replace(result, snapshot=pace_snapshot, agent=agent)
 
 
 # --------------------------------------------------------------------------- #
@@ -1618,6 +1663,7 @@ def run_prompt(
     forced: bool,
     session: autonomous_work_summary.SessionSummary,
     session_id: str,
+    agent: str,
 ) -> PromptRunResult:
     """Execute one queued prompt, and report how it went.
 
@@ -1630,7 +1676,6 @@ def run_prompt(
     `claude` runs under is the same one the pick-up comment told a person to
     `claude --resume`.
     """
-    agent = AUTONOMOUS_WORK_AGENT
     is_codex = agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
     provider_model = CODEX_MODEL if is_codex else claude_model_id_for(entry)
     claude_arguments = claude_arguments_for(entry, session_id)
@@ -2050,7 +2095,8 @@ def main() -> int:
         # what would happen must not disturb the record of what did. Reports only
         # the immediate next entry: what the queue looks like after it is exactly
         # what a second dry run would show.
-        if not check_pace_gate(arguments.force).ok:
+        gate = check_pace_gate(arguments.force)
+        if not gate.ok:
             return 0
 
         try:
@@ -2065,13 +2111,14 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
-        is_codex = AUTONOMOUS_WORK_AGENT == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+        selected_agent = gate.agent or autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
+        is_codex = selected_agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
         effort = None if is_codex else claude_effort_for(next_entry)
         model = CODEX_MODEL if is_codex else claude_model_id_for(next_entry)
         effort_description = f" at {effort} effort" if effort else ""
         log_message(
             f"Dry run — would execute in {destination} "
-            f"with {AUTONOMOUS_WORK_AGENT} on model {model}{effort_description}:\n"
+            f"with {selected_agent} on model {model}{effort_description}:\n"
             f"{build_prompt(next_entry.prompt)}"
         )
         return 0
@@ -2151,6 +2198,8 @@ def main() -> int:
                 )
             break
 
+        selected_agent = gate.agent or autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
+
         try:
             next_entry = QUEUE.next_todo()
         except QueueUnavailable as error:
@@ -2187,7 +2236,7 @@ def main() -> int:
         # line alone until the outcome is known.
         resume_instructions = (
             None
-            if AUTONOMOUS_WORK_AGENT == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            if selected_agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
             else interactive_resume_instructions(working_directory, claude_session_id)
         )
         QUEUE.start(
@@ -2204,6 +2253,7 @@ def main() -> int:
             arguments.force,
             session,
             claude_session_id,
+            selected_agent,
         )
         # The status the queue is left holding, which is not always the one asked
         # for: a run that marked itself `unmerged:<branch>` keeps that.
@@ -2236,8 +2286,8 @@ def main() -> int:
                 result_text=prompt_result.result_text,
                 started_at=prompt_result.started_at,
                 finished_at=prompt_result.finished_at,
-                agent=AUTONOMOUS_WORK_AGENT,
-                model=(CODEX_MODEL if AUTONOMOUS_WORK_AGENT == "codex" else claude_model_id_for(next_entry)),
+                agent=selected_agent,
+                model=(CODEX_MODEL if selected_agent == "codex" else claude_model_id_for(next_entry)),
                 turns=prompt_result.turns,
                 cost_usd=prompt_result.cost_usd,
             )

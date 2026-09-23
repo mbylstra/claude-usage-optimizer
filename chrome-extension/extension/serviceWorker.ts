@@ -231,7 +231,8 @@ async function sendTestNotification(): Promise<void> {
  */
 async function fetchCodexSnapshotForPaceGate(): Promise<UsageSnapshot | null> {
   const settings = await readExtensionSettings();
-  if (settings.autonomousWork.agent !== 'codex') return null;
+  if (settings.autonomousWork.agent !== 'codex' && settings.autonomousWork.agent !== 'behindPace')
+    return null;
 
   try {
     return await fetchCodexUsageSnapshot();

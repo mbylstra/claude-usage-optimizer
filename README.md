@@ -197,8 +197,8 @@ just --list          # everything else
 The half that makes this an _optimizer_ rather than a monitor. Unused weekly
 capacity does not roll over, so headroom you never spend is simply gone.
 `backend/` holds a launchd job that puts it to work: starting at 2 AM it
-works through queued Claude Code prompts — **but only when the weekly window is
-behind an even burn.** Being on pace means nothing runs and nothing is spent;
+works through queued prompts with Claude or Codex — **but only when the selected
+agent's weekly window is behind an even burn.** Being on pace means nothing runs and nothing is spent;
 the point is to level out subscription burn rate, not to add to it.
 
 It does not stop after one prompt. Behind pace, it re-checks before each queued
@@ -209,8 +209,11 @@ session window itself reports full — and that last case ends the run rather
 than sitting idle for up to five hours waiting for the window to reset, since
 it does not refill early.
 
-The time is set in the popup's Settings screen, along with the folder new
-projects are created in. See [Scheduling and new
+The popup's Settings screen lets you choose Claude, Codex, or whichever is
+further behind weekly pace. The automatic choice is made before every prompt;
+if one agent has no usable usage data or has filled its 5-hour window, the other
+can run when behind pace. Equal deficits choose Claude. The time is set in the
+same screen, along with the folder new projects are created in. See [Scheduling and new
 projects](#scheduling-and-new-projects).
 
 It is opt-in — the popup works without any of this — but it is where the
@@ -220,8 +223,8 @@ acts.
 The extension is the data source. After each successful refresh it hands the
 figures to a native-messaging host, which writes
 `backend/claude-usage.json`. The scheduler reads that file before every
-queued prompt, and keeps going only while `weeklyPaceDeltaMs` is at least 2
-hours behind pace and `fiveHourPercent` is under 100.
+queued prompt, and keeps going only while the chosen agent is beyond the
+configured pace threshold and its 5-hour window has room.
 
 Design rationale, including why `chrome.downloads` was tried and abandoned,
 is in `plans/autonomous-credit-utilization.md`.

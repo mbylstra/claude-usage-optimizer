@@ -20,6 +20,8 @@ export interface UsageSnapshotExport {
   /** Codex weekly pace delta, if Codex usage is available. Null when inactive or unavailable. */
   codexWeeklyPaceDeltaMs: number | null;
   codexWeeklyPaceStatus: PaceStatus | null;
+  codexFiveHourPercent: number | null;
+  codexFiveHourResetsAt: string | null;
   fiveHourPercent: number | null;
   /**
    * ISO 8601, or null when the API did not report a current session window.
@@ -76,6 +78,8 @@ export function buildUsageSnapshotExport(
     weeklyPaceStatus: weeklyStatus?.isActive ? weeklyStatus.paceStatus : null,
     codexWeeklyPaceDeltaMs: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceDeltaMs : null,
     codexWeeklyPaceStatus: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceStatus : null,
+    codexFiveHourPercent: percentUsedFor(codexWindowStatuses, 'fiveHour'),
+    codexFiveHourResetsAt: resetsAtFor(codexWindowStatuses, 'fiveHour'),
     fiveHourPercent: percentUsedFor(windowStatuses, 'fiveHour'),
     fiveHourResetsAt: resetsAtFor(windowStatuses, 'fiveHour'),
     sevenDayPercent: percentUsedFor(windowStatuses, 'sevenDay'),

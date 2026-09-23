@@ -462,8 +462,8 @@ job act on figures from days ago; the age is logged on every decision so that is
 visible after the fact. A missing pace figure still skips the run, since
 an inactive weekly window is genuinely no data rather than a stale reading.
 
-**The pace gate reads whichever agent's own figure `autonomousWork.agent`
-names** — `weeklyPaceDeltaMs`/`weeklyPaceStatus` for Claude,
+**The pace gate reads the selected agent's own figure** —
+`weeklyPaceDeltaMs`/`weeklyPaceStatus` for Claude,
 `codexWeeklyPaceDeltaMs`/`codexWeeklyPaceStatus` for Codex, both built the same
 way by `buildUsageSnapshotExport` and selected in `read_pace_snapshot` via
 `pace_snapshot_field_names`. This was not true when the Codex agent switch
@@ -474,9 +474,13 @@ still had headroom, or sit idle while Codex had plenty left. `pace_burn_label`
 splices "Claude" or "Codex" into the gate's log lines and the summary's
 stop-reason text for exactly this reason — the confusion of not being able to
 tell which subscription a stop reason was about is what exposed the bug.
-Fetching the Codex figure costs an extra native-host round trip to Codex's
+`behindPace` selects the runnable agent with the larger weekly deficit before
+each prompt; equal deficits choose Claude. If one agent lacks pace data or has
+filled its 5-hour window, the other may run. The export includes each agent's
+own 5-hour utilization and reset time, so a Codex decision does not use Claude's
+session window. Fetching the Codex figure costs an extra native-host round trip to Codex's
 usage endpoint, so `fetchCodexSnapshotForPaceGate` in `serviceWorker.ts` only
-makes it when `autonomousWork.agent === 'codex'` — independent of
+makes it when `autonomousWork.agent` is `codex` or `behindPace` — independent of
 `codexUsageEnabled`, which gates the popup's *display* section and has no
 bearing on what the scheduler needs.
 
@@ -908,4 +912,3 @@ that matters.
 **The recorded expiry warns but never blocks.** It is typed in by hand and cannot
 be read back from any API, so a mistyped date would refuse to run against a token
 that works. Jira's own 401 is what stops a run.
-

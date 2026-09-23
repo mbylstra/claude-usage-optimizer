@@ -117,6 +117,12 @@ class ParseSettingsTests(unittest.TestCase):
             settings_module.AUTONOMOUS_WORK_AGENT_CLAUDE,
         )
 
+    def test_automatic_agent_setting_is_preserved(self):
+        self.assertEqual(
+            settings_module.parse_settings({"agent": "behindPace"}).agent,
+            settings_module.AUTONOMOUS_WORK_AGENT_BEHIND_PACE,
+        )
+
     def test_blank_and_non_string_status_names_are_dropped(self):
         result = settings_module.parse_settings(
             {"jiraStatusNames": {"todo": "  ", "inReview": 3, "done": " Shipped "}}
