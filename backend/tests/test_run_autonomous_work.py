@@ -1147,6 +1147,11 @@ class ScheduleResumeIfWarrantedTests(unittest.TestCase):
         self.assertEqual((pending.scheduled_for.hour, pending.scheduled_for.minute), (3, 52))
         self.assertTrue(work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.exists())
 
+    def test_manual_full_run_marks_its_scheduled_resume(self):
+        pending = self._schedule(manual_full_run=True)
+        self.assertTrue(pending.manual_full_run)
+        self.assertTrue(work.autonomous_work_resume.read_resume_state().manual_full_run)
+
     def test_a_resume_run_schedules_nothing_further(self):
         # The guard that makes every freshness check unnecessary: a resumed run
         # reads the same possibly-stale snapshot, so allowing it to schedule

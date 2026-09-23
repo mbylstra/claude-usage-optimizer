@@ -817,7 +817,7 @@ export function SettingsPage({
 
           <p className="text-muted-foreground text-xs">
             <strong>Do next todo</strong> skips the pace check and runs the single next queued
-            prompt. <strong>Trigger a full run</strong> starts the nightly job right now instead: it
+            prompt. <strong>Trigger a full run</strong> starts the same pace-gated work right now: it
             works through the whole queue while the week is behind pace, and — when the resume
             toggle above is on — schedules itself to pick up again after the 5-hour window resets.
             Both open a window that follows the run; <strong>View run</strong> reopens it, showing

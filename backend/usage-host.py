@@ -60,11 +60,10 @@ LOG_FILE = HOST_DIRECTORY / "usage-host.log"
 # Overridable so that path can be exercised without starting a real (and billable)
 # Claude session — see test-usage-host.py.
 LAUNCHCTL_COMMAND = os.environ.get("USAGE_HOST_LAUNCHCTL", "/bin/launchctl")
-# "Do next todo" kicks the single-shot --force job; "Trigger a full run" kicks the
-# nightly label itself, so a manual full run is pace-gated and drains the queue
-# exactly as the 2 AM run does.
+# Each popup button has an unscheduled label. The manual full run stays pace-gated
+# and drains the queue exactly as the 2 AM run does.
 ON_DEMAND_LAUNCH_AGENT_LABEL = autonomous_work_settings.ON_DEMAND_LAUNCH_AGENT_LABEL
-NIGHTLY_LAUNCH_AGENT_LABEL = autonomous_work_settings.LAUNCH_AGENT_LABEL
+MANUAL_FULL_LAUNCH_AGENT_LABEL = autonomous_work_settings.MANUAL_FULL_LAUNCH_AGENT_LABEL
 # `launchctl kickstart` for a label launchd has never been given. Worth telling
 # apart from a real failure: it means the agent was never installed.
 LAUNCHCTL_NO_SUCH_SERVICE = 113
@@ -264,7 +263,7 @@ def kickstart_launch_agent(label):
     folder permissions, so what a button does is what 2 AM does. "Do next todo"
     cannot share the nightly label because `launchctl kickstart` cannot pass
     --force, hence the separate on-demand definition that bakes it in; "Trigger a
-    full run" wants no --force and so kicks the nightly label directly.
+    full run" uses its own unscheduled label with --manual-full-run.
 
     Reports only whether the run *started*; the work outlives this reply by up to
     an hour and reports into autonomous-work.log and the run event stream, which
@@ -306,16 +305,16 @@ def start_autonomous_work():
 
 def start_full_autonomous_work():
     # type: () -> dict
-    """"Trigger a full run": kick the nightly label now.
+    """"Trigger a full run": kick its unscheduled, pace-gated label now.
 
-    The same job launchd fires at 2 AM, started early by hand — no --force, so it
+    The same pace-gated work launchd fires at 2 AM, started by hand — no --force, so it
     stays pace-gated, works through every todo while the week is behind an even
     burn, and schedules a resume after the 5-hour window resets when that setting
     is on.
     """
     if autonomous_work_run_in_flight():
         return {"ok": False, "error": RUN_ALREADY_IN_FLIGHT_ERROR}
-    return kickstart_launch_agent(NIGHTLY_LAUNCH_AGENT_LABEL)
+    return kickstart_launch_agent(MANUAL_FULL_LAUNCH_AGENT_LABEL)
 
 
 def start_folder_access_prompts():

@@ -164,7 +164,7 @@ RAW_EVENT_FILE = environment_path(
 RUN_EVENT_FILE = environment_path(
     "AUTONOMOUS_WORK_RUN_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-run-events.jsonl"
 )
-# The morning-after digest: one file per day, one section per session. At the
+# The morning-after digest: one file per trigger and day, one section per session. At the
 # repository root rather than beside this script, for the same reason
 # `prompts.txt` is — it is written for a person to read, not for the machinery.
 SUMMARIES_DIRECTORY = environment_path(
@@ -1945,6 +1945,7 @@ def schedule_resume_if_warranted(
     is_resume_run: bool,
     events: RunEventStream,
     now: datetime | None = None,
+    manual_full_run: bool = False,
 ) -> autonomous_work_resume.PendingResume | None:
     """Ask launchd to start the queue again once the 5-hour window refills.
 
@@ -2021,6 +2022,7 @@ def schedule_resume_if_warranted(
         scheduled_at=now,
         reason=reason,
         source=resume_time.source,
+        manual_full_run=manual_full_run,
     )
     update = autonomous_work_resume.schedule_resume(pending)
     if not update.applied:
@@ -2057,9 +2059,8 @@ def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
     agent should not have fired, not that the scheduler weighed the work and
     declined it.
 
-    The file is normally the day's `YYYY-MM-DD.md`. A night that scheduled a
-    5-hour-reset resume is the exception: its first session writes `-run-1.md`
-    and the resume writes `-run-2.md` — see `autonomous_work_summary.run_file_label`.
+    The filename records the trigger and start date. A scheduled resume writes
+    a second-run file — see `autonomous_work_summary.run_file_label`.
     """
     session.finished_at = datetime.now()
     session.not_attempted = remaining_todo_prompts(
@@ -2089,6 +2090,11 @@ def main() -> int:
         "--resume",
         action="store_true",
         help="Serve a resume scheduled by an earlier run that hit the 5-hour window.",
+    )
+    argument_parser.add_argument(
+        "--manual-full-run",
+        action="store_true",
+        help="Identify a pace-gated full run started from the extension.",
     )
     arguments = argument_parser.parse_args()
 
@@ -2166,7 +2172,12 @@ def main() -> int:
     # Accumulated across every prompt in the session, and written out once at the
     # end as the day's summary — see `finish_session`.
     session = autonomous_work_summary.SessionSummary(
-        started_at=datetime.now(), forced=arguments.force, is_resume_run=arguments.resume
+        started_at=datetime.now(),
+        forced=arguments.force,
+        is_resume_run=arguments.resume,
+        manual_full_run=(
+            consumption.pending.manual_full_run if arguments.resume else arguments.manual_full_run
+        ),
     )
 
     while True:
@@ -2196,6 +2207,7 @@ def main() -> int:
                         forced=arguments.force,
                         is_resume_run=arguments.resume,
                         events=events,
+                        manual_full_run=session.manual_full_run,
                     )
                 )
             break
@@ -2319,6 +2331,7 @@ def main() -> int:
                     forced=arguments.force,
                     is_resume_run=arguments.resume,
                     events=events,
+                    manual_full_run=session.manual_full_run,
                 )
             )
             break

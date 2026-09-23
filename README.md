@@ -552,10 +552,10 @@ summaries folder.
 ### The morning after
 
 Following a run live is the wrong tool at breakfast, so every session writes up
-what it did in `summaries/YYYY-MM-DD.md`:
+what it did in a trigger-prefixed file under `summaries/`:
 
 ```sh
-just autonomous-summary            # the most recent day
+just autonomous-summary            # the most recently written summary
 just autonomous-summary 2026-08-15 # a particular one
 ```
 
@@ -563,11 +563,13 @@ Each day's file lists, per session, which queued prompts completed, which
 failed, which were left untouched, and why the session stopped — out of `todo`
 entries, back on pace, or the 5-hour window exhausted. Every prompt gets
 Claude's own closing message; a prompt that timed out or was cancelled never
-produces one, so its last message before it stopped is shown instead. A day
-holds one file however many times work ran — except a night that stopped on the
-5-hour window and resumed a few hours later, which splits into
-`YYYY-MM-DD-run-1.md` and `YYYY-MM-DD-run-2.md` (both printed by `just
-autonomous-summary <day>`). A night that ran nothing — held back by pace, or an
+produces one, so its last message before it stopped is shown instead. Filenames
+identify the trigger: `manual-do-next-todo-YYYY-MM-DD.md`,
+`manual-full-run-YYYY-MM-DD.md`, `nightly-first-run-YYYY-MM-DD.md`, and
+`nightly-second-run-YYYY-MM-DD.md`. A manual full run that schedules a resume
+uses `manual-full-run-second-run-YYYY-MM-DD.md` for that resume. Sessions with
+the same trigger on the same day append to one file; `just autonomous-summary
+<day>` prints all the day's files. A night that ran nothing — held back by pace, or an
 empty queue — still writes a short section saying so, so the file alone answers
 "did it run, and if not why not". The folder is gitignored,
 like `prompts.txt`, since it describes your own task list.

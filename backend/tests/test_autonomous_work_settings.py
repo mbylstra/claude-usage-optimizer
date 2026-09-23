@@ -31,6 +31,7 @@ os.environ.update(
         "AUTONOMOUS_WORK_SETTINGS_FILE": str(_TEMP_PATH / "autonomous-work-settings.json"),
         "AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "nightly.plist"),
         "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "ondemand.plist"),
+        "AUTONOMOUS_WORK_MANUAL_FULL_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "manualfull.plist"),
         "AUTONOMOUS_WORK_LAUNCHCTL": str(_TEMP_PATH / "launchctl-should-not-be-called"),
     }
 )
@@ -299,6 +300,12 @@ class RenderTemplateTests(unittest.TestCase):
     def test_on_demand_template_has_no_placeholders_left(self):
         rendered = settings_module.render_on_demand_launch_agent_plist()
         self.assertNotIn("__HOME__", rendered)
+        self.assertNotIn("__PROJECT_ROOT__", rendered)
+
+    def test_manual_full_template_keeps_pace_gate_and_identifies_trigger(self):
+        rendered = settings_module.render_manual_full_launch_agent_plist()
+        self.assertIn("<string>--manual-full-run</string>", rendered)
+        self.assertNotIn("<string>--force</string>", rendered)
         self.assertNotIn("__PROJECT_ROOT__", rendered)
 
 

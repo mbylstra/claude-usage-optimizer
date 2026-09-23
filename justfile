@@ -133,9 +133,11 @@ launch_agent_label := "com.claudeusageoptimizer.autonomouswork"
 launch_agent_plist := home_directory() / "Library/LaunchAgents" / launch_agent_label + ".plist"
 # The unscheduled twin the popup's "Do next todo" button kickstarts, so that run
 # belongs to launchd rather than to Chrome — see CLAUDE.md, "Triggering a run
-# from the popup" ("Trigger a full run" kickstarts the nightly label directly)
+# from the popup" ("Trigger a full run" has its own pace-gated label)
 on_demand_label := launch_agent_label + ".ondemand"
 on_demand_plist := home_directory() / "Library/LaunchAgents" / on_demand_label + ".plist"
+manual_full_label := launch_agent_label + ".manualfull"
+manual_full_plist := home_directory() / "Library/LaunchAgents" / manual_full_label + ".plist"
 # The one-shot agent a run writes for itself when it hits the 5-hour window, so
 # the queue is picked back up once that window resets — see
 # plans/resume-after-five-hour-reset.md. Written by runs, never by setup.
@@ -263,18 +265,16 @@ autonomous-summary day="":
     set -euo pipefail
     summaries_directory="{{ justfile_directory() }}/summaries"
     if [ -n "{{ day }}" ]; then
-      # Most days are one file; a night that resumed after the 5-hour reset
-      # wrote `<day>-run-1.md` and `<day>-run-2.md` instead, so glob for both.
-      summary_files="$(ls -1 "$summaries_directory/{{ day }}.md" \
-        "$summaries_directory/{{ day }}"-run-*.md 2>/dev/null || true)"
+      # Include every trigger on the requested day, plus older unprefixed files.
+      summary_files="$(ls -1 "$summaries_directory"/*-"{{ day }}".md \
+        "$summaries_directory/{{ day }}"*.md 2>/dev/null || true)"
     else
       # `|| true` because pipefail would otherwise make an empty (or absent)
       # summaries folder exit the recipe silently, before the message below.
-      summary_files="$(ls -1 "$summaries_directory"/*.md 2>/dev/null | tail -n 1 || true)"
+      summary_files="$(ls -t "$summaries_directory"/*.md 2>/dev/null | head -n 1 || true)"
     fi
     if [ -z "${summary_files:-}" ]; then
-      echo "No summary to show. One is written whenever a session runs at least"
-      echo "one prompt — 'ls summaries/' for the days that have one."
+      echo "No summary to show. One is written whenever a session reaches the run loop."
       exit 0
     fi
     while IFS= read -r summary_file; do
@@ -453,12 +453,14 @@ uninstall-autonomous-work:
     rm -f {{ launch_agent_plist }}
     launchctl unload {{ on_demand_plist }} 2>/dev/null || true
     rm -f {{ on_demand_plist }}
+    launchctl unload {{ manual_full_plist }} 2>/dev/null || true
+    rm -f {{ manual_full_plist }}
     # A pending resume would otherwise fire days after unattended work was
     # switched off, which is the one thing uninstalling it must not allow.
     @python3 backend/autonomous_work_resume.py --cancel
-    @echo "Removed {{ launch_agent_label }}, {{ on_demand_label }} and {{ resume_label }}"
+    @echo "Removed {{ launch_agent_label }}, {{ on_demand_label }}, {{ manual_full_label }} and {{ resume_label }}"
 
-# Is the nightly run scheduled? Lists all three jobs — nightly, on-demand, resume
+# Is the nightly run scheduled? Lists all four jobs — nightly, both manual, resume
 autonomous-status:
     @launchctl list | grep {{ launch_agent_label }} || echo "not loaded"
 

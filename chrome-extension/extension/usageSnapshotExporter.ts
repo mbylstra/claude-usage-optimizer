@@ -80,9 +80,9 @@ export async function requestAutonomousWorkRun(): Promise<{ started: boolean; er
 }
 
 /**
- * "Trigger a full run": ask the host to start the nightly job now.
+ * "Trigger a full run": ask the host to start a pace-gated full run now.
  *
- * Same launchd label the 2 AM run uses, so it stays pace-gated, works through
+ * Its own unscheduled launchd label identifies the trigger. It works through
  * the whole queue, and schedules a 5-hour-reset resume when that setting is on.
  * Like the one above, it resolves once the run has *launched*, not finished.
  */

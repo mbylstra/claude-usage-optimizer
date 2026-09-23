@@ -31,10 +31,10 @@ export interface RunAutonomousWorkMessage {
 export const RUN_FULL_AUTONOMOUS_WORK_MESSAGE = 'RUN_FULL_AUTONOMOUS_WORK' as const;
 
 /**
- * "Trigger a full run" — start the nightly job now, rather than the single-shot
+ * "Trigger a full run" — start the same pace-gated work now, rather than the single-shot
  * "Do next todo".
  *
- * It kicks the same launchd label the 2 AM run uses, so it stays pace-gated,
+ * It kicks its own unscheduled launchd label, so it stays pace-gated,
  * works through the whole queue while the week is behind an even burn, and
  * schedules a 5-hour-reset resume when that setting is on.
  */

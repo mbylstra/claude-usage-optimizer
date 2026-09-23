@@ -383,8 +383,7 @@ def main() -> int:
             )
         )
 
-        # "Trigger a full run" kicks the nightly label itself, not the .ondemand
-        # one, so a manual full run is pace-gated and drains the queue like 2 AM.
+        # The manual full-run label stays pace-gated while identifying its summary.
         full_kickstart_log = Path(temporary_directory) / "launchctl-calls-full"
         full_stand_in = Path(temporary_directory) / "launchctl-full"
         full_stand_in.write_text(
@@ -403,10 +402,9 @@ def main() -> int:
         )
         results.append(
             check(
-                "launchd was asked to start the nightly job, not the on-demand one",
+                "launchd was asked to start the manual full-run job",
                 "kickstart" in full_kickstart_calls
-                and "com.claudeusageoptimizer.autonomouswork" in full_kickstart_calls
-                and ".ondemand" not in full_kickstart_calls,
+                and "com.claudeusageoptimizer.autonomouswork.manualfull" in full_kickstart_calls,
             )
         )
 

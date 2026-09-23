@@ -41,9 +41,10 @@ LAUNCH_AGENT_LABEL = "com.claudeusageoptimizer.autonomouswork"
 # The same work with no schedule and --force baked in, for the popup's "Do next
 # todo" to kickstart. launchd takes no arguments when starting a job, so a
 # single-shot run that skips the pace gate needs a job definition of its own.
-# (The popup's "Trigger a full run" needs no extra agent — it kickstarts
-# LAUNCH_AGENT_LABEL itself, pace gate and all.)
+# The popup's full-run button gets a separate unscheduled label so summaries can
+# identify it while keeping the ordinary pace gate.
 ON_DEMAND_LAUNCH_AGENT_LABEL = LAUNCH_AGENT_LABEL + ".ondemand"
+MANUAL_FULL_LAUNCH_AGENT_LABEL = LAUNCH_AGENT_LABEL + ".manualfull"
 
 DEFAULT_SCHEDULE_HOUR = 2
 DEFAULT_SCHEDULE_MINUTE = 0
@@ -165,6 +166,11 @@ ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (ON_DEMAND_LAUNCH_AGEN
 INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE = environment_path(
     "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST",
     INSTALLED_LAUNCH_AGENT_FILE.parent / (ON_DEMAND_LAUNCH_AGENT_LABEL + ".plist"),
+)
+MANUAL_FULL_LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (MANUAL_FULL_LAUNCH_AGENT_LABEL + ".plist")
+INSTALLED_MANUAL_FULL_LAUNCH_AGENT_FILE = environment_path(
+    "AUTONOMOUS_WORK_MANUAL_FULL_LAUNCH_AGENT_PLIST",
+    INSTALLED_LAUNCH_AGENT_FILE.parent / (MANUAL_FULL_LAUNCH_AGENT_LABEL + ".plist"),
 )
 LAUNCHCTL_COMMAND = os.environ.get("AUTONOMOUS_WORK_LAUNCHCTL", "/bin/launchctl")
 
@@ -444,6 +450,11 @@ def render_on_demand_launch_agent_plist() -> str:
     return render_template(ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
 
 
+def render_manual_full_launch_agent_plist() -> str:
+    """Expand the unscheduled, pace-gated manual full-run template."""
+    return render_template(MANUAL_FULL_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
+
+
 def render_template(
     template_file: Path,
     settings: AutonomousWorkSettings,
@@ -509,6 +520,14 @@ def install_launch_agent(
     )
     if on_demand_result is not None:
         return LaunchAgentUpdate(False, on_demand_result)
+
+    manual_full_result = write_and_load_agent(
+        INSTALLED_MANUAL_FULL_LAUNCH_AGENT_FILE,
+        render_manual_full_launch_agent_plist(),
+        always_reload=False,
+    )
+    if manual_full_result is not None:
+        return LaunchAgentUpdate(False, manual_full_result)
 
     return LaunchAgentUpdate(True, "scheduled for {}".format(settings.describe_schedule()))
 

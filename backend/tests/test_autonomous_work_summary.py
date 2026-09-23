@@ -243,12 +243,12 @@ class RenderSessionSummaryTests(unittest.TestCase):
 
         self.assertIn("no further `todo` entries", rendered)
 
-    def test_forced_session_is_labelled_as_run_now(self):
+    def test_forced_session_is_labelled_as_do_next_todo(self):
         session = build_session(forced=True)
         session.record_attempt(build_attempt())
         session.stop("forcedSingleRun")
 
-        self.assertIn("(run now)", summary_module.render_session_summary(session))
+        self.assertIn("(do next todo)", summary_module.render_session_summary(session))
 
     def test_missing_closing_message_points_at_the_log(self):
         session = build_session()
@@ -287,25 +287,52 @@ class RenderSessionSummaryTests(unittest.TestCase):
 
 
 class RunFileLabelTests(unittest.TestCase):
+    def test_manual_triggers_have_distinct_prefixes(self):
+        self.assertEqual(
+            summary_module.run_file_label(build_session(forced=True)), "manual-do-next-todo"
+        )
+        self.assertEqual(
+            summary_module.run_file_label(build_session(manual_full_run=True)), "manual-full-run"
+        )
+        self.assertEqual(
+            summary_module.run_file_label(build_session(manual_full_run=True, is_resume_run=True)),
+            "manual-full-run-second-run",
+        )
+
     def test_an_ordinary_session_has_no_label(self):
-        self.assertIsNone(summary_module.run_file_label(build_session()))
+        self.assertEqual(summary_module.run_file_label(build_session()), "nightly-first-run")
 
     def test_a_first_session_that_scheduled_a_resume_is_run_1(self):
         session = build_session()
         session.resume_scheduled_for = datetime(2026, 8, 15, 6, 17)
-        self.assertEqual(summary_module.run_file_label(session), "run-1")
+        self.assertEqual(summary_module.run_file_label(session), "nightly-first-run")
 
     def test_a_resume_session_is_run_2(self):
         session = build_session(is_resume_run=True)
-        self.assertEqual(summary_module.run_file_label(session), "run-2")
+        self.assertEqual(summary_module.run_file_label(session), "nightly-second-run")
 
     def test_a_resume_session_stays_run_2_even_if_it_somehow_scheduled_one(self):
         session = build_session(is_resume_run=True)
         session.resume_scheduled_for = datetime(2026, 8, 15, 9, 0)
-        self.assertEqual(summary_module.run_file_label(session), "run-2")
+        self.assertEqual(summary_module.run_file_label(session), "nightly-second-run")
 
 
 class WriteSessionSummaryTests(unittest.TestCase):
+    def test_manual_full_run_and_its_resume_write_separate_prefixed_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            summaries = Path(temporary_directory) / "summaries"
+            first = build_session(manual_full_run=True)
+            first.stop("fiveHourExhausted")
+            first.resume_scheduled_for = datetime(2026, 8, 15, 6, 17)
+            resumed = build_session(manual_full_run=True, is_resume_run=True)
+            resumed.stop("emptyQueue")
+
+            first_path = summary_module.write_session_summary(summaries, first)
+            resumed_path = summary_module.write_session_summary(summaries, resumed)
+
+            self.assertEqual(first_path.name, "manual-full-run-2026-08-15.md")
+            self.assertEqual(resumed_path.name, "manual-full-run-second-run-2026-08-15.md")
+
     def test_creates_the_folder_and_a_dated_file(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             summaries = Path(temporary_directory) / "summaries"
@@ -315,7 +342,7 @@ class WriteSessionSummaryTests(unittest.TestCase):
 
             written_path = summary_module.write_session_summary(summaries, session)
 
-            self.assertEqual(written_path, summaries / "2026-08-15.md")
+            self.assertEqual(written_path, summaries / "nightly-first-run-2026-08-15.md")
             self.assertTrue(written_path.exists())
             self.assertIn("# Autonomous work —", written_path.read_text(encoding="utf-8"))
 
@@ -329,7 +356,7 @@ class WriteSessionSummaryTests(unittest.TestCase):
 
             written_path = summary_module.write_session_summary(summaries, session)
 
-            self.assertEqual(written_path, summaries / "2026-08-15.md")
+            self.assertEqual(written_path, summaries / "nightly-first-run-2026-08-15.md")
             contents = written_path.read_text(encoding="utf-8")
             self.assertIn("# Autonomous work —", contents)
             self.assertIn("0 prompts attempted", contents)
@@ -344,7 +371,7 @@ class WriteSessionSummaryTests(unittest.TestCase):
 
             written_path = summary_module.write_session_summary(summaries, session)
 
-            self.assertEqual(written_path, summaries / "2026-08-15-run-1.md")
+            self.assertEqual(written_path, summaries / "nightly-first-run-2026-08-15.md")
 
     def test_a_resume_session_writes_a_separate_run_2_file(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -363,17 +390,17 @@ class WriteSessionSummaryTests(unittest.TestCase):
             resumed.stop("emptyQueue")
             resumed_path = summary_module.write_session_summary(summaries, resumed)
 
-            self.assertEqual(resumed_path, summaries / "2026-08-15-run-2.md")
+            self.assertEqual(resumed_path, summaries / "nightly-second-run-2026-08-15.md")
             self.assertEqual(
                 sorted(path.name for path in summaries.iterdir()),
-                ["2026-08-15-run-1.md", "2026-08-15-run-2.md"],
+                ["nightly-first-run-2026-08-15.md", "nightly-second-run-2026-08-15.md"],
             )
             run_2_contents = resumed_path.read_text(encoding="utf-8")
             self.assertIn("# Autonomous work —", run_2_contents)
             self.assertIn("Second prompt", run_2_contents)
             self.assertNotIn("First prompt", run_2_contents)
 
-    def test_second_session_the_same_day_appends_to_the_same_file(self):
+    def test_manual_session_the_same_day_writes_its_own_file(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             summaries = Path(temporary_directory) / "summaries"
 
@@ -387,12 +414,12 @@ class WriteSessionSummaryTests(unittest.TestCase):
             evening.stop("forcedSingleRun")
             second_path = summary_module.write_session_summary(summaries, evening)
 
-            self.assertEqual(second_path, summaries / "2026-08-15.md")
-            self.assertEqual(len(list(summaries.iterdir())), 1)
+            self.assertEqual(second_path, summaries / "manual-do-next-todo-2026-08-15.md")
+            self.assertEqual(len(list(summaries.iterdir())), 2)
 
             contents = second_path.read_text(encoding="utf-8")
             self.assertEqual(contents.count("# Autonomous work —"), 1)
-            self.assertIn("First prompt", contents)
+            self.assertNotIn("First prompt", contents)
             self.assertIn("Second prompt", contents)
 
     def test_a_different_day_gets_its_own_file(self):
@@ -407,7 +434,7 @@ class WriteSessionSummaryTests(unittest.TestCase):
 
             self.assertEqual(
                 sorted(path.name for path in summaries.iterdir()),
-                ["2026-08-15.md", "2026-08-16.md"],
+                ["nightly-first-run-2026-08-15.md", "nightly-first-run-2026-08-16.md"],
             )
 
     def test_unwritable_destination_reports_none_rather_than_raising(self):

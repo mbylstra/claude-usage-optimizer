@@ -70,6 +70,7 @@ class PendingResume:
     reason: str
     """Where the reset time came from: "cliNotice", "snapshot" or "fallback"."""
     source: str
+    manual_full_run: bool = False
     """Set when a resume run consumed this, which is also the record that today already had one."""
     served_at: datetime | None = None
 
@@ -135,6 +136,7 @@ def parse_resume_state(state_data: object) -> PendingResume | None:
         scheduled_at=scheduled_at,
         reason=reason if isinstance(reason, str) else "unknown",
         source=source if isinstance(source, str) else "unknown",
+        manual_full_run=state_data.get("manualFullRun") is True,
         served_at=_parse_moment(state_data.get("servedAt")),
     )
 
@@ -159,6 +161,7 @@ def write_resume_state(pending: PendingResume) -> None:
         "scheduledAt": _format_moment(pending.scheduled_at),
         "reason": pending.reason,
         "source": pending.source,
+        "manualFullRun": pending.manual_full_run,
         "servedAt": None if pending.served_at is None else _format_moment(pending.served_at),
     }
 
@@ -227,6 +230,7 @@ def consume_pending_resume(now: datetime) -> ResumeConsumption:
         scheduled_at=state.scheduled_at,
         reason=state.reason,
         source=state.source,
+        manual_full_run=state.manual_full_run,
         served_at=now,
     )
     try:
