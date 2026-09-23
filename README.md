@@ -512,11 +512,11 @@ Settings in the popup has two run buttons, plus a **View run** button.
   `--force` bypasses the pace gate for exactly one prompt rather than looping,
   so this button is for testing a single queued item, not for draining the
   queue.
-- **Trigger a full run** starts the nightly 2 AM job right now instead — same
-  launchd label, no `--force`. It stays pace-gated, works through the whole
-  queue while the week is behind an even burn, and schedules a resume after the
-  5-hour window resets when that toggle is on. This is the one to press when you
-  are leaving credits idle for the day.
+- **Trigger a full run** starts the same pace-gated work right now instead, from
+  its own unscheduled launchd label — no `--force`. It stays pace-gated, works
+  through the whole queue while the week is behind an even burn, and schedules a
+  resume after the 5-hour window resets when that toggle is on. This is the one
+  to press when you are leaving credits idle for the day.
 
 All three buttons open a detached window that streams the run — a status header
 with elapsed time and cost, a timeline of what Claude is doing, a Cancel button,

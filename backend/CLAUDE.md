@@ -24,7 +24,8 @@ few minutes after that window is expected to refill — see below. `--force`
 (used by the popup's "Do next todo" button and by the test recipes) is the one
 path that stays single-shot: it bypasses the pace check it exists to keep
 re-evaluating, so it runs exactly one prompt. The popup's "Trigger a full run"
-button takes the ordinary no-argument path and behaves exactly as the 2 AM job.
+button carries `--manual-full-run`, which identifies the trigger for the
+summary but otherwise stays pace-gated and behaves exactly as the 2 AM job.
 
 **A prompt refused by a subscription limit is left `todo`, not marked as an
 error.** It never ran, so failing it would skip it until somebody edited
