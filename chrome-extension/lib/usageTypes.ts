@@ -56,6 +56,8 @@ export interface UsageWindowSnapshot {
 
 export interface UsageSnapshot {
   windows: UsageWindowSnapshot[];
+  /** Set only when Claude confirms that this account has lost subscription access. */
+  subscriptionCancelled?: boolean;
 }
 
 export type PaceStatus = 'ahead' | 'behind' | 'onTrack';

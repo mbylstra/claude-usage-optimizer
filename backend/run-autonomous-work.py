@@ -651,6 +651,15 @@ def pace_burn_label(agent: str) -> str:
     return "Claude"
 
 
+def claude_subscription_cancelled() -> bool:
+    """The extension's explicit access state, even when old pace figures survive."""
+    try:
+        snapshot_data = json.loads(USAGE_SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(snapshot_data, dict) and snapshot_data.get("claudeSubscriptionCancelled") is True
+
+
 def read_pace_snapshot(agent: str) -> PaceSnapshot | None:
     """Load the extension's export, or None if it is absent, unreadable or has no pace.
 
@@ -673,6 +682,12 @@ def read_pace_snapshot(agent: str) -> PaceSnapshot | None:
 
     if not isinstance(snapshot_data, dict):
         log_message("Usage snapshot is not a JSON object")
+        return None
+
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE and snapshot_data.get(
+        "claudeSubscriptionCancelled"
+    ) is True:
+        log_message("Claude subscription cancelled — Claude is unavailable for autonomous work")
         return None
 
     # An unreadable timestamp costs us a log line, not the run.
@@ -736,9 +751,9 @@ class GateResult:
 
 def choose_agent_by_pace(
     claude_snapshot: PaceSnapshot | None, codex_snapshot: PaceSnapshot | None,
-    *, force: bool = False,
+    *, force: bool = False, claude_unavailable: bool = False,
 ) -> str:
-    """Choose the largest runnable deficit; ties and missing data favour Claude."""
+    """Choose the largest runnable deficit; ties and missing data favour Claude unless unavailable."""
     snapshots = (
         (autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE, claude_snapshot),
         (autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX, codex_snapshot),
@@ -757,6 +772,8 @@ def choose_agent_by_pace(
     ]
     candidates = runnable or available
     if not candidates:
+        if claude_unavailable:
+            return autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
         return autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
     return min(candidates, key=lambda pair: pair[1].weekly_pace_delta_ms)[0]
 
@@ -823,10 +840,16 @@ def check_pace_gate(force: bool) -> GateResult:
     ends the run rather than leaving it to wait out the reset.
     """
     agent = AUTONOMOUS_WORK_AGENT
+    claude_unavailable = claude_subscription_cancelled()
     if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_BEHIND_PACE:
-        claude_snapshot = read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE)
+        claude_snapshot = (
+            None if claude_unavailable
+            else read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE)
+        )
         codex_snapshot = read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX)
-        agent = choose_agent_by_pace(claude_snapshot, codex_snapshot, force=force)
+        agent = choose_agent_by_pace(
+            claude_snapshot, codex_snapshot, force=force, claude_unavailable=claude_unavailable
+        )
         pace_snapshot = (
             codex_snapshot if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
             else claude_snapshot
@@ -834,6 +857,12 @@ def check_pace_gate(force: bool) -> GateResult:
         log_message(f"Automatic agent choice: {pace_burn_label(agent)}")
     else:
         pace_snapshot = None if force else read_pace_snapshot(agent)
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE and claude_unavailable:
+        return GateResult(
+            ok=False, reason="claudeSubscriptionCancelled",
+            detail="Claude subscription cancelled — Claude is unavailable for autonomous work",
+            agent=agent,
+        )
     if force:
         log_message("Pace gate bypassed (--force)")
         return GateResult(ok=True, agent=agent)

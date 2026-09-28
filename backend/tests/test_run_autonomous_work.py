@@ -240,6 +240,22 @@ class ChooseAgentByPaceTests(unittest.TestCase):
         self.assertEqual(result.agent, "codex")
         self.assertIs(result.snapshot, snapshots["codex"])
 
+    def test_cancelled_claude_uses_codex_even_for_forced_run_without_pace(self):
+        with mock.patch.object(work, "AUTONOMOUS_WORK_AGENT", "behindPace"), mock.patch.object(
+            work, "claude_subscription_cancelled", return_value=True
+        ), mock.patch.object(work, "read_pace_snapshot", return_value=None):
+            result = work.check_pace_gate(True)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.agent, "codex")
+
+    def test_cancelled_claude_is_blocked_even_for_forced_run(self):
+        with mock.patch.object(work, "AUTONOMOUS_WORK_AGENT", "claude"), mock.patch.object(
+            work, "claude_subscription_cancelled", return_value=True
+        ):
+            result = work.check_pace_gate(True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "claudeSubscriptionCancelled")
+
 
 class EvaluatePaceGateTests(unittest.TestCase):
     """The threshold arithmetic behind `check_pace_gate`, isolated from I/O and logging."""
@@ -492,6 +508,18 @@ class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
             {"fetchedAt": "2026-08-25T01:00:00.000Z", "codexWeeklyPaceDeltaMs": -3600000}
         )
         self.assertIsNone(work.read_pace_snapshot("claude"))
+
+    def test_cancelled_claude_is_unavailable_even_with_old_pace_figures(self):
+        self._write_snapshot(
+            {
+                "claudeSubscriptionCancelled": True,
+                "weeklyPaceDeltaMs": -3600000,
+                "codexWeeklyPaceDeltaMs": -7200000,
+            }
+        )
+        self.assertTrue(work.claude_subscription_cancelled())
+        self.assertIsNone(work.read_pace_snapshot("claude"))
+        self.assertIsNotNone(work.read_pace_snapshot("codex"))
 
 
 class ParseQueueTests(unittest.TestCase):

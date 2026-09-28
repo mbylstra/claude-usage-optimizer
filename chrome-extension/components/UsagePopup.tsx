@@ -180,6 +180,30 @@ export function UsagePopup({
     );
   }
 
+  if (data.state === 'cancelled') {
+    return (
+      <PopupFrame>
+        <PopupHeader
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
+          onOpenSettings={onOpenSettings}
+          subtitle="No Claude access"
+        />
+        <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed px-3.5 py-4">
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <AlertTriangle className="text-pace-ahead size-4" aria-hidden="true" />
+            Claude subscription cancelled
+          </div>
+          <p className="text-muted-foreground text-xs">
+            You no longer have access to Claude through this subscription.
+          </p>
+          <OpenClaudeButton onOpenClaude={onOpenClaude} />
+        </div>
+        {codexUsageEnabled && <CodexUsageSection data={codexData} now={now} />}
+      </PopupFrame>
+    );
+  }
+
   return (
     <PopupFrame>
       <PopupHeader

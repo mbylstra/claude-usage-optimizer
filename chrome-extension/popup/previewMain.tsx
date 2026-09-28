@@ -39,6 +39,14 @@ function sessionEntry(percent: number, hoursUntilReset: number): UsageCacheEntry
 
 // 2.5h into a 5h window => even burn is 50%.
 const CASES: { label: string; entry: UsageCacheEntry }[] = [
+  {
+    label: 'subscription cancelled',
+    entry: {
+      snapshot: { windows: [], subscriptionCancelled: true },
+      fetchedAt: now.toISOString(),
+      error: null,
+    },
+  },
   { label: 'on pace (50%)', entry: sessionEntry(50, 2.5) },
   { label: 'slightly ahead (56%)', entry: sessionEntry(56, 2.5) },
   { label: 'moderately ahead (62%)', entry: sessionEntry(62, 2.5) },

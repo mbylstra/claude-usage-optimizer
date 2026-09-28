@@ -96,6 +96,9 @@ async function requestJson(
     );
   }
 
+  if (response.status === 403 && path.endsWith('/usage')) {
+    return { five_hour: null, seven_day: null };
+  }
   if (response.status === 401 || response.status === 403) {
     throw new ClaudeUsageError('NOT_LOGGED_IN', 'Not logged in to Claude.ai.', response.status);
   }
@@ -181,6 +184,20 @@ export function normaliseUsageResponse(payload: unknown): UsageSnapshot {
     .filter((window): window is UsageWindowSnapshot => window !== null);
 
   if (windows.length === 0) {
+    const hasFiveHourWindow = USAGE_RESPONSE_KEYS.fiveHour.some((key) =>
+      Object.prototype.hasOwnProperty.call(payload, key),
+    );
+    const hasSevenDayWindow = USAGE_RESPONSE_KEYS.sevenDay.some((key) =>
+      Object.prototype.hasOwnProperty.call(payload, key),
+    );
+    const reportedWindows = [...USAGE_RESPONSE_KEYS.fiveHour, ...USAGE_RESPONSE_KEYS.sevenDay];
+    if (
+      hasFiveHourWindow &&
+      hasSevenDayWindow &&
+      reportedWindows.every((key) => payload[key] == null)
+    ) {
+      return { windows: [], subscriptionCancelled: true };
+    }
     throw new ClaudeUsageError('MALFORMED_RESPONSE', 'Claude.ai did not report any usage windows.');
   }
 
@@ -213,7 +230,11 @@ export async function fetchUsageSnapshot(
 
   if (cachedOrganizationId !== null) {
     try {
-      return await fetchUsageForOrganization(dependencies, cachedOrganizationId);
+      const cachedSnapshot = await fetchUsageForOrganization(dependencies, cachedOrganizationId);
+      if (!cachedSnapshot.subscriptionCancelled) return cachedSnapshot;
+      // A membership change can make the cached org return 403 while another
+      // org still has access. Rediscover before declaring the subscription gone.
+      await dependencies.organizationIdCache.clear();
     } catch (error) {
       // A stale cache cannot explain "you are logged out", so do not retry that.
       if (error instanceof ClaudeUsageError && error.code === 'NOT_LOGGED_IN') throw error;

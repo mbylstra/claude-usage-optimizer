@@ -21,6 +21,10 @@ export interface UsagePopupError {
   error: UsageErrorInfo;
 }
 
+export interface UsagePopupCancelled {
+  state: 'cancelled';
+}
+
 export interface UsagePopupReady {
   state: 'ready';
   windows: DerivedWindowStatus[];
@@ -32,7 +36,8 @@ export interface UsagePopupReady {
   suggestedModel: SuggestedModel | null;
 }
 
-export type UsagePopupData = UsagePopupLoading | UsagePopupError | UsagePopupReady;
+export type UsagePopupData =
+  UsagePopupLoading | UsagePopupError | UsagePopupCancelled | UsagePopupReady;
 
 function parseTimestamp(value: string | null): Date | null {
   if (value === null) return null;
@@ -46,6 +51,8 @@ export function buildUsagePopupData(entry: UsageCacheEntry | null, now: Date): U
     if (entry?.error != null) return { state: 'error', error: entry.error };
     return { state: 'loading' };
   }
+
+  if (entry.snapshot.subscriptionCancelled === true) return { state: 'cancelled' };
 
   const fetchedAt = parseTimestamp(entry.fetchedAt) ?? now;
   const windows = deriveUsageStatuses(entry.snapshot, now);

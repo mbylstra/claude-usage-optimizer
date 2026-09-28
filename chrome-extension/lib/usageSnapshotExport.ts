@@ -14,6 +14,7 @@ import type { PaceStatus, UsageSnapshot, UsageWindowKind } from './usageTypes';
 export interface UsageSnapshotExport {
   /** ISO 8601. The scheduler refuses to act on a stale file. */
   fetchedAt: string;
+  claudeSubscriptionCancelled: boolean;
   /** Negative means behind an even burn. Null when the weekly window is inactive. */
   weeklyPaceDeltaMs: number | null;
   weeklyPaceStatus: PaceStatus | null;
@@ -74,6 +75,7 @@ export function buildUsageSnapshotExport(
 
   return {
     fetchedAt: fetchedAt.toISOString(),
+    claudeSubscriptionCancelled: snapshot.subscriptionCancelled === true,
     weeklyPaceDeltaMs: weeklyStatus?.isActive ? weeklyStatus.paceDeltaMs : null,
     weeklyPaceStatus: weeklyStatus?.isActive ? weeklyStatus.paceStatus : null,
     codexWeeklyPaceDeltaMs: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceDeltaMs : null,

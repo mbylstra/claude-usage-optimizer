@@ -259,10 +259,15 @@ async function refreshUsage(): Promise<UsageCacheEntry> {
     const entry: UsageCacheEntry = { snapshot, fetchedAt, error: null };
 
     await writeUsageCache(entry);
-    await appendUsageHistorySample(snapshot, fetchedAt);
+    if (!snapshot.subscriptionCancelled) await appendUsageHistorySample(snapshot, fetchedAt);
     await applyToolbarTitle(snapshot);
     const codexSnapshotForExport = await fetchCodexSnapshotForPaceGate();
     await exportUsageSnapshot(snapshot, fetchedAtDate, codexSnapshotForExport);
+
+    if (snapshot.subscriptionCancelled) {
+      await applyJiraCredentialBadge();
+      return entry;
+    }
 
     const windows = deriveUsageStatuses(snapshot, fetchedAtDate);
     const newModel = deriveSuggestedModel(windows);
