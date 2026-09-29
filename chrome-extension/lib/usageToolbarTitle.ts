@@ -13,5 +13,6 @@ import type { UsageSnapshot } from './usageTypes';
 export const DEFAULT_TOOLBAR_TITLE = 'Claude Usage Optimizer';
 
 export function deriveToolbarTitle(snapshot: UsageSnapshot): string {
+  if (snapshot.subscriptionCancelled) return 'Claude subscription cancelled — no access';
   return `Claude usage: ${Math.round(highestUtilizationPercent(snapshot))}% of the closest limit`;
 }

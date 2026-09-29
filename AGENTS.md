@@ -17,7 +17,7 @@ backend/             the native-messaging host + autonomous-work scheduler —
 findings/            postmortems
 marketing/           the Chrome Web Store listing assets
 plans/               design docs
-summaries/           what each night's run actually did, one file per day.
+summaries/           what each scheduled or manual run did, grouped by trigger and day.
                      Written by the scheduler, gitignored, for a person to read.
 ```
 
@@ -38,7 +38,7 @@ you are working under them:
   (`chrome.alarms` not `setInterval`, the minimal permission set, the two-pass
   build, the stale-service-worker / `BUILD_STAMP` trap).
 - **`backend/CLAUDE.md`** — the autonomous-work scheduler and its pace gate, the
-  three launch agents, resuming after the 5-hour window resets, the native host
+  four launch agents, resuming after the 5-hour window resets, the native host
   and the live run-log stream, `unmerged:<branch>` handling, and the Jira board
   as an alternative queue (including the credential and its warning system).
 
@@ -78,4 +78,3 @@ the queue entry `todo`.
   could mean anything — prefer `userProfileData`; `result` tells you nothing —
   prefer `validatedToken`).
 - AI tends to over-index on brief names from training data. Actively resist this.
-

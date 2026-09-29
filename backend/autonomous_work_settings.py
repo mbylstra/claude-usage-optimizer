@@ -41,9 +41,10 @@ LAUNCH_AGENT_LABEL = "com.claudeusageoptimizer.autonomouswork"
 # The same work with no schedule and --force baked in, for the popup's "Do next
 # todo" to kickstart. launchd takes no arguments when starting a job, so a
 # single-shot run that skips the pace gate needs a job definition of its own.
-# (The popup's "Trigger a full run" needs no extra agent — it kickstarts
-# LAUNCH_AGENT_LABEL itself, pace gate and all.)
+# The popup's full-run button gets a separate unscheduled label so summaries can
+# identify it while keeping the ordinary pace gate.
 ON_DEMAND_LAUNCH_AGENT_LABEL = LAUNCH_AGENT_LABEL + ".ondemand"
+MANUAL_FULL_LAUNCH_AGENT_LABEL = LAUNCH_AGENT_LABEL + ".manualfull"
 
 DEFAULT_SCHEDULE_HOUR = 2
 DEFAULT_SCHEDULE_MINUTE = 0
@@ -52,6 +53,15 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
 DEFAULT_MODEL = "opus"
+AUTONOMOUS_WORK_AGENT_CLAUDE = "claude"
+AUTONOMOUS_WORK_AGENT_CODEX = "codex"
+AUTONOMOUS_WORK_AGENT_BEHIND_PACE = "behindPace"
+AUTONOMOUS_WORK_AGENTS = (
+    AUTONOMOUS_WORK_AGENT_CLAUDE,
+    AUTONOMOUS_WORK_AGENT_CODEX,
+    AUTONOMOUS_WORK_AGENT_BEHIND_PACE,
+)
+DEFAULT_AUTONOMOUS_WORK_AGENT = AUTONOMOUS_WORK_AGENT_CLAUDE
 # The Claude models a run may be pinned to. The one home both the settings
 # screen's validation and the Jira board's per-card `Model` dropdown
 # (`queue_source_jira.MODEL_FIELD_NAME`) check against, so the two cannot drift.
@@ -157,6 +167,11 @@ INSTALLED_ON_DEMAND_LAUNCH_AGENT_FILE = environment_path(
     "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST",
     INSTALLED_LAUNCH_AGENT_FILE.parent / (ON_DEMAND_LAUNCH_AGENT_LABEL + ".plist"),
 )
+MANUAL_FULL_LAUNCH_AGENT_TEMPLATE_FILE = SCRIPT_DIRECTORY / (MANUAL_FULL_LAUNCH_AGENT_LABEL + ".plist")
+INSTALLED_MANUAL_FULL_LAUNCH_AGENT_FILE = environment_path(
+    "AUTONOMOUS_WORK_MANUAL_FULL_LAUNCH_AGENT_PLIST",
+    INSTALLED_LAUNCH_AGENT_FILE.parent / (MANUAL_FULL_LAUNCH_AGENT_LABEL + ".plist"),
+)
 LAUNCHCTL_COMMAND = os.environ.get("AUTONOMOUS_WORK_LAUNCHCTL", "/bin/launchctl")
 
 
@@ -167,6 +182,7 @@ class AutonomousWorkSettings:
     schedule_hour: int = DEFAULT_SCHEDULE_HOUR
     schedule_minute: int = DEFAULT_SCHEDULE_MINUTE
     new_projects_directory: str = DEFAULT_NEW_PROJECTS_DIRECTORY
+    agent: str = DEFAULT_AUTONOMOUS_WORK_AGENT
     model: str = DEFAULT_MODEL
     """The default effort level for `model`, or `DEFAULT_EFFORT` ("") to send no
     `--effort` flag at all. Validated against `MODEL_EFFORT_LEVELS[model]`, not
@@ -273,6 +289,9 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     else:
         model = DEFAULT_MODEL
 
+    agent_value = settings_data.get("agent")
+    agent = agent_value if agent_value in AUTONOMOUS_WORK_AGENTS else DEFAULT_AUTONOMOUS_WORK_AGENT
+
     # Validated against the *chosen* model's own levels, not the flat
     # VALID_EFFORT_LEVELS — a level valid for one model but not this one is
     # exactly as wrong as a level that never existed. Falls back to
@@ -354,6 +373,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
             settings_data.get("scheduleMinute"), DEFAULT_SCHEDULE_MINUTE, 59
         ),
         new_projects_directory=new_projects_directory,
+        agent=agent,
         model=model,
         effort=effort,
         max_prompt_duration_hours=_coerce_positive_hours(
@@ -389,6 +409,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "scheduleHour": settings.schedule_hour,
         "scheduleMinute": settings.schedule_minute,
         "newProjectsDirectory": settings.new_projects_directory,
+        "agent": settings.agent,
         "model": settings.model,
         "effort": settings.effort,
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
@@ -427,6 +448,11 @@ def render_launch_agent_plist(settings: AutonomousWorkSettings) -> str:
 def render_on_demand_launch_agent_plist() -> str:
     """Expand the on-demand template — the same work, with no time in it."""
     return render_template(ON_DEMAND_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
+
+
+def render_manual_full_launch_agent_plist() -> str:
+    """Expand the unscheduled, pace-gated manual full-run template."""
+    return render_template(MANUAL_FULL_LAUNCH_AGENT_TEMPLATE_FILE, DEFAULT_SETTINGS)
 
 
 def render_template(
@@ -494,6 +520,14 @@ def install_launch_agent(
     )
     if on_demand_result is not None:
         return LaunchAgentUpdate(False, on_demand_result)
+
+    manual_full_result = write_and_load_agent(
+        INSTALLED_MANUAL_FULL_LAUNCH_AGENT_FILE,
+        render_manual_full_launch_agent_plist(),
+        always_reload=False,
+    )
+    if manual_full_result is not None:
+        return LaunchAgentUpdate(False, manual_full_result)
 
     return LaunchAgentUpdate(True, "scheduled for {}".format(settings.describe_schedule()))
 
@@ -577,8 +611,9 @@ def main() -> int:
 
     print("Scheduled run:      {}".format(settings.describe_schedule()))
     print("New projects in:    {}".format(settings.new_projects_directory))
-    print("Model for runs:     {}".format(settings.model))
-    print("Effort for runs:    {}".format(settings.effort or "(claude's own default)"))
+    print("Agent for runs:     {}".format(settings.agent))
+    print("Claude model:       {}".format(settings.model))
+    print("Claude effort:      {}".format(settings.effort or "(claude's own default)"))
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))
     print("Pace threshold:      {} hours".format(settings.pace_threshold_hours))

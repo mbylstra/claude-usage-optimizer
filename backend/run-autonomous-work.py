@@ -164,7 +164,7 @@ RAW_EVENT_FILE = environment_path(
 RUN_EVENT_FILE = environment_path(
     "AUTONOMOUS_WORK_RUN_EVENT_FILE", SCRIPT_DIRECTORY / "autonomous-run-events.jsonl"
 )
-# The morning-after digest: one file per day, one section per session. At the
+# The morning-after digest: one file per trigger and day, one section per session. At the
 # repository root rather than beside this script, for the same reason
 # `prompts.txt` is — it is written for a person to read, not for the machinery.
 SUMMARIES_DIRECTORY = environment_path(
@@ -203,9 +203,13 @@ _settings = autonomous_work_settings.read_settings()
 # row and is bounded separately above, by pace and the usage window. There is no
 # way to tell a stuck prompt from a slow one, so this is a flat ceiling on
 # wall-clock time, not an inactivity timeout.
-CLAUDE_MAX_PROMPT_DURATION_SECONDS = environment_int_override(
+AUTONOMOUS_PROMPT_TIMEOUT_SECONDS = environment_int_override(
     "AUTONOMOUS_WORK_MAX_PROMPT_DURATION_SECONDS"
 ) or int(_settings.max_prompt_duration_hours * 3600)
+# Kept as an alias for integrations that imported the old name.
+CLAUDE_MAX_PROMPT_DURATION_SECONDS = AUTONOMOUS_PROMPT_TIMEOUT_SECONDS
+CODEX_MODEL = "gpt-6-sol"
+AUTONOMOUS_WORK_AGENT = _settings.agent
 # Pinned because an unpinned `claude` inherits `model` from ~/.claude/settings.json,
 # which is tuned for interactive use and has already silently switched a nightly
 # run to Haiku. The whole point is to spend the weekly window, so the model this
@@ -281,7 +285,7 @@ MANDATORY_PROMPT_SUFFIX = (
 # falls through: an entry to `CLAUDE_MODEL`, the session default to opus.
 _MODEL_ID_MAP = {
     "sonnet": "claude-sonnet-5",
-    "opus": "claude-opus-5",
+    "opus": "claude-opus-5-5",
 }
 CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
 
@@ -514,6 +518,7 @@ class RunEventStream:
         prompt: str,
         forced: bool,
         model: str = CLAUDE_MODEL,
+        agent: str = "claude",
     ) -> None:
         self.emit(
             "runStarted",
@@ -525,15 +530,23 @@ class RunEventStream:
             # The model this prompt actually runs on — a queued entry may have
             # overridden the session default, so this is not always CLAUDE_MODEL.
             model=model,
+            agent=agent,
         )
 
+    def agent_event(self, agent: str, event: dict) -> None:
+        """One provider event, verbatim, for the provider-aware viewer."""
+        self.emit("agentEvent", agent=agent, event=event)
+
+    def agent_output(self, agent: str, text: str) -> None:
+        """A provider line that was not JSON — merged stderr, usually."""
+        self.emit("agentOutput", agent=agent, text=text)
+
+    # Compatibility helpers for callers outside this file.
     def claude_event(self, event: dict) -> None:
-        """One stream-json event, verbatim, so the viewer sees exactly what claude said."""
-        self.emit("claudeEvent", event=event)
+        self.agent_event("claude", event)
 
     def claude_output(self, text: str) -> None:
-        """A line claude emitted that was not JSON — merged stderr, usually."""
-        self.emit("claudeOutput", text=text)
+        self.agent_output("claude", text)
 
     def finished(self, outcome: str, exit_code: int, queue_status: str | None = None) -> None:
         self.emit("runFinished", outcome=outcome, exitCode=exit_code, queueStatus=queue_status)
@@ -613,14 +626,49 @@ def describe_age(age_seconds: float | None) -> str:
     return f"{age_seconds / 86_400:.1f} days old"
 
 
-def read_pace_snapshot() -> PaceSnapshot | None:
+def pace_snapshot_field_names(agent: str) -> tuple[str, str]:
+    """The snapshot's JSON keys for this agent's weekly pace delta and status.
+
+    Claude and Codex burn from separate subscriptions, so the extension exports
+    a pace figure for each — `weeklyPaceDeltaMs`/`weeklyPaceStatus` for Claude,
+    `codexWeeklyPaceDeltaMs`/`codexWeeklyPaceStatus` for Codex, both built the
+    same way in `buildUsageSnapshotExport`. The gate has to read whichever one
+    the configured agent actually spends from: reading Claude's while running
+    Codex prompts would let the scheduler burn through an exhausted Codex week
+    on the strength of Claude still having headroom, or the reverse.
+    """
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX:
+        return "codexWeeklyPaceDeltaMs", "codexWeeklyPaceStatus"
+    return "weeklyPaceDeltaMs", "weeklyPaceStatus"
+
+
+def pace_burn_label(agent: str) -> str:
+    """"Claude" or "Codex" — spliced into the gate's log lines and the summary's
+    stop-reason text, so which subscription's pace a decision was made against
+    is visible at a glance rather than assumed."""
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX:
+        return "Codex"
+    return "Claude"
+
+
+def claude_subscription_cancelled() -> bool:
+    """The extension's explicit access state, even when old pace figures survive."""
+    try:
+        snapshot_data = json.loads(USAGE_SNAPSHOT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(snapshot_data, dict) and snapshot_data.get("claudeSubscriptionCancelled") is True
+
+
+def read_pace_snapshot(agent: str) -> PaceSnapshot | None:
     """Load the extension's export, or None if it is absent, unreadable or has no pace.
 
-    The newest snapshot is used however old it is. There is no freshness gate,
-    because the extension can only refresh while Chrome is running: gating on age
-    would mean the nightly job almost never fires on a machine whose browser is
-    closed at 2 AM. The age is logged so a run against week-old figures is at
-    least visible in the log.
+    Reads whichever agent's weekly figure `agent` names — see
+    `pace_snapshot_field_names`. The newest snapshot is used however old it is.
+    There is no freshness gate, because the extension can only refresh while
+    Chrome is running: gating on age would mean the nightly job almost never
+    fires on a machine whose browser is closed at 2 AM. The age is logged so a
+    run against week-old figures is at least visible in the log.
     """
     if not USAGE_SNAPSHOT_FILE.exists():
         log_message(f"No usage snapshot at {USAGE_SNAPSHOT_FILE} — is the extension running?")
@@ -636,18 +684,33 @@ def read_pace_snapshot() -> PaceSnapshot | None:
         log_message("Usage snapshot is not a JSON object")
         return None
 
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE and snapshot_data.get(
+        "claudeSubscriptionCancelled"
+    ) is True:
+        log_message("Claude subscription cancelled — Claude is unavailable for autonomous work")
+        return None
+
     # An unreadable timestamp costs us a log line, not the run.
     age_seconds = snapshot_age_seconds(snapshot_data.get("fetchedAt"))
 
-    pace_delta = snapshot_data.get("weeklyPaceDeltaMs")
+    pace_delta_field, pace_status_field = pace_snapshot_field_names(agent)
+    pace_delta = snapshot_data.get(pace_delta_field)
     if not isinstance(pace_delta, (int, float)):
         # Null is the honest answer when the weekly window is not currently
-        # running; acting on a guess of zero would be worse than doing nothing.
-        log_message("Usage snapshot has no weekly pace delta (weekly window inactive) — skipping")
+        # running (or, for Codex, when the extension could not reach it at
+        # all); acting on a guess of zero would be worse than doing nothing.
+        burn_label = pace_burn_label(agent)
+        log_message(
+            f"Usage snapshot has no {burn_label} weekly pace delta "
+            f"({burn_label} weekly window inactive or unavailable) — skipping"
+        )
         return None
 
-    weekly_pace_status = snapshot_data.get("weeklyPaceStatus")
-    five_hour_percent = snapshot_data.get("fiveHourPercent")
+    weekly_pace_status = snapshot_data.get(pace_status_field)
+    five_hour_percent = snapshot_data.get(
+        "codexFiveHourPercent" if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+        else "fiveHourPercent"
+    )
     return PaceSnapshot(
         weekly_pace_delta_ms=float(pace_delta),
         weekly_pace_status=weekly_pace_status if isinstance(weekly_pace_status, str) else None,
@@ -655,14 +718,18 @@ def read_pace_snapshot() -> PaceSnapshot | None:
             float(five_hour_percent) if isinstance(five_hour_percent, (int, float)) else None
         ),
         age_seconds=age_seconds,
-        five_hour_resets_at=parse_iso_timestamp(snapshot_data.get("fiveHourResetsAt")),
+        five_hour_resets_at=parse_iso_timestamp(snapshot_data.get(
+            "codexFiveHourResetsAt"
+            if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            else "fiveHourResetsAt"
+        )),
     )
 
 
-def describe_pace(pace_delta_ms: float) -> str:
+def describe_pace(pace_delta_ms: float, agent: str) -> str:
     hours = abs(pace_delta_ms) / MILLISECONDS_PER_HOUR
     direction = "behind" if pace_delta_ms < 0 else "ahead of"
-    return f"{hours:.1f}h {direction} an even weekly burn"
+    return f"{hours:.1f}h {direction} an even {pace_burn_label(agent)} weekly burn"
 
 
 @dataclass(frozen=True)
@@ -679,6 +746,36 @@ class GateResult:
     same file a second later.
     """
     snapshot: PaceSnapshot | None = None
+    agent: str | None = None
+
+
+def choose_agent_by_pace(
+    claude_snapshot: PaceSnapshot | None, codex_snapshot: PaceSnapshot | None,
+    *, force: bool = False, claude_unavailable: bool = False,
+) -> str:
+    """Choose the largest runnable deficit; ties and missing data favour Claude unless unavailable."""
+    snapshots = (
+        (autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE, claude_snapshot),
+        (autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX, codex_snapshot),
+    )
+    available = [(agent, snapshot) for agent, snapshot in snapshots if snapshot is not None]
+    runnable = [
+        (agent, snapshot)
+        for agent, snapshot in available
+        if force or evaluate_pace_gate(
+            snapshot,
+            force=False,
+            pace_threshold_ms=PACE_THRESHOLD_MS,
+            five_hour_exhausted_percent=FIVE_HOUR_EXHAUSTED_PERCENT,
+            agent=agent,
+        ).ok
+    ]
+    candidates = runnable or available
+    if not candidates:
+        if claude_unavailable:
+            return autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+        return autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
+    return min(candidates, key=lambda pair: pair[1].weekly_pace_delta_ms)[0]
 
 
 def evaluate_pace_gate(
@@ -687,8 +784,13 @@ def evaluate_pace_gate(
     force: bool,
     pace_threshold_ms: float,
     five_hour_exhausted_percent: float,
+    agent: str,
 ) -> GateResult:
     """Pure decision logic behind `check_pace_gate` — no I/O, no logging.
+
+    `agent` only shapes the wording (via `describe_pace`) — `pace_snapshot` has
+    already been read against the right agent's figure by `read_pace_snapshot`,
+    so the threshold arithmetic itself is agent-agnostic.
 
     Split out so the threshold arithmetic (the part most worth getting right)
     can be unit-tested against explicit snapshots and thresholds, without
@@ -702,7 +804,7 @@ def evaluate_pace_gate(
         return GateResult(False, "noSnapshot", f"No usable pace snapshot at {USAGE_SNAPSHOT_FILE}")
 
     snapshot_description = (
-        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms)} "
+        f"{describe_pace(pace_snapshot.weekly_pace_delta_ms, agent)} "
         f"(snapshot {describe_age(pace_snapshot.age_seconds)})"
     )
 
@@ -710,7 +812,7 @@ def evaluate_pace_gate(
         return GateResult(
             False,
             "onPace",
-            f"{snapshot_description}, threshold is {describe_pace(pace_threshold_ms)}",
+            f"{snapshot_description}, threshold is {describe_pace(pace_threshold_ms, agent)}",
         )
 
     if (
@@ -737,20 +839,43 @@ def check_pace_gate(force: bool) -> GateResult:
     window itself filled up. The latter does not refill early, so filling it
     ends the run rather than leaving it to wait out the reset.
     """
+    agent = AUTONOMOUS_WORK_AGENT
+    claude_unavailable = claude_subscription_cancelled()
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_BEHIND_PACE:
+        claude_snapshot = (
+            None if claude_unavailable
+            else read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE)
+        )
+        codex_snapshot = read_pace_snapshot(autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX)
+        agent = choose_agent_by_pace(
+            claude_snapshot, codex_snapshot, force=force, claude_unavailable=claude_unavailable
+        )
+        pace_snapshot = (
+            codex_snapshot if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            else claude_snapshot
+        )
+        log_message(f"Automatic agent choice: {pace_burn_label(agent)}")
+    else:
+        pace_snapshot = None if force else read_pace_snapshot(agent)
+    if agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE and claude_unavailable:
+        return GateResult(
+            ok=False, reason="claudeSubscriptionCancelled",
+            detail="Claude subscription cancelled — Claude is unavailable for autonomous work",
+            agent=agent,
+        )
     if force:
         log_message("Pace gate bypassed (--force)")
-        return GateResult(ok=True)
-
-    pace_snapshot = read_pace_snapshot()
+        return GateResult(ok=True, agent=agent)
     result = evaluate_pace_gate(
         pace_snapshot,
         force=False,
         pace_threshold_ms=PACE_THRESHOLD_MS,
         five_hour_exhausted_percent=FIVE_HOUR_EXHAUSTED_PERCENT,
+        agent=agent,
     )
 
     if pace_snapshot is None:
-        return result  # read_pace_snapshot() already logged why
+        return replace(result, agent=agent)  # read_pace_snapshot() already logged why
 
     if result.reason == "onPace":
         log_message(f"On pace — {result.detail}")
@@ -759,7 +884,7 @@ def check_pace_gate(force: bool) -> GateResult:
     elif result.ok:
         log_message(f"Behind pace — {result.detail}")
 
-    return replace(result, snapshot=pace_snapshot)
+    return replace(result, snapshot=pace_snapshot, agent=agent)
 
 
 # --------------------------------------------------------------------------- #
@@ -1503,6 +1628,41 @@ class ClaudeOutputCollector:
         return self.session_limit_notice is not None
 
 
+class CodexOutputCollector:
+    """The useful, provider-neutral parts of Codex's JSONL event stream."""
+
+    def __init__(self) -> None:
+        self.thread_id: str | None = None
+        self.latest_assistant_text: str | None = None
+        self.failure_detail: str | None = None
+        self.turns: int | None = None
+        self.cost_usd: float | None = None
+
+    def observe(self, event: dict) -> None:
+        event_type = event.get("type")
+        if event_type == "thread.started":
+            thread_id = event.get("thread_id")
+            if isinstance(thread_id, str) and thread_id:
+                self.thread_id = thread_id
+        elif event_type in ("turn.failed", "error"):
+            detail = event.get("error") or event.get("message")
+            self.failure_detail = detail if isinstance(detail, str) else "Codex reported a failed turn"
+        elif event_type == "item.completed":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str) and text.strip():
+                    self.latest_assistant_text = text.strip()
+
+    @property
+    def closing_text(self) -> str | None:
+        return self.failure_detail or self.latest_assistant_text
+
+    @property
+    def hit_session_limit(self) -> bool:
+        return False
+
+
 @dataclass(frozen=True)
 class PromptRunResult:
     """One prompt's outcome, plus what the day's summary reports about it.
@@ -1523,7 +1683,7 @@ class PromptRunResult:
     unmerged_branch: str | None = None
 
 
-def run_claude(
+def run_prompt(
     entry: QueueEntry,
     prompt_text: str,
     working_directory: Path,
@@ -1532,6 +1692,7 @@ def run_claude(
     forced: bool,
     session: autonomous_work_summary.SessionSummary,
     session_id: str,
+    agent: str,
 ) -> PromptRunResult:
     """Execute one queued prompt, and report how it went.
 
@@ -1544,12 +1705,14 @@ def run_claude(
     `claude` runs under is the same one the pick-up comment told a person to
     `claude --resume`.
     """
+    is_codex = agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+    provider_model = CODEX_MODEL if is_codex else claude_model_id_for(entry)
     claude_arguments = claude_arguments_for(entry, session_id)
     events.started(
-        working_directory, is_new_project, prompt_text, forced, claude_model_id_for(entry)
+        working_directory, is_new_project, prompt_text, forced, provider_model, agent
     )
     started_at = datetime.now()
-    output = ClaudeOutputCollector()
+    output = CodexOutputCollector() if is_codex else ClaudeOutputCollector()
     # Taken before the directory is prepared, so a new project reads as the empty
     # thing it is rather than as the repository `git init` is about to make. Any
     # repository already here is recorded as it stands, which is what keeps a
@@ -1613,6 +1776,8 @@ def run_claude(
                 result_text=output.closing_text,
                 started_at=started_at,
                 finished_at=datetime.now(),
+                agent=agent,
+                model=provider_model,
                 turns=output.turns,
                 cost_usd=output.cost_usd,
             )
@@ -1630,8 +1795,14 @@ def run_claude(
             # only once the run is over, which is useless to follow;
             # `stream-json` emits an event per step. stderr is merged in so
             # nothing is lost or deadlocks on a second unread pipe.
+            command = (
+                ["codex", "exec", "--json", "--model", CODEX_MODEL, "--sandbox", "workspace-write",
+                 prompt_text]
+                if is_codex
+                else ["claude", "-p", prompt_text, *claude_arguments]
+            )
             process = subprocess.Popen(
-                ["claude", "-p", prompt_text, *claude_arguments],
+                command,
                 cwd=working_directory,
                 # Without this `claude` spends three seconds waiting on an
                 # inherited stdin that is never going to produce anything, and
@@ -1643,9 +1814,12 @@ def run_claude(
                 bufsize=1,
             )
         except FileNotFoundError:
-            message = "`claude` not found on PATH — check the launchd PATH setting"
+            message = (
+                "`codex` not found on PATH — install/login to Codex CLI and check the launchd PATH setting"
+                if is_codex else "`claude` not found on PATH — check the launchd PATH setting"
+            )
             log_message(message)
-            events.claude_output(message)
+            events.agent_output(agent, message)
             return run_result(1, "error", result_text=message)
 
         # System sleep freezes the network connection carrying claude's response
@@ -1673,7 +1847,7 @@ def run_claude(
             ran_too_long = True
             process.kill()
 
-        watchdog = threading.Timer(CLAUDE_MAX_PROMPT_DURATION_SECONDS, kill_for_max_duration)
+        watchdog = threading.Timer(AUTONOMOUS_PROMPT_TIMEOUT_SECONDS, kill_for_max_duration)
         watchdog.daemon = True
         watchdog.start()
 
@@ -1693,13 +1867,13 @@ def run_claude(
                         event = json.loads(stripped_line)
                     except json.JSONDecodeError:
                         log_message(f"  {shorten(stripped_line)}")  # plain stderr text
-                        events.claude_output(stripped_line)
+                        events.agent_output(agent, stripped_line)
                         if BACKGROUND_TASK_TIMEOUT_MARKER in stripped_line:
                             background_task_timed_out = True
                         continue
 
                     if isinstance(event, dict):
-                        events.claude_event(event)
+                        events.agent_event(agent, event)
                         output.observe(event)
                         for summary in summarise_stream_event(event):
                             log_message(summary)
@@ -1708,9 +1882,13 @@ def run_claude(
         finally:
             watchdog.cancel()
 
-        result_exit_code, outcome = determine_outcome(
-            exit_code, ran_too_long, background_task_timed_out, output.hit_session_limit
-        )
+        if is_codex:
+            result_exit_code = 0 if exit_code == 0 and output.failure_detail is None and not ran_too_long else exit_code or 1
+            outcome = "completed" if result_exit_code == 0 else "timeout" if ran_too_long else "error"
+        else:
+            result_exit_code, outcome = determine_outcome(
+                exit_code, ran_too_long, background_task_timed_out, output.hit_session_limit
+            )
 
         if output.hit_session_limit:
             log_message(
@@ -1718,7 +1896,7 @@ def run_claude(
                 "— the queue entry is left as todo"
             )
         elif ran_too_long:
-            log_message(f"Prompt exceeded the {CLAUDE_MAX_PROMPT_DURATION_SECONDS}s max run time and was killed")
+            log_message(f"Prompt exceeded the {AUTONOMOUS_PROMPT_TIMEOUT_SECONDS}s max run time and was killed")
         elif exit_code == 0 and background_task_timed_out:
             # The CLI ends the turn (and so the process, with exit code 0) the
             # instant it kills a stuck background task — see
@@ -1734,16 +1912,22 @@ def run_claude(
         return run_result(
             result_exit_code,
             outcome,
-            # The limit notice wins over the closing message where there is
-            # one: it names which limit was hit and when it lifts, where the
-            # result event of a refused turn carries only the CLI's own generic
-            # error. That notice is the entire account of a prompt that never ran.
-            result_text=output.session_limit_notice or output.closing_text,
+            # For Claude, a limit notice wins over the closing message: it names
+            # which limit was hit and when it lifts. Codex has no such notice.
+            result_text=(
+                output.closing_text
+                if is_codex
+                else output.session_limit_notice or output.closing_text
+            ),
             turns=output.turns,
             cost_usd=output.cost_usd,
         )
     finally:
         signal.signal(signal.SIGTERM, previous_termination_handler)
+
+
+# Older test harnesses and integrations call this name directly.
+run_claude = run_prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -1790,6 +1974,7 @@ def schedule_resume_if_warranted(
     is_resume_run: bool,
     events: RunEventStream,
     now: datetime | None = None,
+    manual_full_run: bool = False,
 ) -> autonomous_work_resume.PendingResume | None:
     """Ask launchd to start the queue again once the 5-hour window refills.
 
@@ -1866,6 +2051,7 @@ def schedule_resume_if_warranted(
         scheduled_at=now,
         reason=reason,
         source=resume_time.source,
+        manual_full_run=manual_full_run,
     )
     update = autonomous_work_resume.schedule_resume(pending)
     if not update.applied:
@@ -1902,9 +2088,8 @@ def finish_session(session: autonomous_work_summary.SessionSummary) -> None:
     agent should not have fired, not that the scheduler weighed the work and
     declined it.
 
-    The file is normally the day's `YYYY-MM-DD.md`. A night that scheduled a
-    5-hour-reset resume is the exception: its first session writes `-run-1.md`
-    and the resume writes `-run-2.md` — see `autonomous_work_summary.run_file_label`.
+    The filename records the trigger and start date. A scheduled resume writes
+    a second-run file — see `autonomous_work_summary.run_file_label`.
     """
     session.finished_at = datetime.now()
     session.not_attempted = remaining_todo_prompts(
@@ -1935,6 +2120,11 @@ def main() -> int:
         action="store_true",
         help="Serve a resume scheduled by an earlier run that hit the 5-hour window.",
     )
+    argument_parser.add_argument(
+        "--manual-full-run",
+        action="store_true",
+        help="Identify a pace-gated full run started from the extension.",
+    )
     arguments = argument_parser.parse_args()
 
     if arguments.dry_run:
@@ -1942,7 +2132,8 @@ def main() -> int:
         # what would happen must not disturb the record of what did. Reports only
         # the immediate next entry: what the queue looks like after it is exactly
         # what a second dry run would show.
-        if not check_pace_gate(arguments.force).ok:
+        gate = check_pace_gate(arguments.force)
+        if not gate.ok:
             return 0
 
         try:
@@ -1957,11 +2148,14 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         destination = f"{working_directory}{' (new project)' if is_new_project else ''}"
-        effort = claude_effort_for(next_entry)
+        selected_agent = gate.agent or autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
+        is_codex = selected_agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+        effort = None if is_codex else claude_effort_for(next_entry)
+        model = CODEX_MODEL if is_codex else claude_model_id_for(next_entry)
         effort_description = f" at {effort} effort" if effort else ""
         log_message(
             f"Dry run — would execute in {destination} "
-            f"on model {claude_model_id_for(next_entry)}{effort_description}:\n"
+            f"with {selected_agent} on model {model}{effort_description}:\n"
             f"{build_prompt(next_entry.prompt)}"
         )
         return 0
@@ -2007,7 +2201,12 @@ def main() -> int:
     # Accumulated across every prompt in the session, and written out once at the
     # end as the day's summary — see `finish_session`.
     session = autonomous_work_summary.SessionSummary(
-        started_at=datetime.now(), forced=arguments.force, is_resume_run=arguments.resume
+        started_at=datetime.now(),
+        forced=arguments.force,
+        is_resume_run=arguments.resume,
+        manual_full_run=(
+            consumption.pending.manual_full_run if arguments.resume else arguments.manual_full_run
+        ),
     )
 
     while True:
@@ -2037,9 +2236,12 @@ def main() -> int:
                         forced=arguments.force,
                         is_resume_run=arguments.resume,
                         events=events,
+                        manual_full_run=session.manual_full_run,
                     )
                 )
             break
+
+        selected_agent = gate.agent or autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CLAUDE
 
         try:
             next_entry = QUEUE.next_todo()
@@ -2062,7 +2264,7 @@ def main() -> int:
 
         working_directory, is_new_project = resolve_working_directory(next_entry)
         # Built once here and threaded through to both the pick-up and the run:
-        # `QUEUE.start` quotes it back onto the card, `run_claude` sends it. A
+        # `QUEUE.start` quotes it back onto the card, `run_prompt` sends it. A
         # second `build_prompt` call for the comment would let the two drift.
         prompt_text = build_prompt(next_entry.prompt)
         # Minted here rather than left for `claude` to generate, so the pick-up
@@ -2075,12 +2277,17 @@ def main() -> int:
         # by-hand resume line recorded in a pick-up comment — and nothing at all
         # for a file, which has no such column and deliberately leaves the STATUS
         # line alone until the outcome is known.
+        resume_instructions = (
+            None
+            if selected_agent == autonomous_work_settings.AUTONOMOUS_WORK_AGENT_CODEX
+            else interactive_resume_instructions(working_directory, claude_session_id)
+        )
         QUEUE.start(
             next_entry,
             prompt_text,
-            interactive_resume_instructions(working_directory, claude_session_id),
+            resume_instructions,
         )
-        prompt_result = run_claude(
+        prompt_result = run_prompt(
             next_entry,
             prompt_text,
             working_directory,
@@ -2089,6 +2296,7 @@ def main() -> int:
             arguments.force,
             session,
             claude_session_id,
+            selected_agent,
         )
         # The status the queue is left holding, which is not always the one asked
         # for: a run that marked itself `unmerged:<branch>` keeps that.
@@ -2121,6 +2329,8 @@ def main() -> int:
                 result_text=prompt_result.result_text,
                 started_at=prompt_result.started_at,
                 finished_at=prompt_result.finished_at,
+                agent=selected_agent,
+                model=(CODEX_MODEL if selected_agent == "codex" else claude_model_id_for(next_entry)),
                 turns=prompt_result.turns,
                 cost_usd=prompt_result.cost_usd,
             )
@@ -2150,6 +2360,7 @@ def main() -> int:
                     forced=arguments.force,
                     is_resume_run=arguments.resume,
                     events=events,
+                    manual_full_run=session.manual_full_run,
                 )
             )
             break

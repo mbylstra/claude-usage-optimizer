@@ -31,6 +31,7 @@ os.environ.update(
         "AUTONOMOUS_WORK_SETTINGS_FILE": str(_TEMP_PATH / "autonomous-work-settings.json"),
         "AUTONOMOUS_WORK_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "nightly.plist"),
         "AUTONOMOUS_WORK_ON_DEMAND_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "ondemand.plist"),
+        "AUTONOMOUS_WORK_MANUAL_FULL_LAUNCH_AGENT_PLIST": str(_TEMP_PATH / "manualfull.plist"),
         "AUTONOMOUS_WORK_LAUNCHCTL": str(_TEMP_PATH / "launchctl-should-not-be-called"),
     }
 )
@@ -63,6 +64,7 @@ class ParseSettingsTests(unittest.TestCase):
                 "scheduleHour": 3,
                 "scheduleMinute": 45,
                 "newProjectsDirectory": "~/code/projects",
+                "agent": "codex",
                 "model": "sonnet",
                 "effort": "xhigh",
                 "maxPromptDurationHours": 2.5,
@@ -78,6 +80,7 @@ class ParseSettingsTests(unittest.TestCase):
         self.assertEqual(result.schedule_hour, 3)
         self.assertEqual(result.schedule_minute, 45)
         self.assertEqual(result.new_projects_directory, "~/code/projects")
+        self.assertEqual(result.agent, "codex")
         self.assertEqual(result.model, "sonnet")
         self.assertEqual(result.effort, "xhigh")
         self.assertEqual(result.max_prompt_duration_hours, 2.5)
@@ -103,6 +106,22 @@ class ParseSettingsTests(unittest.TestCase):
     def test_a_missing_queue_source_is_the_file(self):
         self.assertEqual(
             settings_module.parse_settings({}).queue_source, settings_module.QUEUE_SOURCE_FILE
+        )
+
+    def test_missing_or_malformed_agent_falls_back_to_claude(self):
+        self.assertEqual(
+            settings_module.parse_settings({}).agent,
+            settings_module.AUTONOMOUS_WORK_AGENT_CLAUDE,
+        )
+        self.assertEqual(
+            settings_module.parse_settings({"agent": "other"}).agent,
+            settings_module.AUTONOMOUS_WORK_AGENT_CLAUDE,
+        )
+
+    def test_automatic_agent_setting_is_preserved(self):
+        self.assertEqual(
+            settings_module.parse_settings({"agent": "behindPace"}).agent,
+            settings_module.AUTONOMOUS_WORK_AGENT_BEHIND_PACE,
         )
 
     def test_blank_and_non_string_status_names_are_dropped(self):
@@ -281,6 +300,12 @@ class RenderTemplateTests(unittest.TestCase):
     def test_on_demand_template_has_no_placeholders_left(self):
         rendered = settings_module.render_on_demand_launch_agent_plist()
         self.assertNotIn("__HOME__", rendered)
+        self.assertNotIn("__PROJECT_ROOT__", rendered)
+
+    def test_manual_full_template_keeps_pace_gate_and_identifies_trigger(self):
+        rendered = settings_module.render_manual_full_launch_agent_plist()
+        self.assertIn("<string>--manual-full-run</string>", rendered)
+        self.assertNotIn("<string>--force</string>", rendered)
         self.assertNotIn("__PROJECT_ROOT__", rendered)
 
 

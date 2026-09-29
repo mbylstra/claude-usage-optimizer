@@ -197,8 +197,8 @@ just --list          # everything else
 The half that makes this an _optimizer_ rather than a monitor. Unused weekly
 capacity does not roll over, so headroom you never spend is simply gone.
 `backend/` holds a launchd job that puts it to work: starting at 2 AM it
-works through queued Claude Code prompts — **but only when the weekly window is
-behind an even burn.** Being on pace means nothing runs and nothing is spent;
+works through queued prompts with Claude or Codex — **but only when the selected
+agent's weekly window is behind an even burn.** Being on pace means nothing runs and nothing is spent;
 the point is to level out subscription burn rate, not to add to it.
 
 It does not stop after one prompt. Behind pace, it re-checks before each queued
@@ -209,8 +209,11 @@ session window itself reports full — and that last case ends the run rather
 than sitting idle for up to five hours waiting for the window to reset, since
 it does not refill early.
 
-The time is set in the popup's Settings screen, along with the folder new
-projects are created in. See [Scheduling and new
+The popup's Settings screen lets you choose Claude, Codex, or whichever is
+further behind weekly pace. The automatic choice is made before every prompt;
+if one agent has no usable usage data or has filled its 5-hour window, the other
+can run when behind pace. Equal deficits choose Claude. The time is set in the
+same screen, along with the folder new projects are created in. See [Scheduling and new
 projects](#scheduling-and-new-projects).
 
 It is opt-in — the popup works without any of this — but it is where the
@@ -220,8 +223,8 @@ acts.
 The extension is the data source. After each successful refresh it hands the
 figures to a native-messaging host, which writes
 `backend/claude-usage.json`. The scheduler reads that file before every
-queued prompt, and keeps going only while `weeklyPaceDeltaMs` is at least 2
-hours behind pace and `fiveHourPercent` is under 100.
+queued prompt, and keeps going only while the chosen agent is beyond the
+configured pace threshold and its 5-hour window has room.
 
 Design rationale, including why `chrome.downloads` was tried and abandoned,
 is in `plans/autonomous-credit-utilization.md`.
@@ -509,11 +512,11 @@ Settings in the popup has two run buttons, plus a **View run** button.
   `--force` bypasses the pace gate for exactly one prompt rather than looping,
   so this button is for testing a single queued item, not for draining the
   queue.
-- **Trigger a full run** starts the nightly 2 AM job right now instead — same
-  launchd label, no `--force`. It stays pace-gated, works through the whole
-  queue while the week is behind an even burn, and schedules a resume after the
-  5-hour window resets when that toggle is on. This is the one to press when you
-  are leaving credits idle for the day.
+- **Trigger a full run** starts the same pace-gated work right now instead, from
+  its own unscheduled launchd label — no `--force`. It stays pace-gated, works
+  through the whole queue while the week is behind an even burn, and schedules a
+  resume after the 5-hour window resets when that toggle is on. This is the one
+  to press when you are leaving credits idle for the day.
 
 All three buttons open a detached window that streams the run — a status header
 with elapsed time and cost, a timeline of what Claude is doing, a Cancel button,
@@ -549,10 +552,10 @@ summaries folder.
 ### The morning after
 
 Following a run live is the wrong tool at breakfast, so every session writes up
-what it did in `summaries/YYYY-MM-DD.md`:
+what it did in a trigger-prefixed file under `summaries/`:
 
 ```sh
-just autonomous-summary            # the most recent day
+just autonomous-summary            # the most recently written summary
 just autonomous-summary 2026-08-15 # a particular one
 ```
 
@@ -560,11 +563,13 @@ Each day's file lists, per session, which queued prompts completed, which
 failed, which were left untouched, and why the session stopped — out of `todo`
 entries, back on pace, or the 5-hour window exhausted. Every prompt gets
 Claude's own closing message; a prompt that timed out or was cancelled never
-produces one, so its last message before it stopped is shown instead. A day
-holds one file however many times work ran — except a night that stopped on the
-5-hour window and resumed a few hours later, which splits into
-`YYYY-MM-DD-run-1.md` and `YYYY-MM-DD-run-2.md` (both printed by `just
-autonomous-summary <day>`). A night that ran nothing — held back by pace, or an
+produces one, so its last message before it stopped is shown instead. Filenames
+identify the trigger: `manual-do-next-todo-YYYY-MM-DD.md`,
+`manual-full-run-YYYY-MM-DD.md`, `nightly-first-run-YYYY-MM-DD.md`, and
+`nightly-second-run-YYYY-MM-DD.md`. A manual full run that schedules a resume
+uses `manual-full-run-second-run-YYYY-MM-DD.md` for that resume. Sessions with
+the same trigger on the same day append to one file; `just autonomous-summary
+<day>` prints all the day's files. A night that ran nothing — held back by pace, or an
 empty queue — still writes a short section saying so, so the file alone answers
 "did it run, and if not why not". The folder is gitignored,
 like `prompts.txt`, since it describes your own task list.

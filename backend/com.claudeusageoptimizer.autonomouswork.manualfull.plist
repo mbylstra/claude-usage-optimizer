@@ -5,13 +5,10 @@
   Template, installed alongside the nightly job by
   `autonomous_work_settings.py`. Same work, started a different way: this one has
   no schedule at all and exists only to be kickstarted by the native host when
-  the popup's "Do next todo" button is pressed. (The popup's "Trigger a full
-  run" button kickstarts its own unscheduled, pace-gated
-  `.manualfull` label instead — see that plist.)
+  the popup's "Trigger a full run" button is pressed.
 
   It exists because launchd cannot be asked to start a job with extra arguments,
-  and a single-shot run by hand must skip the pace gate — hence --force baked in
-  here, where the nightly job takes none.
+  and this label identifies a manual full run without changing its pace gate.
 
   Why route the button through launchd rather than spawning the scheduler from
   the host, which is fewer moving parts: everything the host spawns is a
@@ -33,14 +30,14 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.claudeusageoptimizer.autonomouswork.ondemand</string>
+  <string>com.claudeusageoptimizer.autonomouswork.manualfull</string>
 
   <!-- A named wrapper rather than /usr/bin/env, so listings show
        "claude-usage-autonomous-work" instead of "env". -->
   <key>ProgramArguments</key>
   <array>
     <string>__PROJECT_ROOT__/backend/claude-usage-autonomous-work</string>
-    <string>--force</string>
+    <string>--manual-full-run</string>
   </array>
 
   <key>WorkingDirectory</key>

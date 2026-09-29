@@ -2,6 +2,7 @@ import {
   isRunBoundaryEvent,
   selectMostRecentRun,
   type AutonomousRunEvent,
+  type AgentEventEnvelope,
   type ClaudeEventEnvelope,
   type RunOutcome,
 } from './autonomousRunEvents';
@@ -55,6 +56,7 @@ export interface AutonomousRunViewModel {
   /** True for the single-shot `--force` run ("Do next todo"); false for any pace-gated run. */
   forced: boolean;
   model: string | null;
+  agent: 'claude' | 'codex' | null;
   sessionId: string | null;
   costUsd: number | null;
   turns: number | null;
@@ -80,6 +82,7 @@ export const EMPTY_RUN_VIEW_MODEL: AutonomousRunViewModel = {
   isNewProject: false,
   forced: false,
   model: null,
+  agent: null,
   sessionId: null,
   costUsd: null,
   turns: null,
@@ -342,6 +345,50 @@ function addClaudeEventEntries(
   }
 }
 
+function addCodexEventEntries(
+  state: TimelineBuilderState,
+  envelope: AgentEventEnvelope,
+  eventId: string,
+): void {
+  const event = envelope.event;
+  const eventType = readStringField(event, 'type') ?? '';
+  const item = readRecord(event.item);
+  if (eventType === 'thread.started') {
+    addEntry(
+      state,
+      eventId,
+      envelope.at,
+      'claudeStarted',
+      'Codex started',
+      readStringField(event, 'thread_id'),
+      'muted',
+    );
+  } else if (eventType === 'item.completed' && item?.type === 'agent_message') {
+    const text = readStringField(item, 'text') ?? readStringField(item, 'content');
+    if (text !== null)
+      addEntry(state, eventId, envelope.at, 'assistant', collapseWhitespace(text), null, 'default');
+  } else if (eventType === 'item.completed' && item !== null) {
+    const itemType = readStringField(item, 'type') ?? 'activity';
+    const detail =
+      readStringField(item, 'command') ??
+      readStringField(item, 'path') ??
+      readStringField(item, 'query');
+    addEntry(state, eventId, envelope.at, 'tool', itemType.replaceAll('_', ' '), detail, 'default');
+  } else if (eventType === 'turn.failed' || eventType === 'error') {
+    addEntry(
+      state,
+      eventId,
+      envelope.at,
+      'notice',
+      'Codex reported an error',
+      readStringField(event, 'error') ?? readStringField(event, 'message'),
+      'error',
+    );
+  } else if (eventType === 'turn.completed') {
+    addEntry(state, eventId, envelope.at, 'result', 'Codex finished', null, 'success');
+  }
+}
+
 const FINISHED_LABELS: Record<RunOutcome, string> = {
   completed: 'Run finished',
   error: 'Run failed',
@@ -422,6 +469,16 @@ function buildTimeline(events: readonly AutonomousRunEvent[]): RunTimelineEntry[
         break;
 
       case 'claudeOutput':
+        addEntry(state, eventId, event.at, 'output', collapseWhitespace(event.text), null, 'muted');
+        break;
+
+      case 'agentEvent':
+        if (event.agent === 'claude')
+          addClaudeEventEntries(state, { ...event, type: 'claudeEvent' }, eventId);
+        else addCodexEventEntries(state, event, eventId);
+        break;
+
+      case 'agentOutput':
         addEntry(state, eventId, event.at, 'output', collapseWhitespace(event.text), null, 'muted');
         break;
 
@@ -513,9 +570,16 @@ export function buildAutonomousRunViewModel(
   let turns: number | null = null;
   let sessionId: string | null = null;
   let model: string | null = started?.model ?? null;
+  const agent = started === null ? null : (started.agent ?? 'claude');
 
   for (const event of runEvents) {
-    if (event.type !== 'claudeEvent') continue;
+    if (event.type === 'agentEvent' && event.agent === 'codex') {
+      if (event.event.type === 'thread.started')
+        sessionId = readStringField(event.event, 'thread_id') ?? sessionId;
+      continue;
+    }
+    if (event.type !== 'claudeEvent' && !(event.type === 'agentEvent' && event.agent === 'claude'))
+      continue;
     const claudeEvent = event.event;
 
     if (claudeEvent.type === 'system' && claudeEvent.subtype === 'init') {
@@ -541,6 +605,7 @@ export function buildAutonomousRunViewModel(
     isNewProject: started?.isNewProject ?? false,
     forced: started?.forced ?? false,
     model,
+    agent,
     sessionId,
     costUsd,
     turns,

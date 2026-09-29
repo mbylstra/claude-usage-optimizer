@@ -168,16 +168,93 @@ class DescribeAgeTests(unittest.TestCase):
 class DescribePaceTests(unittest.TestCase):
     def test_behind(self):
         self.assertEqual(
-            work.describe_pace(-2 * work.MILLISECONDS_PER_HOUR), "2.0h behind an even weekly burn"
+            work.describe_pace(-2 * work.MILLISECONDS_PER_HOUR, "claude"),
+            "2.0h behind an even Claude weekly burn",
         )
 
     def test_ahead(self):
         self.assertEqual(
-            work.describe_pace(3 * work.MILLISECONDS_PER_HOUR), "3.0h ahead of an even weekly burn"
+            work.describe_pace(3 * work.MILLISECONDS_PER_HOUR, "claude"),
+            "3.0h ahead of an even Claude weekly burn",
         )
 
     def test_exactly_zero_reads_as_ahead(self):
-        self.assertEqual(work.describe_pace(0), "0.0h ahead of an even weekly burn")
+        self.assertEqual(work.describe_pace(0, "claude"), "0.0h ahead of an even Claude weekly burn")
+
+    def test_codex_agent_gets_its_own_label(self):
+        self.assertEqual(
+            work.describe_pace(-2 * work.MILLISECONDS_PER_HOUR, "codex"),
+            "2.0h behind an even Codex weekly burn",
+        )
+
+
+class PaceSnapshotFieldNamesTests(unittest.TestCase):
+    """Which JSON keys each agent's pace is read from — the crux of the fix."""
+
+    def test_claude_reads_the_unprefixed_fields(self):
+        self.assertEqual(
+            work.pace_snapshot_field_names("claude"), ("weeklyPaceDeltaMs", "weeklyPaceStatus")
+        )
+
+    def test_codex_reads_the_codex_prefixed_fields(self):
+        self.assertEqual(
+            work.pace_snapshot_field_names("codex"),
+            ("codexWeeklyPaceDeltaMs", "codexWeeklyPaceStatus"),
+        )
+
+
+class ChooseAgentByPaceTests(unittest.TestCase):
+    def snapshot(self, hours_behind, five_hour_percent=20):
+        return work.PaceSnapshot(
+            weekly_pace_delta_ms=-hours_behind * work.MILLISECONDS_PER_HOUR,
+            weekly_pace_status="behind",
+            five_hour_percent=five_hour_percent,
+            age_seconds=60,
+        )
+
+    def test_larger_deficit_wins_and_tie_favours_claude(self):
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(2), self.snapshot(4)), "codex")
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(4), self.snapshot(2)), "claude")
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(2), self.snapshot(2)), "claude")
+
+    def test_usable_agent_wins_when_other_is_missing_or_exhausted(self):
+        self.assertEqual(work.choose_agent_by_pace(None, self.snapshot(2)), "codex")
+        self.assertEqual(work.choose_agent_by_pace(self.snapshot(2), None), "claude")
+        self.assertEqual(
+            work.choose_agent_by_pace(self.snapshot(4, 100), self.snapshot(2)), "codex"
+        )
+
+    def test_force_selects_larger_deficit_even_when_session_is_full(self):
+        self.assertEqual(
+            work.choose_agent_by_pace(self.snapshot(4, 100), self.snapshot(2), force=True),
+            "claude",
+        )
+
+    def test_gate_uses_the_selected_agents_snapshot(self):
+        snapshots = {"claude": self.snapshot(2), "codex": self.snapshot(4)}
+        with mock.patch.object(work, "AUTONOMOUS_WORK_AGENT", "behindPace"), mock.patch.object(
+            work, "read_pace_snapshot", side_effect=snapshots.get
+        ):
+            result = work.check_pace_gate(False)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.agent, "codex")
+        self.assertIs(result.snapshot, snapshots["codex"])
+
+    def test_cancelled_claude_uses_codex_even_for_forced_run_without_pace(self):
+        with mock.patch.object(work, "AUTONOMOUS_WORK_AGENT", "behindPace"), mock.patch.object(
+            work, "claude_subscription_cancelled", return_value=True
+        ), mock.patch.object(work, "read_pace_snapshot", return_value=None):
+            result = work.check_pace_gate(True)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.agent, "codex")
+
+    def test_cancelled_claude_is_blocked_even_for_forced_run(self):
+        with mock.patch.object(work, "AUTONOMOUS_WORK_AGENT", "claude"), mock.patch.object(
+            work, "claude_subscription_cancelled", return_value=True
+        ):
+            result = work.check_pace_gate(True)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "claudeSubscriptionCancelled")
 
 
 class EvaluatePaceGateTests(unittest.TestCase):
@@ -194,12 +271,13 @@ class EvaluatePaceGateTests(unittest.TestCase):
             age_seconds=age_seconds,
         )
 
-    def _evaluate(self, pace_snapshot, force=False):
+    def _evaluate(self, pace_snapshot, force=False, agent="claude"):
         return work.evaluate_pace_gate(
             pace_snapshot,
             force=force,
             pace_threshold_ms=self.THRESHOLD_MS,
             five_hour_exhausted_percent=self.FIVE_HOUR_EXHAUSTED_PERCENT,
+            agent=agent,
         )
 
     def test_force_bypasses_everything(self):
@@ -232,6 +310,15 @@ class EvaluatePaceGateTests(unittest.TestCase):
     def test_exactly_at_threshold_counts_as_behind_not_on_pace(self):
         result = self._evaluate(self._snapshot(delta_ms=self.THRESHOLD_MS))
         self.assertTrue(result.ok)
+
+    def test_detail_names_the_agent_the_snapshot_was_read_for(self):
+        # The bug this whole feature exists to fix: a Codex-agent run's stop
+        # reason must say "Codex", not silently describe Claude's pace.
+        result = self._evaluate(
+            self._snapshot(delta_ms=-1 * work.MILLISECONDS_PER_HOUR), agent="codex"
+        )
+        self.assertIn("Codex", result.detail)
+        self.assertNotIn("Claude", result.detail)
 
 
 class ParseResetTimeTests(unittest.TestCase):
@@ -376,7 +463,7 @@ class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
                 "fiveHourResetsAt": "2026-08-25T04:00:00.000Z",
             }
         )
-        snapshot = work.read_pace_snapshot()
+        snapshot = work.read_pace_snapshot("claude")
         self.assertEqual(
             snapshot.five_hour_resets_at,
             datetime(2026, 8, 25, 4, 0, tzinfo=timezone.utc),
@@ -384,9 +471,55 @@ class ReadPaceSnapshotResetTimeTests(unittest.TestCase):
 
     def test_an_extension_that_predates_the_field_still_reads(self):
         self._write_snapshot({"fetchedAt": "2026-08-25T01:00:00.000Z", "weeklyPaceDeltaMs": -1})
-        snapshot = work.read_pace_snapshot()
+        snapshot = work.read_pace_snapshot("claude")
         self.assertIsNotNone(snapshot)
         self.assertIsNone(snapshot.five_hour_resets_at)
+
+    def test_codex_agent_reads_the_codex_prefixed_pace_field(self):
+        self._write_snapshot(
+            {
+                "fetchedAt": "2026-08-25T01:00:00.000Z",
+                "weeklyPaceDeltaMs": -3600000,
+                "weeklyPaceStatus": "behind",
+                "codexWeeklyPaceDeltaMs": 7200000,
+                "codexWeeklyPaceStatus": "ahead",
+                "fiveHourPercent": 100,
+                "codexFiveHourPercent": 32,
+                "fiveHourResetsAt": "2026-08-25T04:00:00.000Z",
+                "codexFiveHourResetsAt": "2026-08-25T05:00:00.000Z",
+            }
+        )
+        snapshot = work.read_pace_snapshot("codex")
+        self.assertEqual(snapshot.weekly_pace_delta_ms, 7200000)
+        self.assertEqual(snapshot.weekly_pace_status, "ahead")
+        self.assertEqual(snapshot.five_hour_percent, 32)
+        self.assertEqual(snapshot.five_hour_resets_at, datetime(2026, 8, 25, 5, tzinfo=timezone.utc))
+
+    def test_codex_agent_with_no_codex_pace_reported_is_no_snapshot(self):
+        # A Claude-only pace figure must not be silently used as a stand-in for
+        # Codex's — that is exactly the bug being fixed here.
+        self._write_snapshot(
+            {"fetchedAt": "2026-08-25T01:00:00.000Z", "weeklyPaceDeltaMs": -3600000}
+        )
+        self.assertIsNone(work.read_pace_snapshot("codex"))
+
+    def test_claude_agent_ignores_a_codex_only_pace_figure(self):
+        self._write_snapshot(
+            {"fetchedAt": "2026-08-25T01:00:00.000Z", "codexWeeklyPaceDeltaMs": -3600000}
+        )
+        self.assertIsNone(work.read_pace_snapshot("claude"))
+
+    def test_cancelled_claude_is_unavailable_even_with_old_pace_figures(self):
+        self._write_snapshot(
+            {
+                "claudeSubscriptionCancelled": True,
+                "weeklyPaceDeltaMs": -3600000,
+                "codexWeeklyPaceDeltaMs": -7200000,
+            }
+        )
+        self.assertTrue(work.claude_subscription_cancelled())
+        self.assertIsNone(work.read_pace_snapshot("claude"))
+        self.assertIsNotNone(work.read_pace_snapshot("codex"))
 
 
 class ParseQueueTests(unittest.TestCase):
@@ -901,6 +1034,54 @@ class ClaudeOutputCollectorTests(unittest.TestCase):
         self.assertIsNone(collector.session_limit_notice)
 
 
+class CodexPromptCompletionTests(unittest.TestCase):
+    def test_successful_codex_run_reaches_a_completed_queue_status(self):
+        # Previously run_prompt crashed after the CLI exited: it read Claude's
+        # session_limit_notice from a CodexOutputCollector before main could
+        # move the Jira card out of In Progress.
+        with tempfile.TemporaryDirectory() as directory:
+            working_directory = Path(directory)
+            process = mock.Mock()
+            process.pid = 123
+            process.stdout = [
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": "Work finished."},
+                    }
+                ) + "\n"
+            ]
+            process.wait.return_value = 0
+            entry = work.QueueEntry(
+                status=work.STATUS_TODO,
+                handle="FCP-101",
+                repository_path=working_directory,
+                prompt="Do the work.",
+            )
+            session = work.autonomous_work_summary.SessionSummary(datetime.now(), forced=True)
+            with mock.patch.object(work.subprocess, "Popen", return_value=process), mock.patch.object(
+                work, "capture_git_checkpoint", return_value=work.GitCheckpoint(None, None)
+            ), mock.patch.object(work, "unmerged_branch_after_run", return_value=None):
+                result = work.run_prompt(
+                    entry,
+                    "Do the work.",
+                    working_directory,
+                    False,
+                    work.RunEventStream(run_id="test", enabled=False),
+                    True,
+                    session,
+                    "session-id",
+                    "codex",
+                )
+
+        self.assertEqual(result.outcome, "completed")
+        self.assertEqual(result.result_text, "Work finished.")
+        self.assertEqual(
+            work.queue_status_for_outcome(result.outcome, result.unmerged_branch),
+            work.STATUS_COMPLETED,
+        )
+
+
 class RemainingTodoPromptsTests(unittest.TestCase):
     def setUp(self):
         work.QUEUE_FILE.write_text(
@@ -993,6 +1174,11 @@ class ScheduleResumeIfWarrantedTests(unittest.TestCase):
         self.assertIsNotNone(pending)
         self.assertEqual((pending.scheduled_for.hour, pending.scheduled_for.minute), (3, 52))
         self.assertTrue(work.autonomous_work_resume.INSTALLED_RESUME_LAUNCH_AGENT_FILE.exists())
+
+    def test_manual_full_run_marks_its_scheduled_resume(self):
+        pending = self._schedule(manual_full_run=True)
+        self.assertTrue(pending.manual_full_run)
+        self.assertTrue(work.autonomous_work_resume.read_resume_state().manual_full_run)
 
     def test_a_resume_run_schedules_nothing_further(self):
         # The guard that makes every freshness check unnecessary: a resumed run
@@ -1262,7 +1448,7 @@ class ClaudeModelIdForTests(unittest.TestCase):
 
     def test_an_entry_that_names_a_model_runs_on_that_model(self):
         self.assertEqual(work.claude_model_id_for(self._entry("sonnet")), "claude-sonnet-5")
-        self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-opus-5")
+        self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-opus-5-5")
 
     def test_an_entry_that_names_nothing_runs_on_the_session_default(self):
         self.assertEqual(work.claude_model_id_for(self._entry(None)), work.CLAUDE_MODEL)

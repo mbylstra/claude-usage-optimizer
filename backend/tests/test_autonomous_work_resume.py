@@ -100,6 +100,12 @@ class ParseResumeStateTests(ResumeTestCase):
         resume_module.write_resume_state(pending)
         self.assertEqual(resume_module.read_resume_state(), pending)
 
+    def test_manual_full_origin_survives_until_the_resume_is_served(self):
+        resume_module.write_resume_state(a_pending_resume(manual_full_run=True))
+        consumed = resume_module.consume_pending_resume(NOW + timedelta(hours=3))
+        self.assertTrue(consumed.pending.manual_full_run)
+        self.assertTrue(resume_module.read_resume_state().manual_full_run)
+
     def test_a_served_record_keeps_its_stamp(self):
         pending = a_pending_resume(served_at=NOW + timedelta(hours=3, minutes=1))
         resume_module.write_resume_state(pending)

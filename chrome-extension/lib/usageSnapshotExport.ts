@@ -14,9 +14,15 @@ import type { PaceStatus, UsageSnapshot, UsageWindowKind } from './usageTypes';
 export interface UsageSnapshotExport {
   /** ISO 8601. The scheduler refuses to act on a stale file. */
   fetchedAt: string;
+  claudeSubscriptionCancelled: boolean;
   /** Negative means behind an even burn. Null when the weekly window is inactive. */
   weeklyPaceDeltaMs: number | null;
   weeklyPaceStatus: PaceStatus | null;
+  /** Codex weekly pace delta, if Codex usage is available. Null when inactive or unavailable. */
+  codexWeeklyPaceDeltaMs: number | null;
+  codexWeeklyPaceStatus: PaceStatus | null;
+  codexFiveHourPercent: number | null;
+  codexFiveHourResetsAt: string | null;
   fiveHourPercent: number | null;
   /**
    * ISO 8601, or null when the API did not report a current session window.
@@ -57,14 +63,25 @@ function percentUsedFor(
 export function buildUsageSnapshotExport(
   snapshot: UsageSnapshot,
   fetchedAt: Date,
+  codexSnapshot?: UsageSnapshot | null,
 ): UsageSnapshotExport {
   const windowStatuses = deriveUsageStatuses(snapshot, fetchedAt);
   const weeklyStatus = findWindowStatus(windowStatuses, 'sevenDay');
 
+  const codexWindowStatuses = codexSnapshot ? deriveUsageStatuses(codexSnapshot, fetchedAt) : [];
+  const codexWeeklyStatus = codexSnapshot
+    ? findWindowStatus(codexWindowStatuses, 'sevenDay')
+    : undefined;
+
   return {
     fetchedAt: fetchedAt.toISOString(),
+    claudeSubscriptionCancelled: snapshot.subscriptionCancelled === true,
     weeklyPaceDeltaMs: weeklyStatus?.isActive ? weeklyStatus.paceDeltaMs : null,
     weeklyPaceStatus: weeklyStatus?.isActive ? weeklyStatus.paceStatus : null,
+    codexWeeklyPaceDeltaMs: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceDeltaMs : null,
+    codexWeeklyPaceStatus: codexWeeklyStatus?.isActive ? codexWeeklyStatus.paceStatus : null,
+    codexFiveHourPercent: percentUsedFor(codexWindowStatuses, 'fiveHour'),
+    codexFiveHourResetsAt: resetsAtFor(codexWindowStatuses, 'fiveHour'),
     fiveHourPercent: percentUsedFor(windowStatuses, 'fiveHour'),
     fiveHourResetsAt: resetsAtFor(windowStatuses, 'fiveHour'),
     sevenDayPercent: percentUsedFor(windowStatuses, 'sevenDay'),

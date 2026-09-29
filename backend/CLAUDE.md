@@ -24,7 +24,8 @@ few minutes after that window is expected to refill — see below. `--force`
 (used by the popup's "Do next todo" button and by the test recipes) is the one
 path that stays single-shot: it bypasses the pace check it exists to keep
 re-evaluating, so it runs exactly one prompt. The popup's "Trigger a full run"
-button takes the ordinary no-argument path and behaves exactly as the 2 AM job.
+button carries `--manual-full-run`, which identifies the trigger for the
+summary but otherwise stays pace-gated and behaves exactly as the 2 AM job.
 
 **A prompt refused by a subscription limit is left `todo`, not marked as an
 error.** It never ran, so failing it would skip it until somebody edited
@@ -134,7 +135,7 @@ Two details that cost time to rediscover: `stdin` must be `DEVNULL` or `claude`
 spends three seconds waiting on an inherited stdin and warns about it; and
 `stderr` is merged into `stdout` because a second unread pipe can deadlock.
 
-**The morning-after summary — `summaries/YYYY-MM-DD.md`.** None of the three log
+**The morning-after summary — `summaries/`.** None of the three log
 files above answers the question you actually have over breakfast: which queued
 prompts ran, how each went, and why the session stopped when it did. So every
 session that reaches the run loop appends its own section to the day's
@@ -144,22 +145,16 @@ summary file, rendered by `autonomous_work_summary.py` (underscores, because
 
 Four things about it are deliberate:
 
-- **One file per day, appended to, not one per session** — bar one exception. A
-  day holds the 2 AM run and any number of manual button presses ("Do next todo"
-  / "Trigger a full run"), and they belong together. The date is the day the
-  session _started_, so a run that crosses midnight stays in the file you would
-  look in. The exception is a night that hits the 5-hour window and schedules a
-  resume: it writes `YYYY-MM-DD-run-1.md` when the first session ends and
-  `YYYY-MM-DD-run-2.md` when the resume does, so each attempt at the night's
-  work stands alone. `autonomous_work_summary.run_file_label` picks the name —
-  `run-1` off the first session having _scheduled_ a resume, not off it having
-  run, so a resume that then does nothing leaves a lone `-run-1.md`. `just
-  autonomous-summary <day>` prints both.
+- **One file per trigger and day, appended to for repeat sessions.** The prefixes
+  are `manual-do-next-todo-`, `manual-full-run-`, `nightly-first-run-`, and
+  `nightly-second-run-`, followed by the session start date. A resume of a manual
+  full run uses `manual-full-run-second-run-`. A run crossing midnight stays on
+  its starting day. `just autonomous-summary <day>` prints every file for that day.
 - **A session that ran nothing still writes its section.** A night the pace
   gate held back, or one that found an empty queue, appends a short section
   giving the counts (all zero) and why it stopped — so `summaries/` alone
   answers "did it run, and if not why not" without a trip to the log. The cost
-  is that an all-on-pace day's dated file collects a thin section for the
+  is that an all-on-pace day collects a thin section for the
   nightly skip and one more for each "Trigger a full run" press. The two
   `--resume` no-ops above the run loop (the toggle is off; nothing was pending)
   are the exception and write nothing: they mean the agent should not have
@@ -200,20 +195,18 @@ work outlives the message by up to an hour and reports into
 - **"Do next todo"** kicks `com.claudeusageoptimizer.autonomouswork.ondemand` —
   the `--force`, single-shot job: it skips the pace gate, runs exactly one queued
   prompt, and schedules no resume.
-- **"Trigger a full run"** kicks the nightly label
-  `com.claudeusageoptimizer.autonomouswork` _itself_, with no arguments. It is
-  the 2 AM job started early by hand — still pace-gated, still working through
+- **"Trigger a full run"** kicks the unscheduled
+  `com.claudeusageoptimizer.autonomouswork.manualfull` label with
+  `--manual-full-run`. It stays pace-gated and keeps working through
   every `todo` while the week is behind, still scheduling a resume after the
   5-hour window resets when that toggle is on. For someone leaving credits idle
   for the day, this is the button.
 
 **The host asks launchd to start the run rather than spawning it**, which is the
-opposite of what the rest of the host does. `"Trigger a full run"` needs no job
-definition of its own — it reuses the nightly one — but `"Do next todo"` costs a
-whole second launch agent, `com.claudeusageoptimizer.autonomouswork.ondemand`:
-unscheduled, and carrying the `--force` the nightly job does not, since that
-button is an explicit single-shot instruction and `launchctl kickstart` cannot
-pass arguments. Routing through launchd at all bought two things.
+opposite of what the rest of the host does. Each button has an unscheduled
+launch agent so the summary can identify its trigger. `"Do next todo"` uses
+`com.claudeusageoptimizer.autonomouswork.ondemand`, carrying `--force` because
+`launchctl kickstart` cannot pass arguments. Routing through launchd at all bought two things.
 
 The first is **Gatekeeper**. Everything the host spawns is a descendant of
 Chrome, and macOS stamps `com.apple.quarantine` on files written by any
@@ -273,11 +266,12 @@ at the top of `main`'s resume branch. Flipping it off is also a settings save,
 so `usage-host.py` clears a resume an earlier run already scheduled — otherwise
 the one-shot agent fires hours later just to hit that second guard.
 
-That makes **a third launch agent**:
+That makes **four launch agents**:
 
 ```
 com.claudeusageoptimizer.autonomouswork           2 AM, pace-gated
 com.claudeusageoptimizer.autonomouswork.ondemand  no schedule, --force
+com.claudeusageoptimizer.autonomouswork.manualfull no schedule, --manual-full-run
 com.claudeusageoptimizer.autonomouswork.resume    one date and time, --resume
 ```
 
@@ -310,8 +304,7 @@ where the nightly agent is not installed (the same rule
 `install_launch_agent(only_if_installed=True)` follows — a machine that just ran
 `just uninstall-autonomous-work` must not find an agent written back); and nothing
 is scheduled with an empty queue. The popup's `"Trigger a full run"` passes no
-`--force`, so it *does* schedule a resume like the 2 AM job — that is the whole
-point of it being the nightly job rather than a one-off.
+`--force`, so it *does* schedule a resume like the 2 AM job.
 
 **When the window resets — three sources, in order.** The CLI's own notice, when
 the run ended on `sessionLimit`; the snapshot's `fiveHourResetsAt`, for the
@@ -460,8 +453,30 @@ That is deliberate: the extension can only refresh while Chrome is running, so
 gating on age would mean the nightly job almost never fires on a machine whose
 browser is closed at 2 AM. The trade is that a long-closed browser can have the
 job act on figures from days ago; the age is logged on every decision so that is
-visible after the fact. A missing `weeklyPaceDeltaMs` still skips the run, since
+visible after the fact. A missing pace figure still skips the run, since
 an inactive weekly window is genuinely no data rather than a stale reading.
+
+**The pace gate reads the selected agent's own figure** —
+`weeklyPaceDeltaMs`/`weeklyPaceStatus` for Claude,
+`codexWeeklyPaceDeltaMs`/`codexWeeklyPaceStatus` for Codex, both built the same
+way by `buildUsageSnapshotExport` and selected in `read_pace_snapshot` via
+`pace_snapshot_field_names`. This was not true when the Codex agent switch
+first shipped (`plans/codex-autonomous-work.md` explicitly deferred it as
+"separate work"): every run, Codex included, checked Claude's pace, so a run
+scheduled for Codex could burn through an exhausted Codex week while Claude
+still had headroom, or sit idle while Codex had plenty left. `pace_burn_label`
+splices "Claude" or "Codex" into the gate's log lines and the summary's
+stop-reason text for exactly this reason — the confusion of not being able to
+tell which subscription a stop reason was about is what exposed the bug.
+`behindPace` selects the runnable agent with the larger weekly deficit before
+each prompt; equal deficits choose Claude. If one agent lacks pace data or has
+filled its 5-hour window, the other may run. The export includes each agent's
+own 5-hour utilization and reset time, so a Codex decision does not use Claude's
+session window. Fetching the Codex figure costs an extra native-host round trip to Codex's
+usage endpoint, so `fetchCodexSnapshotForPaceGate` in `serviceWorker.ts` only
+makes it when `autonomousWork.agent` is `codex` or `behindPace` — independent of
+`codexUsageEnabled`, which gates the popup's *display* section and has no
+bearing on what the scheduler needs.
 
 **launchd starts jobs with a bare environment.** `uv` and `claude` live in
 `~/.local/bin`, which is why the plist sets `PATH` explicitly. A missing entry
@@ -891,4 +906,3 @@ that matters.
 **The recorded expiry warns but never blocks.** It is typed in by hand and cannot
 be read back from any API, so a mistyped date would refuse to run against a token
 that works. Jira's own 401 is what stops a run.
-

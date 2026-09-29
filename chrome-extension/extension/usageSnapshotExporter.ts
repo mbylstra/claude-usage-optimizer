@@ -42,9 +42,13 @@ const PRIME_FOLDER_ACCESS_MESSAGE_TYPE = 'primeFolderAccess';
 const SET_SETTINGS_MESSAGE_TYPE = 'setAutonomousWorkSettings';
 const JIRA_STATUS_MESSAGE_TYPE = 'getJiraStatus';
 
-export async function exportUsageSnapshot(snapshot: UsageSnapshot, fetchedAt: Date): Promise<void> {
+export async function exportUsageSnapshot(
+  snapshot: UsageSnapshot,
+  fetchedAt: Date,
+  codexSnapshot?: UsageSnapshot | null,
+): Promise<void> {
   try {
-    const exported = buildUsageSnapshotExport(snapshot, fetchedAt);
+    const exported = buildUsageSnapshotExport(snapshot, fetchedAt, codexSnapshot);
     const response: unknown = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, {
       type: SNAPSHOT_MESSAGE_TYPE,
       snapshot: exported,
@@ -76,9 +80,9 @@ export async function requestAutonomousWorkRun(): Promise<{ started: boolean; er
 }
 
 /**
- * "Trigger a full run": ask the host to start the nightly job now.
+ * "Trigger a full run": ask the host to start a pace-gated full run now.
  *
- * Same launchd label the 2 AM run uses, so it stays pace-gated, works through
+ * Its own unscheduled launchd label identifies the trigger. It works through
  * the whole queue, and schedules a 5-hour-reset resume when that setting is on.
  * Like the one above, it resolves once the run has *launched*, not finished.
  */
