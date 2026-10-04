@@ -128,8 +128,10 @@ function toClaudeUsageError(error: unknown): ClaudeUsageError {
  *
  * `HOST_UNAVAILABLE` — distinct from a host-reported failure — covers both a
  * host that isn't installed (`sendNativeMessage` rejects) and one that sent
- * no usable reply; either way the guidance is "run `just install-usage-host`"
- * rather than "check chatgpt.com".
+ * no usable reply; either way the guidance points at whichever install path
+ * applies (`just install-usage-host` on macOS/Linux, `install_usage_host.py`
+ * on Windows — see plans/codex-usage-on-windows.md) rather than "check
+ * chatgpt.com".
  */
 export async function fetchCodexUsageSnapshot(): Promise<UsageSnapshot> {
   let response: unknown;
@@ -140,7 +142,8 @@ export async function fetchCodexUsageSnapshot(): Promise<UsageSnapshot> {
   } catch {
     throw new ClaudeUsageError(
       'HOST_UNAVAILABLE',
-      'Could not reach the native host. Install it with `just install-usage-host`.',
+      'Could not reach the native host. Install it with `just install-usage-host` ' +
+        '(macOS/Linux) or `install_usage_host.py` (Windows).',
     );
   }
 
