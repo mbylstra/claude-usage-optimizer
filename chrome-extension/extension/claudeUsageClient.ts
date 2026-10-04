@@ -212,7 +212,26 @@ async function fetchUsageForOrganization(
     dependencies,
     `/organizations/${encodeURIComponent(organizationId)}/usage`,
   );
-  return normaliseUsageResponse(payload);
+  const snapshot = normaliseUsageResponse(payload);
+  if (snapshot.subscriptionCancelled) return snapshot;
+
+  // Billing details are unavailable to some team members. A failed optional
+  // request must not hide otherwise valid usage figures.
+  try {
+    const subscriptionDetails = await requestJson(
+      dependencies,
+      `/organizations/${encodeURIComponent(organizationId)}/subscription_details`,
+    );
+    if (isRecord(subscriptionDetails)) {
+      const accessEndsAt = readString(subscriptionDetails, ['plan_ending_before']);
+      if (accessEndsAt !== null && !Number.isNaN(Date.parse(accessEndsAt))) {
+        snapshot.subscriptionAccessEndsAt = accessEndsAt;
+      }
+    }
+  } catch {
+    // The usage response remains the source of truth for the usage cards.
+  }
+  return snapshot;
 }
 
 /**

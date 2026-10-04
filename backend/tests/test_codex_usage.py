@@ -204,6 +204,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler's naming
         state = self.state
+        if self.path.startswith("/subscriptions?"):
+            state["subscription_requests"].append(self.path)
+            return self._reply(state["subscription_status"], state["subscription_payload"])
         state["usage_requests"].append(self.headers.get("Authorization"))
         if state["usage_status"] == 200:
             return self._reply(200, state["usage_payload"])
@@ -230,6 +233,12 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
                 }
             },
             "usage_requests": [],
+            "subscription_status": 200,
+            "subscription_payload": {
+                "will_renew": True,
+                "active_until": "2026-11-01T00:00:00Z",
+            },
+            "subscription_requests": [],
             "refresh_status": 200,
             "refresh_payload": {"access_token": "refreshed-access-token"},
             "refresh_error_code": "refresh_token_expired",
@@ -243,8 +252,10 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
 
         base_url = "http://127.0.0.1:{}".format(self.server.server_address[1])
         self._previous_usage_url = codex_usage.CODEX_USAGE_URL
+        self._previous_subscriptions_url = codex_usage.CODEX_SUBSCRIPTIONS_URL
         self._previous_refresh_url = codex_usage.CODEX_TOKEN_REFRESH_URL
         codex_usage.CODEX_USAGE_URL = base_url + "/usage"
+        codex_usage.CODEX_SUBSCRIPTIONS_URL = base_url + "/subscriptions"
         codex_usage.CODEX_TOKEN_REFRESH_URL = base_url + "/refresh"
 
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -254,6 +265,7 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
         self.server.shutdown()
         self.thread.join(timeout=5)
         codex_usage.CODEX_USAGE_URL = self._previous_usage_url
+        codex_usage.CODEX_SUBSCRIPTIONS_URL = self._previous_subscriptions_url
         codex_usage.CODEX_TOKEN_REFRESH_URL = self._previous_refresh_url
         self.temporary_directory.cleanup()
 
@@ -278,6 +290,26 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
         kinds = {window["kind"]: window["utilizationPercent"] for window in result["windows"]}
         self.assertEqual(kinds, {"fiveHour": 30, "sevenDay": 45})
         self.assertTrue(self.state["usage_requests"][0].startswith("Bearer "))
+        self.assertNotIn("subscriptionAccessEndsAt", result)
+        self.assertEqual(self.state["subscription_requests"], ["/subscriptions?account_id=acct-1"])
+
+    def test_cancelled_subscription_reports_its_access_end(self):
+        self._write_auth_file(_jwt({"exp": time.time() + 3600}))
+        self.state["subscription_payload"]["will_renew"] = False
+
+        result = codex_usage.read_codex_usage(auth_file=self.auth_file)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["subscriptionAccessEndsAt"], "2026-11-01T00:00:00Z")
+
+    def test_unavailable_subscription_details_do_not_hide_usage(self):
+        self._write_auth_file(_jwt({"exp": time.time() + 3600}))
+        self.state["subscription_status"] = 403
+
+        result = codex_usage.read_codex_usage(auth_file=self.auth_file)
+
+        self.assertTrue(result["ok"])
+        self.assertNotIn("subscriptionAccessEndsAt", result)
 
     def test_a_near_expiry_token_is_refreshed_before_the_usage_call(self):
         self._write_auth_file(_jwt({"exp": time.time() + 30}))

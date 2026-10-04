@@ -4,6 +4,7 @@
 See `plans/codex-subscription-usage.md`. This module reads the Codex CLI's own
 credential (`~/.codex/auth.json`), calls the same undocumented usage endpoint
 the CLI itself polls, and hands back normalised `fiveHour` / `sevenDay` windows.
+An optional subscription lookup supplies the access end for a cancelled plan.
 Nothing here feeds the autonomous-work scheduler — that is a hard constraint
 from the plan, not an oversight: this module is read, normalised and cached by
 the extension, and nothing downstream of it touches the scheduler, the pace
@@ -34,6 +35,7 @@ import ssl
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -64,6 +66,10 @@ AUTH_FILE = _environment_path("CODEX_USAGE_AUTH_FILE", _DEFAULT_AUTH_FILE)
 # Overridable so the tests can point the whole transport at a local stub — the
 # same trick `AUTONOMOUS_WORK_JIRA_BASE_URL` plays for Jira.
 CODEX_USAGE_URL = os.environ.get("CODEX_USAGE_URL_OVERRIDE") or "https://chatgpt.com/backend-api/wham/usage"
+CODEX_SUBSCRIPTIONS_URL = (
+    os.environ.get("CODEX_SUBSCRIPTIONS_URL_OVERRIDE")
+    or "https://chatgpt.com/backend-api/subscriptions"
+)
 CODEX_TOKEN_REFRESH_URL = (
     os.environ.get("CODEX_USAGE_TOKEN_REFRESH_URL_OVERRIDE") or "https://auth.openai.com/oauth/token"
 )
@@ -320,10 +326,10 @@ def _refresh_access_token(credential, auth_file, log=_ignore):
 # --------------------------------------------------------------------------- #
 
 
-def _call_usage_endpoint(access_token, account_id=None, log=_ignore):
-    # type: (str, str | None, object) -> dict
+def _call_json_endpoint(url, access_token, account_id=None):
+    # type: (str, str, str | None) -> dict
     request = urllib.request.Request(
-        url=CODEX_USAGE_URL,
+        url=url,
         headers={
             "Authorization": "Bearer {}".format(access_token),
             "Accept": "application/json",
@@ -350,6 +356,44 @@ def _call_usage_endpoint(access_token, account_id=None, log=_ignore):
     if not isinstance(parsed, dict):
         raise _CodexNetworkError("Codex's response was not an object")
     return parsed
+
+
+def _call_usage_endpoint(access_token, account_id=None, log=_ignore):
+    # type: (str, str | None, object) -> dict
+    return _call_json_endpoint(CODEX_USAGE_URL, access_token, account_id)
+
+
+def _subscription_access_end(payload):
+    # type: (dict) -> str | None
+    """Only a confirmed non-renewal with an explicit term end is actionable."""
+    if payload.get("will_renew") is not False:
+        return None
+    active_until = payload.get("active_until")
+    if not isinstance(active_until, str) or not active_until.strip():
+        return None
+    try:
+        datetime.fromisoformat(active_until.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return active_until
+
+
+def _read_subscription_access_end(credential, log):
+    # type: (dict, object) -> str | None
+    account_id = credential.get("account_id")
+    if not account_id:
+        return None
+    url = "{}?{}".format(
+        CODEX_SUBSCRIPTIONS_URL,
+        urllib.parse.urlencode({"account_id": account_id}),
+    )
+    try:
+        subscription = _call_json_endpoint(url, credential["access_token"], account_id)
+    except (_CodexHttpError, _CodexNetworkError) as error:
+        # Billing can be unavailable even when the Codex quota endpoint works.
+        log("Codex subscription details unavailable: {}".format(type(error).__name__))
+        return None
+    return _subscription_access_end(subscription)
 
 
 def _error_for_http_failure(error):
@@ -544,7 +588,11 @@ def _read_codex_usage(auth_file, log, now):
                 "message": "Codex did not report any usable usage windows.",
             },
         }
-    return {"ok": True, "windows": windows}
+    response = {"ok": True, "windows": windows}
+    subscription_access_ends_at = _read_subscription_access_end(credential, log)
+    if subscription_access_ends_at is not None:
+        response["subscriptionAccessEndsAt"] = subscription_access_ends_at
+    return response
 
 
 def read_codex_usage(auth_file=None, log=_ignore, now=None):
@@ -556,6 +604,10 @@ def read_codex_usage(auth_file=None, log=_ignore, now=None):
     process — refreshing the access token first if it is near expiry, then
     calls `CODEX_USAGE_URL` and returns `{"ok": True, "windows": [...]}` or
     `{"ok": False, "error": {...}}`.
+
+    A successful usage lookup also tries the subscriptions endpoint. A confirmed
+    non-renewal adds `subscriptionAccessEndsAt`; billing failures leave usage
+    intact.
 
     Never raises: a credential or network hiccup is not worth losing this
     reply over, the same restraint `probe_jira_credential` takes.

@@ -1,6 +1,7 @@
 import { deriveUsageStatuses } from './usagePace';
 import { deriveSuggestedModel, type SuggestedModel } from './suggestedModel';
 import type { DerivedWindowStatus, UsageCacheEntry, UsageErrorInfo } from './usageTypes';
+import { parseFutureSubscriptionAccessEnd } from './subscriptionAccessEnd';
 
 /**
  * Maps the persisted cache entry onto the view model the popup renders.
@@ -34,6 +35,7 @@ export interface UsagePopupReady {
   refreshError: UsageErrorInfo | null;
   /** Null only if the snapshot is missing a window the suggestion depends on. */
   suggestedModel: SuggestedModel | null;
+  subscriptionAccessEndsAt: Date | null;
 }
 
 export type UsagePopupData =
@@ -64,5 +66,9 @@ export function buildUsagePopupData(entry: UsageCacheEntry | null, now: Date): U
     isStale: now.getTime() - fetchedAt.getTime() > USAGE_STALE_AFTER_MS,
     refreshError: entry.error,
     suggestedModel: deriveSuggestedModel(windows),
+    subscriptionAccessEndsAt: parseFutureSubscriptionAccessEnd(
+      entry.snapshot.subscriptionAccessEndsAt,
+      now,
+    ),
   };
 }

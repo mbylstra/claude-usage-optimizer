@@ -35,15 +35,19 @@ They may share build chunks; only the service worker may not.
 
 ## The claude.ai API
 
-Unofficial and undocumented. Two calls, riding the user's session cookie via
+Unofficial and undocumented. Three calls, riding the user's session cookie via
 `credentials: 'include'` and the `https://claude.ai/*` host permission:
 
 ```
 GET https://claude.ai/api/organizations
 GET https://claude.ai/api/organizations/{orgId}/usage
+GET https://claude.ai/api/organizations/{orgId}/subscription_details
 ```
 
-The response shape is documented in `plans/mvp-chrome-extension.md` §1.
+The usage response shape is documented in `plans/mvp-chrome-extension.md` §1.
+The subscription details call is optional: some team members receive 403, so
+usage still displays without it. Its `plan_ending_before` field is shown as
+the access end only when a cancellation is scheduled.
 
 **Normalise defensively.** The schema has changed before and will again. The
 client accepts several spellings of each field (`utilization` / `utilization_pct`,
