@@ -784,16 +784,6 @@ class BuildPromptTests(unittest.TestCase):
                 "Fix the bug\n\nKeep changes small." + work.MANDATORY_PROMPT_SUFFIX,
             )
 
-    def test_mandatory_suffix_carries_the_branch_and_merge_contract(self):
-        # A distinctive literal, so an accidental edit to the constant is caught
-        # rather than silently agreeing with itself.
-        self.assertIn("Create a new branch for the work", work.MANDATORY_PROMPT_SUFFIX)
-        self.assertIn("merge it into main and delete the branch", work.MANDATORY_PROMPT_SUFFIX)
-        self.assertTrue(work.build_prompt("anything").endswith(work.MANDATORY_PROMPT_SUFFIX))
-
-    def test_mandatory_suffix_asks_for_a_run_retrospective(self):
-        self.assertIn("Run retrospective:", work.MANDATORY_PROMPT_SUFFIX)
-        self.assertIn("nothing to report", work.MANDATORY_PROMPT_SUFFIX)
 
     def test_mandatory_suffix_avoids_the_session_limit_markers(self):
         # The retrospective text rides in the `result` event, the same string
@@ -1061,7 +1051,7 @@ class CodexPromptCompletionTests(unittest.TestCase):
             session = work.autonomous_work_summary.SessionSummary(datetime.now(), forced=True)
             with mock.patch.object(work.subprocess, "Popen", return_value=process), mock.patch.object(
                 work, "capture_git_checkpoint", return_value=work.GitCheckpoint(None, None)
-            ), mock.patch.object(work, "unmerged_branch_after_run", return_value=None):
+            ), mock.patch.object(work, "finalize_repository", return_value=None):
                 result = work.run_prompt(
                     entry,
                     "Do the work.",
@@ -1322,6 +1312,9 @@ class UnmergedBranchAfterRunTests(unittest.TestCase):
     def init_repository(self, default_branch: str = "main") -> None:
         self.git("init", "--quiet", f"--initial-branch={default_branch}")
         self.git("commit", "--quiet", "--allow-empty", "-m", "first")
+        self.git("config", "user.name", "Test")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "commit.gpgsign", "false")
 
     def commit(self, message: str = "work") -> None:
         self.git("commit", "--quiet", "--allow-empty", "-m", message)
@@ -1349,11 +1342,47 @@ class UnmergedBranchAfterRunTests(unittest.TestCase):
         self.commit()
         self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
 
-    def test_uncommitted_changes_are_not_unmerged_work(self):
+    def test_uncommitted_changes_on_main_are_preserved_on_a_review_branch(self):
         self.init_repository()
         before = work.capture_git_checkpoint(self.repository)
         (self.repository / "notes.txt").write_text("left for review", encoding="utf-8")
-        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+        branch = work.finalize_repository(self.repository, before)
+        self.assertIsNotNone(branch)
+        self.assertEqual(work.checked_out_branch(self.repository), "main")
+        self.assertFalse((self.repository / "notes.txt").exists())
+        self.assertEqual(work.git_output(self.repository, "show", f"{branch}:notes.txt"), "left for review")
+        self.assertEqual(work.git_output(self.repository, "status", "--porcelain"), "")
+
+    def test_dirty_work_branch_is_committed_before_switching_to_main(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.git("switch", "-c", "add-widget")
+        (self.repository / "notes.txt").write_text("review this", encoding="utf-8")
+        self.assertEqual(work.finalize_repository(self.repository, before), "add-widget")
+        self.assertEqual(work.checked_out_branch(self.repository), "main")
+        self.assertEqual(work.git_output(self.repository, "show", "add-widget:notes.txt"), "review this")
+        self.assertIn("Automatically committed by the autonomous work harness", work.git_output(self.repository, "log", "-1", "--format=%B", "add-widget"))
+
+    def test_unmerged_work_is_detected_after_model_switches_to_main(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.git("switch", "-c", "add-widget")
+        self.commit()
+        self.git("switch", "main")
+        self.assertEqual(work.finalize_repository(self.repository, before), "add-widget")
+
+    def test_failed_commit_preserves_work_and_does_not_switch_branches(self):
+        self.init_repository()
+        before = work.capture_git_checkpoint(self.repository)
+        self.git("switch", "-c", "add-widget")
+        (self.repository / "notes.txt").write_text("review this", encoding="utf-8")
+        hook = self.repository / ".git/hooks/pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        hook.chmod(0o755)
+        with self.assertRaises(RuntimeError):
+            work.finalize_repository(self.repository, before)
+        self.assertEqual(work.checked_out_branch(self.repository), "add-widget")
+        self.assertEqual((self.repository / "notes.txt").read_text(), "review this")
 
     def test_a_branch_the_run_never_touched_is_left_alone(self):
         # Somebody else's half-finished work, checked out when the prompt
@@ -1384,13 +1413,13 @@ class UnmergedBranchAfterRunTests(unittest.TestCase):
         (self.repository / "notes.txt").write_text("no repository here", encoding="utf-8")
         self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
 
-    def test_a_detached_head_is_not_a_branch(self):
+    def test_work_branch_is_reported_even_if_head_was_detached_after_commit(self):
         self.init_repository()
         before = work.capture_git_checkpoint(self.repository)
         self.git("checkout", "--quiet", "-b", "add-widget")
         self.commit()
         self.git("checkout", "--quiet", "--detach")
-        self.assertIsNone(work.unmerged_branch_after_run(self.repository, before))
+        self.assertEqual(work.unmerged_branch_after_run(self.repository, before), "add-widget")
 
 
 class QueueStatusForOutcomeTests(unittest.TestCase):

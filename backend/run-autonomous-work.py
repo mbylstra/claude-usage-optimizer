@@ -263,8 +263,10 @@ RESUME_AFTER_FIVE_HOUR_RESET_ENABLED = (
 MANDATORY_PROMPT_SUFFIX = (
     ". Create a new branch for the work. Once finished, if there is no ambiguity"
     " and you are confident enough (you don't have any unresolved questions for"
-    " the boss) merge it into main and delete the branch, else leave it in the"
-    " branch. Use your judgement for any decisions - I want you to work"
+    " the boss) merge it into main and delete the branch. Otherwise you MUST"
+    " commit all work to the work branch and switch back to main, leaving the"
+    " branch available for review. Never leave uncommitted work behind."
+    " Use your judgement for any decisions - I want you to work"
     " completely autonomously."
     " When the work is finished, end your final message with a section headed"
     " 'Run retrospective:' reviewing how this run went, so it can be read off"
@@ -1438,12 +1440,17 @@ class GitCheckpoint:
 
     branch: str | None
     head_commit: str | None
+    branch_tips: str = ""
 
 
 def capture_git_checkpoint(working_directory: Path) -> GitCheckpoint:
     return GitCheckpoint(
         branch=checked_out_branch(working_directory),
         head_commit=git_output(working_directory, "rev-parse", "HEAD"),
+        branch_tips=git_output(
+            working_directory, "for-each-ref", "--format=%(refname:short) %(objectname)",
+            "refs/heads",
+        ) or "",
     )
 
 
@@ -1484,41 +1491,60 @@ def default_branch_name(working_directory: Path) -> str | None:
 
 
 def unmerged_branch_after_run(working_directory: Path, before: GitCheckpoint) -> str | None:
-    """The branch this run left finished work on, or None if it left none.
-
-    Read out of the repository rather than taken on trust from the run itself,
-    which is what makes it work with no cooperation from the prompt: work is
-    unmerged when the branch now checked out is not the default one and carries
-    commits the default branch does not. A run that merged its branch and stayed
-    on it reports nothing, because those commits are contained; so does one that
-    committed straight to the default branch, and one that left its changes
-    uncommitted for review.
-
-    A repository this run did not move is never reported. One already sitting on
-    a half-finished branch when the prompt started was not left that way by this
-    prompt, and claiming its branch would put somebody else's work in the queue.
-    """
-    after = capture_git_checkpoint(working_directory)
-    if after.branch is None:
+    """Find changed work branches with commits not contained in main."""
+    target_branch = "main" if local_branch_exists(working_directory, "main") else default_branch_name(working_directory)
+    if target_branch is None:
         return None
-    if after.branch == before.branch and after.head_commit == before.head_commit:
+    previous_tips = dict(line.split(" ", 1) for line in before.branch_tips.splitlines())
+    current_tips = git_output(
+        working_directory, "for-each-ref", "--format=%(refname:short) %(objectname)",
+        "refs/heads",
+    ) or ""
+    for line in current_tips.splitlines():
+        branch_name, commit = line.split(" ", 1)
+        if branch_name == target_branch or previous_tips.get(branch_name) == commit:
+            continue
+        commits_ahead = git_output(
+            working_directory, "rev-list", "--count", f"{target_branch}..{branch_name}"
+        )
+        if commits_ahead is None:
+            raise RuntimeError(f"Could not compare {branch_name} with {target_branch}")
+        if commits_ahead != "0":
+            log_message(f"Work left on branch '{branch_name}', {commits_ahead} commit(s) ahead of '{target_branch}'")
+            return branch_name
+    return None
+
+
+def finalize_repository(working_directory: Path, before: GitCheckpoint) -> str | None:
+    """Preserve unfinished work before restoring main; never force a checkout."""
+    if git_output(working_directory, "rev-parse", "--is-inside-work-tree") != "true":
         return None
 
-    default_branch = default_branch_name(working_directory)
-    if default_branch is None or after.branch == default_branch:
-        return None
+    def require_git(*arguments: str) -> str:
+        output = git_output(working_directory, *arguments)
+        if output is None:
+            raise RuntimeError(f"Repository finalization failed: git {' '.join(arguments)}")
+        return output
 
-    commits_ahead = git_output(
-        working_directory, "rev-list", "--count", f"{default_branch}..HEAD"
-    )
-    if not commits_ahead or commits_ahead == "0":
-        return None
-
-    log_message(
-        f"Work left on branch '{after.branch}', {commits_ahead} commit(s) "
-        f"ahead of '{default_branch}'"
-    )
-    return after.branch
+    status = require_git("status", "--porcelain", "--untracked-files=all")
+    if status:
+        branch = checked_out_branch(working_directory)
+        if branch is None or branch == "main":
+            # Do not turn unreviewed leftovers on main into completed work.
+            require_git("switch", "-c", f"autonomous-wip-{uuid.uuid4().hex}")
+        require_git("add", "--all")
+        require_git(
+            "commit", "-m", "WIP: preserve autonomous work",
+            "-m", "Automatically committed by the autonomous work harness after the task finished.",
+        )
+    unmerged_branch = unmerged_branch_after_run(working_directory, before)
+    if local_branch_exists(working_directory, "main"):
+        require_git("switch", "main")
+    elif default_branch_name(working_directory) is not None:
+        require_git("switch", default_branch_name(working_directory))
+    if require_git("status", "--porcelain", "--untracked-files=all"):
+        raise RuntimeError("Repository finalization left uncommitted work")
+    return unmerged_branch
 
 
 def determine_outcome(
@@ -1682,6 +1708,7 @@ class PromptRunResult:
     """The branch a completed prompt left its work on — see `unmerged_branch_after_run`."""
     unmerged_branch: str | None = None
     session_id: str | None = None
+    git_finalization_failed: bool = False
 
 
 def run_prompt(
@@ -1729,6 +1756,16 @@ def run_prompt(
         cost_usd: float | None = None,
     ) -> PromptRunResult:
         """This prompt's result, stamped with the times only this function knows."""
+        unmerged_branch = None
+        git_finalization_failed = False
+        if cli_started:
+            try:
+                unmerged_branch = finalize_repository(working_directory, checkpoint_before_run)
+            except RuntimeError as error:
+                log_message(str(error))
+                git_finalization_failed = True
+                exit_code, outcome = 1, "error"
+                result_text = f"{result_text or ''}\n\n{error}".strip()
         return PromptRunResult(
             exit_code,
             outcome,
@@ -1737,11 +1774,8 @@ def run_prompt(
             result_text,
             turns,
             cost_usd,
-            unmerged_branch=(
-                unmerged_branch_after_run(working_directory, checkpoint_before_run)
-                if outcome == "completed"
-                else None
-            ),
+            unmerged_branch=unmerged_branch,
+            git_finalization_failed=git_finalization_failed,
             session_id=output.thread_id if is_codex else session_id if cli_started else None,
         )
 
@@ -2344,6 +2378,10 @@ def main() -> int:
 
         prompts_run += 1
         final_exit_code = prompt_result.exit_code
+
+        if prompt_result.git_finalization_failed:
+            session.stop("error", "Git finalization failed; stopping before another TODO.")
+            break
 
         if prompt_result.outcome == OUTCOME_SESSION_LIMIT:
             # For the same reason `fiveHourExhausted` ends a session: the limit

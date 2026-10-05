@@ -557,21 +557,29 @@ itself, and so left the branch unmerged rather than guessing, is filed as
 non-`todo` status, but saying something `error` does not: the work is done, and
 it is _there_.
 
-**It is read out of the repository, not taken on the run's word.** After a
-completed prompt, `unmerged_branch_after_run` asks git whether the branch now
-checked out is something other than the default one and carries commits the
-default branch does not. The detection needs nothing in the prompt — a
-convention the model has to remember is one that holds until the night it
-doesn't.
+**The harness enforces preservation and checkout, not just the prompt.** After
+the agent exits, `finalize_repository` runs `git status --porcelain` including
+untracked files. Any remaining changes are staged and committed as
+`WIP: preserve autonomous work`, with a body identifying the autonomous work
+harness as the automatic committer. If leftovers are on main or a detached
+HEAD, it first creates an `autonomous-wip-*` review branch rather than committing
+unreviewed work to main. It then switches to main without forcing checkout
+(repositories without main retain the existing default-branch fallback).
+Commit or checkout failure records an error and stops the session before another
+TODO can start. Agent errors and timeouts also receive this preservation step;
+cancellation still exits immediately and leaves the item TODO.
 
-The prompt _does_ still ask for the branch, though. `build_prompt` appends
-`MANDATORY_PROMPT_SUFFIX` — a fixed, non-optional tail after the user's
-`APPEND_TO_ALL_PROMPTS` setting — telling every run to branch, then merge into
-the default branch and delete the branch only if it is sure, else leave the
-work on the branch. That is the behaviour this section detects; the suffix
-makes it the instruction rather than a hope. It is added only where the prompt
-is actually sent (and in the `--dry-run` preview of that) — queue status
-writes and project naming still use the entry's own prompt.
+**Merge status is read from Git.** The checkpoint records local branch tips
+before the task. Changed or new branches carrying commits not contained in main
+are reported as `unmerged:<branch>`, even if the model already switched to main.
+Jira maps that status to **In Review**, not Done, and records the branch in the
+outcome comment. Branches untouched by the task are not claimed.
+
+`build_prompt` appends `MANDATORY_PROMPT_SUFFIX` after the user's
+`APPEND_TO_ALL_PROMPTS` setting. It requires a work branch, permits merging and
+deleting it only when confident, and otherwise requires committing all work
+and switching back to main. Queue writes and project naming still use the
+entry's own prompt.
 
 The same suffix also asks every run to end its final message with a `Run
 retrospective:` section — tools that were unavailable or blocked by the
@@ -583,17 +591,11 @@ extra plumbing. It is worded to steer clear of the phrases in
 `SESSION_LIMIT_TEXT_MARKERS`, and each point offers "nothing to report" so a
 model told to list problems does not manufacture them.
 
-Four cases all read as plain `completed`, each with a test standing over it:
-committing straight to `main`; merging the branch back and staying on it (the
-commits are contained, so nothing is ahead); leaving changes uncommitted for
-review, which several queued prompts ask for by name; and a new project on a
-machine whose `init.defaultBranch` is neither `main` nor `master` — there is no
-branch to be unmerged _from_, and `default_branch_name` returns None to say so.
-
-**A repository the run did not move is never claimed.** The checkpoint taken
-before the prompt starts is what makes that possible: a repo already sitting on
-somebody's half-finished branch would otherwise be reported as this prompt's
-work, and the entry would go into the queue naming a branch it never touched.
+Committing directly to main or leaving a branch whose commits are contained in
+main still counts as completed. Uncommitted changes no longer count as completed:
+the harness preserves them on a review branch. New repositories without an
+existing main/default branch have no merge target, so merge detection returns
+None.
 
 `write_queue_status` also lets an `unmerged:` status that is _already_ on the
 line win over whatever the run's outcome would write. Only the run itself can
