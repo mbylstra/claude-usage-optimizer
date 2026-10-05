@@ -45,8 +45,9 @@ you are working under them:
 ## Commands
 
 `just` is the entry point for everything. Do not run raw pnpm/vite commands —
-add a recipe instead. Never use `git add` or `git commit` — that is for the user
-to do.
+add a recipe instead. Never use `git add`. Never use `git commit` unless the user
+invokes the `/commit` slash command. That command authorizes committing only the
+currently staged files; do not stage additional files.
 
 ```sh
 just setup           # everything a fresh clone needs, in one command
