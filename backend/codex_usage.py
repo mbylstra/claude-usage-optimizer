@@ -223,6 +223,33 @@ def _decode_jwt_exp(access_token):
     return exp if isinstance(exp, (int, float)) else None
 
 
+def _subscription_period_end_from_id_token(id_token):
+    # type: (str | None) -> str | None
+    """The ChatGPT entitlement's term end, independent of renewal status."""
+    if not id_token or len(id_token.split(".")) != 3:
+        return None
+    encoded_claims = id_token.split(".")[1]
+    try:
+        claims = json.loads(
+            base64.urlsafe_b64decode(encoded_claims + "=" * (-len(encoded_claims) % 4))
+        )
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+    authorization = claims.get("https://api.openai.com/auth")
+    if not isinstance(authorization, dict):
+        return None
+    active_until = authorization.get("chatgpt_subscription_active_until")
+    if not isinstance(active_until, str) or not active_until.strip():
+        return None
+    try:
+        datetime.fromisoformat(active_until.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return active_until
+
+
 def token_needs_refresh(access_token, now=None, slack_seconds=REFRESH_SLACK_SECONDS):
     # type: (str, float | None, int) -> bool
     """Within `slack_seconds` of expiry, or already past it.
@@ -589,6 +616,11 @@ def _read_codex_usage(auth_file, log, now):
             },
         }
     response = {"ok": True, "windows": windows}
+    subscription_period_ends_at = _subscription_period_end_from_id_token(
+        credential.get("id_token")
+    )
+    if subscription_period_ends_at is not None:
+        response["subscriptionPeriodEndsAt"] = subscription_period_ends_at
     subscription_access_ends_at = _read_subscription_access_end(credential, log)
     if subscription_access_ends_at is not None:
         response["subscriptionAccessEndsAt"] = subscription_access_ends_at
@@ -605,9 +637,9 @@ def read_codex_usage(auth_file=None, log=_ignore, now=None):
     calls `CODEX_USAGE_URL` and returns `{"ok": True, "windows": [...]}` or
     `{"ok": False, "error": {...}}`.
 
-    A successful usage lookup also tries the subscriptions endpoint. A confirmed
-    non-renewal adds `subscriptionAccessEndsAt`; billing failures leave usage
-    intact.
+    A successful usage lookup reads the current paid period from the local ID
+    token and tries the subscriptions endpoint. A confirmed non-renewal adds
+    `subscriptionAccessEndsAt`; billing failures leave usage intact.
 
     Never raises: a credential or network hiccup is not worth losing this
     reply over, the same restraint `probe_jira_credential` takes.

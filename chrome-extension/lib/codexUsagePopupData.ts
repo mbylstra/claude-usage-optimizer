@@ -33,6 +33,7 @@ export interface CodexUsagePopupReady {
   /** Set when the latest refresh failed but older numbers are still on screen. */
   refreshError: UsageErrorInfo | null;
   subscriptionAccessEndsAt: Date | null;
+  subscriptionPeriodEndsAt: Date | null;
 }
 
 export type CodexUsagePopupData =
@@ -64,6 +65,10 @@ export function buildCodexUsagePopupData(
     refreshError: entry.error,
     subscriptionAccessEndsAt: parseFutureSubscriptionAccessEnd(
       entry.snapshot.subscriptionAccessEndsAt,
+      now,
+    ),
+    subscriptionPeriodEndsAt: parseFutureSubscriptionAccessEnd(
+      entry.snapshot.subscriptionPeriodEndsAt,
       now,
     ),
   };

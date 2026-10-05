@@ -109,9 +109,16 @@ export function normaliseCodexUsageResponse(payload: unknown): UsageSnapshot {
   }
 
   const subscriptionAccessEndsAt = readString(payload, ['subscriptionAccessEndsAt']);
-  return subscriptionAccessEndsAt !== null && !Number.isNaN(Date.parse(subscriptionAccessEndsAt))
-    ? { windows, subscriptionAccessEndsAt }
-    : { windows };
+  const subscriptionPeriodEndsAt = readString(payload, ['subscriptionPeriodEndsAt']);
+  return {
+    windows,
+    ...(subscriptionAccessEndsAt !== null && !Number.isNaN(Date.parse(subscriptionAccessEndsAt))
+      ? { subscriptionAccessEndsAt }
+      : {}),
+    ...(subscriptionPeriodEndsAt !== null && !Number.isNaN(Date.parse(subscriptionPeriodEndsAt))
+      ? { subscriptionPeriodEndsAt }
+      : {}),
+  };
 }
 
 /** The host's `{"code", "message", "httpStatus"?}` error shape, read defensively. */

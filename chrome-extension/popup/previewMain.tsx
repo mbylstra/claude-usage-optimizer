@@ -103,6 +103,19 @@ const CODEX_CASES: { label: string; data: CodexUsagePopupData }[] = [
   },
   { label: 'codex — ready', data: buildCodexUsagePopupData(sessionEntry(35, 2), now) },
   {
+    label: 'codex — period ends, renewal unknown',
+    data: buildCodexUsagePopupData(
+      {
+        ...sessionEntry(35, 2),
+        snapshot: {
+          ...sessionEntry(35, 2).snapshot,
+          subscriptionPeriodEndsAt: days(5),
+        },
+      },
+      now,
+    ),
+  },
+  {
     label: 'codex — cancelled, access ends soon',
     data: buildCodexUsagePopupData(pendingCancellationEntry(35, 2), now),
   },

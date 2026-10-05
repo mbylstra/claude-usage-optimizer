@@ -269,7 +269,7 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
         codex_usage.CODEX_TOKEN_REFRESH_URL = self._previous_refresh_url
         self.temporary_directory.cleanup()
 
-    def _write_auth_file(self, access_token, refresh_token="a-refresh-token"):
+    def _write_auth_file(self, access_token, refresh_token="a-refresh-token", id_token=None):
         self.auth_file.write_text(
             json.dumps(
                 {
@@ -277,6 +277,7 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
                         "access_token": access_token,
                         "refresh_token": refresh_token,
                         "account_id": "acct-1",
+                        "id_token": id_token,
                     },
                 }
             ),
@@ -309,6 +310,26 @@ class ReadCodexUsageAgainstAStubServerTests(unittest.TestCase):
         result = codex_usage.read_codex_usage(auth_file=self.auth_file)
 
         self.assertTrue(result["ok"])
+        self.assertNotIn("subscriptionAccessEndsAt", result)
+
+    def test_id_token_reports_period_end_when_billing_endpoint_is_forbidden(self):
+        subscription_end = "2026-10-16T04:24:03+00:00"
+        self._write_auth_file(
+            _jwt({"exp": time.time() + 3600}),
+            id_token=_jwt(
+                {
+                    "https://api.openai.com/auth": {
+                        "chatgpt_subscription_active_until": subscription_end,
+                    }
+                }
+            ),
+        )
+        self.state["subscription_status"] = 403
+
+        result = codex_usage.read_codex_usage(auth_file=self.auth_file)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["subscriptionPeriodEndsAt"], subscription_end)
         self.assertNotIn("subscriptionAccessEndsAt", result)
 
     def test_a_near_expiry_token_is_refreshed_before_the_usage_call(self):

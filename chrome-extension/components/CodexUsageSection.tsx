@@ -59,6 +59,12 @@ export function CodexUsageSection({ data, now }: CodexUsageSectionProps) {
           {data.subscriptionAccessEndsAt !== null && (
             <SubscriptionEndNotice accessEndsAt={data.subscriptionAccessEndsAt} />
           )}
+          {data.subscriptionAccessEndsAt === null && data.subscriptionPeriodEndsAt !== null && (
+            <SubscriptionEndNotice
+              accessEndsAt={data.subscriptionPeriodEndsAt}
+              cancellationConfirmed={false}
+            />
+          )}
           {data.refreshError !== null && (
             <div className="border-pace-ahead/40 bg-pace-ahead-surface text-pace-ahead flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs">
               <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />

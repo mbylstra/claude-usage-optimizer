@@ -60,6 +60,8 @@ export interface UsageSnapshot {
   subscriptionCancelled?: boolean;
   /** An explicit pending cancellation's access end, never a usage-window reset. */
   subscriptionAccessEndsAt?: string;
+  /** The paid term's end; renewal may still be scheduled. */
+  subscriptionPeriodEndsAt?: string;
 }
 
 export type PaceStatus = 'ahead' | 'behind' | 'onTrack';
