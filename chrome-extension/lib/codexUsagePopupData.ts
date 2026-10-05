@@ -1,6 +1,7 @@
 import { deriveUsageStatuses } from './usagePace';
 import { USAGE_STALE_AFTER_MS } from './usagePopupData';
 import type { DerivedWindowStatus, UsageCacheEntry, UsageErrorInfo } from './usageTypes';
+import { parseFutureSubscriptionAccessEnd } from './subscriptionAccessEnd';
 
 /**
  * Maps the persisted Codex cache entry onto the view model
@@ -31,6 +32,8 @@ export interface CodexUsagePopupReady {
   isStale: boolean;
   /** Set when the latest refresh failed but older numbers are still on screen. */
   refreshError: UsageErrorInfo | null;
+  subscriptionAccessEndsAt: Date | null;
+  subscriptionPeriodEndsAt: Date | null;
 }
 
 export type CodexUsagePopupData =
@@ -60,5 +63,13 @@ export function buildCodexUsagePopupData(
     fetchedAt,
     isStale: now.getTime() - fetchedAt.getTime() > USAGE_STALE_AFTER_MS,
     refreshError: entry.error,
+    subscriptionAccessEndsAt: parseFutureSubscriptionAccessEnd(
+      entry.snapshot.subscriptionAccessEndsAt,
+      now,
+    ),
+    subscriptionPeriodEndsAt: parseFutureSubscriptionAccessEnd(
+      entry.snapshot.subscriptionPeriodEndsAt,
+      now,
+    ),
   };
 }

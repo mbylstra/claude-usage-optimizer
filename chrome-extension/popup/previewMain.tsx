@@ -8,7 +8,7 @@ import type { AutonomousWorkStatus } from '@/lib/autonomousWorkStatus';
 import { IDLE_FOLDER_ACCESS_STATUS } from '@/lib/folderAccessStatus';
 import type { AutonomousWorkSettingsStatus } from '@/lib/autonomousWorkSettingsStatus';
 import { DEFAULT_AUTONOMOUS_WORK_SETTINGS } from '@/lib/settingsTypes';
-import type { UsageCacheEntry } from '@/lib/usageTypes';
+import type { UsageCacheEntry, UsageSnapshot } from '@/lib/usageTypes';
 import '@/index.css';
 
 /** Throwaway visual harness — not part of the build. */
@@ -19,7 +19,10 @@ const days = (n: number) => new Date(now.getTime() + n * 86_400_000).toISOString
 
 // Session windows: 5h long, so `resetsAt = start + 5h`.
 // Weekly windows: 7d long.
-function sessionEntry(percent: number, hoursUntilReset: number): UsageCacheEntry {
+function sessionEntry(
+  percent: number,
+  hoursUntilReset: number,
+): UsageCacheEntry & { snapshot: UsageSnapshot } {
   return {
     snapshot: {
       windows: [
@@ -37,6 +40,14 @@ function sessionEntry(percent: number, hoursUntilReset: number): UsageCacheEntry
   };
 }
 
+function pendingCancellationEntry(percent: number, hoursUntilReset: number): UsageCacheEntry {
+  const entry = sessionEntry(percent, hoursUntilReset);
+  return {
+    ...entry,
+    snapshot: { ...entry.snapshot, subscriptionAccessEndsAt: days(5) },
+  };
+}
+
 // 2.5h into a 5h window => even burn is 50%.
 const CASES: { label: string; entry: UsageCacheEntry }[] = [
   {
@@ -48,6 +59,10 @@ const CASES: { label: string; entry: UsageCacheEntry }[] = [
     },
   },
   { label: 'on pace (50%)', entry: sessionEntry(50, 2.5) },
+  {
+    label: 'Claude — cancelled, access ends soon',
+    entry: pendingCancellationEntry(50, 2.5),
+  },
   { label: 'slightly ahead (56%)', entry: sessionEntry(56, 2.5) },
   { label: 'moderately ahead (62%)', entry: sessionEntry(62, 2.5) },
   { label: 'severely ahead (80%)', entry: sessionEntry(80, 2.5) },
@@ -87,6 +102,23 @@ const CODEX_CASES: { label: string; data: CodexUsagePopupData }[] = [
     ),
   },
   { label: 'codex — ready', data: buildCodexUsagePopupData(sessionEntry(35, 2), now) },
+  {
+    label: 'codex — period ends, renewal unknown',
+    data: buildCodexUsagePopupData(
+      {
+        ...sessionEntry(35, 2),
+        snapshot: {
+          ...sessionEntry(35, 2).snapshot,
+          subscriptionPeriodEndsAt: days(5),
+        },
+      },
+      now,
+    ),
+  },
+  {
+    label: 'codex — cancelled, access ends soon',
+    data: buildCodexUsagePopupData(pendingCancellationEntry(35, 2), now),
+  },
 ];
 
 const AUTONOMOUS_WORK_CASES: {
