@@ -120,6 +120,39 @@ class DescribeStopReasonTests(unittest.TestCase):
 
 
 class RenderSessionSummaryTests(unittest.TestCase):
+    def test_each_attempt_resumes_its_own_provider_session(self):
+        import shlex
+
+        session = build_session()
+        working_directory = "/tmp/a project's work"
+        session.record_attempt(build_attempt(
+            prompt="First TODO", agent="claude", session_id="claude-session",
+            working_directory=working_directory,
+        ))
+        session.record_attempt(build_attempt(
+            prompt="Second TODO", agent="codex", session_id="codex-thread",
+            outcome=summary_module.OUTCOME_CANCELLED, queue_status="todo",
+            working_directory=working_directory,
+        ))
+        rendered = summary_module.render_session_summary(session)
+        first_section, second_section = rendered.split("### Cancelled", 1)
+        for section, command, session_id in (
+            (first_section, ["claude", "--resume"], "claude-session"),
+            (second_section, ["codex", "resume"], "codex-thread"),
+        ):
+            shell_command = section.split("```sh\n", 1)[1].split("\n```", 1)[0]
+            self.assertEqual(
+                shlex.split(shell_command),
+                ["cd", working_directory, "&&", *command, session_id],
+            )
+
+    def test_no_session_does_not_offer_a_fabricated_resume_command(self):
+        rendered = "\n".join(summary_module.render_attempt(build_attempt(
+            agent="codex", session_id=None, outcome=summary_module.OUTCOME_ERROR,
+        )))
+        self.assertIn("No resume command available", rendered)
+        self.assertNotIn("codex resume", rendered)
+
     def test_attempt_identifies_codex_and_its_pinned_model(self):
         session = build_session()
         session.record_attempt(build_attempt(agent="codex", model="gpt-5.6-sol", turns=None, cost_usd=None))

@@ -1681,6 +1681,7 @@ class PromptRunResult:
     cost_usd: float | None = None
     """The branch a completed prompt left its work on — see `unmerged_branch_after_run`."""
     unmerged_branch: str | None = None
+    session_id: str | None = None
 
 
 def run_prompt(
@@ -1713,6 +1714,7 @@ def run_prompt(
     )
     started_at = datetime.now()
     output = CodexOutputCollector() if is_codex else ClaudeOutputCollector()
+    cli_started = False
     # Taken before the directory is prepared, so a new project reads as the empty
     # thing it is rather than as the repository `git init` is about to make. Any
     # repository already here is recorded as it stands, which is what keeps a
@@ -1740,6 +1742,7 @@ def run_prompt(
                 if outcome == "completed"
                 else None
             ),
+            session_id=output.thread_id if is_codex else session_id if cli_started else None,
         )
 
     if not prepare_working_directory(working_directory, is_new_project):
@@ -1780,6 +1783,7 @@ def run_prompt(
                 model=provider_model,
                 turns=output.turns,
                 cost_usd=output.cost_usd,
+                session_id=output.thread_id if is_codex else session_id if cli_started else None,
             )
         )
         session.stop(autonomous_work_summary.OUTCOME_CANCELLED)
@@ -1813,6 +1817,7 @@ def run_prompt(
                 text=True,
                 bufsize=1,
             )
+            cli_started = True
         except FileNotFoundError:
             message = (
                 "`codex` not found on PATH — install/login to Codex CLI and check the launchd PATH setting"
@@ -2333,6 +2338,7 @@ def main() -> int:
                 model=(CODEX_MODEL if selected_agent == "codex" else claude_model_id_for(next_entry)),
                 turns=prompt_result.turns,
                 cost_usd=prompt_result.cost_usd,
+                session_id=prompt_result.session_id,
             )
         )
 

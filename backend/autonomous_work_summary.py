@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from shlex import quote
 
 # Long enough for a full "here is what I did" sign-off, short enough that one
 # runaway final message cannot make the day's file unreadable.
@@ -100,6 +101,7 @@ class PromptAttempt:
     model: str = ""
     turns: int | None = None
     cost_usd: float | None = None
+    session_id: str | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -208,6 +210,19 @@ def render_attempt(attempt: PromptAttempt) -> list[str]:
         cost_text = f", ${attempt.cost_usd:.2f}" if attempt.cost_usd is not None else ""
         facts.append(f"- {attempt.turns} turns{cost_text}")
     lines.extend(facts)
+
+    if attempt.session_id:
+        resume_command = "codex resume" if attempt.agent == "codex" else "claude --resume"
+        lines.extend([
+            "",
+            "**Resume interactively in a terminal**",
+            "",
+            "```sh",
+            f"cd {quote(attempt.working_directory)} && {resume_command} {quote(attempt.session_id)}",
+            "```",
+        ])
+    else:
+        lines.extend(["", "No resume command available — the CLI did not establish a session."])
 
     prompt_excerpt = truncate(collapse_whitespace(attempt.prompt), PROMPT_EXCERPT_CHARACTER_LIMIT)
     lines.extend(["", "**Prompt**", "", f"> {prompt_excerpt}", ""])

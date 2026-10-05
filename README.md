@@ -565,8 +565,13 @@ just autonomous-summary 2026-08-15 # a particular one
 Each day's file lists, per session, which queued prompts completed, which
 failed, which were left untouched, and why the session stopped — out of `todo`
 entries, back on pace, or the 5-hour window exhausted. Every prompt gets
-Claude's own closing message; a prompt that timed out or was cancelled never
-produces one, so its last message before it stopped is shown instead. Filenames
+the agent's own closing message; a prompt that timed out or was cancelled never
+produces one, so its last message before it stopped is shown instead. Each
+attempted TODO also includes a terminal command to resume its own session:
+`cd <working-directory> && claude --resume <session-id>` or
+`cd <working-directory> && codex resume <thread-id>`. Paths and IDs are
+shell-quoted. If the CLI did not establish a session, the report says no resume
+command is available. Existing reports are not rewritten. Filenames
 identify the trigger: `manual-do-next-todo-YYYY-MM-DD.md`,
 `manual-full-run-YYYY-MM-DD.md`, `nightly-first-run-YYYY-MM-DD.md`, and
 `nightly-second-run-YYYY-MM-DD.md`. A manual full run that schedules a resume

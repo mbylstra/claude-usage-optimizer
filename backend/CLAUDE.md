@@ -172,6 +172,12 @@ Four things about it are deliberate:
   before `os._exit`. Its entry is recorded with the status the cancel really
   leaves behind (`todo`), and excluded from the "not attempted" list so it is
   not counted twice.
+- **Each attempted TODO includes its interactive resume command**, using
+  `claude --resume <session-id>` or `codex resume <thread-id>` from that TODO's
+  working directory. The command is shell-quoted and kept even for cancelled
+  or timed-out attempts. If no session was established, the report says no
+  command is available rather than inventing an ID. Existing reports are not
+  rewritten.
 
 A dry run writes no summary, for the same reason it writes no run events.
 
@@ -248,7 +254,7 @@ shut is worse than the rare double run.
 ## Resuming after the 5-hour window resets
 
 A session that runs into the 5-hour session window stops, since that window does
-not refill early. But it *does* refill, at a knowable time, often only two or
+not refill early. But it _does_ refill, at a knowable time, often only two or
 three hours away — so rather than leaving the queue until 2 AM the next night,
 the run asks launchd to start it again shortly afterwards. Design and rationale:
 `plans/resume-after-five-hour-reset.md`. `autonomous_work_resume.py` owns the
@@ -261,7 +267,7 @@ in the extension's Settings screen, mirrored to
 `autonomous-work-settings.json`, default on, overridable for one run with
 `AUTONOMOUS_WORK_RESUME_ENABLED` — gates it end to end. Off means
 `schedule_resume_if_warranted` returns before scheduling anything (its first
-guard), *and* a `--resume` run that a still-installed agent fires anyway no-ops
+guard), _and_ a `--resume` run that a still-installed agent fires anyway no-ops
 at the top of `main`'s resume branch. Flipping it off is also a settings save,
 so `usage-host.py` clears a resume an earlier run already scheduled — otherwise
 the one-shot agent fires hours later just to hit that second guard.
@@ -290,7 +296,7 @@ year later, or on a Mac that ran a missed calendar job on waking.
 design rests on, and it is worth knowing what it saves. A resumed run reads the
 same snapshot file; if Chrome has been closed since, that file still says the
 window is at 100%, the gate skips with `fiveHourExhausted`, and the run would
-schedule *another* resume five hours out — forever, on the strength of one stale
+schedule _another_ resume five hours out — forever, on the strength of one stale
 reading. Under a no-chain rule that cannot happen, so there is no freshness
 test, no chain counter and no maximum to tune. Do not add chaining back as an
 obvious improvement. The per-day half of the rule is why serving a resume
@@ -304,18 +310,18 @@ where the nightly agent is not installed (the same rule
 `install_launch_agent(only_if_installed=True)` follows — a machine that just ran
 `just uninstall-autonomous-work` must not find an agent written back); and nothing
 is scheduled with an empty queue. The popup's `"Trigger a full run"` passes no
-`--force`, so it *does* schedule a resume like the 2 AM job.
+`--force`, so it _does_ schedule a resume like the 2 AM job.
 
 **When the window resets — three sources, in order.** The CLI's own notice, when
 the run ended on `sessionLimit`; the snapshot's `fiveHourResetsAt`, for the
 `fiveHourExhausted` gate ending, which has no notice; and `now + 5h`, which is
-always available and errs *late*, the harmless direction. Every candidate gets a
+always available and errs _late_, the harmless direction. Every candidate gets a
 buffer and is then clamped into `(now, now + 5h + 15m]`. **That clamp is what
 discards a weekly or Opus limit** — both reach this code by exactly the same
 route as a session limit — without having to classify their wording. A notice
-that fails the clamp therefore schedules *nothing*, rather than falling through:
+that fails the clamp therefore schedules _nothing_, rather than falling through:
 it is not this window, and it says nothing about this window being spent. A
-notice we merely could not *parse* does fall through, since it tells us nothing
+notice we merely could not _parse_ does fall through, since it tells us nothing
 either way.
 
 **The notice's wording is not ours.** `resets 3:50am (Australia/Melbourne)` is
@@ -475,7 +481,7 @@ own 5-hour utilization and reset time, so a Codex decision does not use Claude's
 session window. Fetching the Codex figure costs an extra native-host round trip to Codex's
 usage endpoint, so `fetchCodexSnapshotForPaceGate` in `serviceWorker.ts` only
 makes it when `autonomousWork.agent` is `codex` or `behindPace` — independent of
-`codexUsageEnabled`, which gates the popup's *display* section and has no
+`codexUsageEnabled`, which gates the popup's _display_ section and has no
 bearing on what the scheduler needs.
 
 **launchd starts jobs with a bare environment.** `uv` and `claude` live in
@@ -525,7 +531,7 @@ dialog, no error. The row has to be deleted with **−** before macOS will ask
 again. Anyone debugging "the button does nothing" should check that first.
 
 **Measure, do not reason, about any of this.** Four mechanisms were proposed and
-confidently argued for during the work that produced this section — a launcher
+ly argued for during the work that produced this section — a launcher
 binary that stayed alive as the parent, an `.app` bundle, the interpreter
 identity, a Python version pin — and every one was wrong. The probes that seemed
 to refute the copy were run while a shared grant was still live and quietly
@@ -549,7 +555,7 @@ A prompt that finished the work but had a question it could not answer for
 itself, and so left the branch unmerged rather than guessing, is filed as
 `unmerged:<branch>` instead of `completed`. Skipped by later runs like any
 non-`todo` status, but saying something `error` does not: the work is done, and
-it is *there*.
+it is _there_.
 
 **It is read out of the repository, not taken on the run's word.** After a
 completed prompt, `unmerged_branch_after_run` asks git whether the branch now
@@ -558,7 +564,7 @@ default branch does not. The detection needs nothing in the prompt — a
 convention the model has to remember is one that holds until the night it
 doesn't.
 
-The prompt *does* still ask for the branch, though. `build_prompt` appends
+The prompt _does_ still ask for the branch, though. `build_prompt` appends
 `MANDATORY_PROMPT_SUFFIX` — a fixed, non-optional tail after the user's
 `APPEND_TO_ALL_PROMPTS` setting — telling every run to branch, then merge into
 the default branch and delete the branch only if it is sure, else leave the
@@ -582,14 +588,14 @@ committing straight to `main`; merging the branch back and staying on it (the
 commits are contained, so nothing is ahead); leaving changes uncommitted for
 review, which several queued prompts ask for by name; and a new project on a
 machine whose `init.defaultBranch` is neither `main` nor `master` — there is no
-branch to be unmerged *from*, and `default_branch_name` returns None to say so.
+branch to be unmerged _from_, and `default_branch_name` returns None to say so.
 
 **A repository the run did not move is never claimed.** The checkpoint taken
 before the prompt starts is what makes that possible: a repo already sitting on
 somebody's half-finished branch would otherwise be reported as this prompt's
 work, and the entry would go into the queue naming a branch it never touched.
 
-`write_queue_status` also lets an `unmerged:` status that is *already* on the
+`write_queue_status` also lets an `unmerged:` status that is _already_ on the
 line win over whatever the run's outcome would write. Only the run itself can
 have put it there, and overwriting it with `completed` would throw away the
 branch name — the one thing that status exists to carry. That path also made
@@ -626,7 +632,7 @@ translates at its own boundary. That is what keeps the session-limit rule, the
 cancelled rule and the unmerged rule in one place rather than once per source.
 **The `:detail` convention does not cross that boundary**: `unmerged:<branch>`
 exists because a text file has one field to carry both, and a board has columns,
-labels *and* comments — so the status name picks the column and the branch goes
+labels _and_ comments — so the status name picks the column and the branch goes
 in the comment.
 
 **Never mirror one into the other.** Two copies means a sync direction and a
@@ -651,7 +657,7 @@ and the sent one cannot drift. The prompt sits in an ADF `codeBlock`, quoted
 character for character rather than rendered, so a fenced block inside it cannot
 break out; the preamble above it is the only rendered part. That preamble also
 carries a **by-hand resume line** — `interactive_resume_instructions` builds
-`Session: <uuid>` plus ``cd <dir> && claude --resume <uuid>`` (home collapsed to
+`Session: <uuid>` plus `cd <dir> && claude --resume <uuid>` (home collapsed to
 `~`, so no username leaks into the comment), rendered as Markdown so the command
 shows as inline code. This works only because `main` **mints the session id
 itself** (`uuid.uuid4()`) and pins it with `claude --session-id` rather than
@@ -676,7 +682,7 @@ STATUS line is one field.
 
 Five columns: Draft, To Do, In Progress, In Review, Done, in a
 **company-managed** ("classic") Jira Software project. Team-managed shipped
-first — the board's columns *are* its statuses there, so adding one used to be
+first — the board's columns _are_ its statuses there, so adding one used to be
 a single gesture with no scheme in between — but it has no issue type scheme
 (no lever for the default work type) and no screen a custom field can be
 attached to over the API, and both of those became real requirements
@@ -720,7 +726,7 @@ plan printed the screen attach as a manual step (`plans/jira-repository-picker.m
 
 **The issue screen is not the board card layout**, and the two were conflated in
 the code for a while. The screen is what a card shows when opened; the card
-layout is the two or three fields on a *closed* card. They are separate
+layout is the two or three fields on a _closed_ card. They are separate
 greenhopper endpoints, both measured against the real site
 (`ensure_repository_field_on_card_layout`):
 
@@ -758,7 +764,7 @@ fails the save, the same rule the credential probe follows.
 field — `opus` / `sonnet`, the vocabulary
 `autonomous_work_settings.VALID_MODEL_NAMES` owns — is a single-select created
 and put on the issue screen by `install-jira-queue`, exactly as `Repository` is.
-What makes it *much* smaller than `Repository`: its options are a fixed
+What makes it _much_ smaller than `Repository`: its options are a fixed
 set, so there is nothing to sync from Settings, no soft-disable dance, and no
 `--sync` recipe — `ensure_model_field` creates the options once and re-runs
 write nothing. It is deliberately **not** on the board card layout: that face
@@ -798,12 +804,12 @@ change to that one map, not a new mechanism). **Classic Jira single-selects
 cannot filter one dropdown's options by another's value**, so the `Effort`
 field always offers every level regardless of what `Model` is set to; the
 constraint is instead enforced where it can be — `selected_effort_name` is
-handed the levels for the card's *own* `Model` choice (or the full vocabulary,
+handed the levels for the card's _own_ `Model` choice (or the full vocabulary,
 if the card leaves `Model` blank), and a level outside that set is logged and
 read back as unset, the same graceful-degradation shape `selected_model_name`
 already uses for a model no longer offered at all. The version actually spent
 is re-validated once more in `claude_effort_for` against whichever model the
-entry *really* resolves to once the session default and any env override are
+entry _really_ resolves to once the session default and any env override are
 folded in, since the Jira source alone cannot see either of those.
 
 **The prompt is the summary and the description together** — the title on its
@@ -843,7 +849,7 @@ deliberately nothing else) so it renders on the board instead of showing literal
 paragraph, matching the old behaviour.
 
 **In Review holds both endings that need a human**, told apart by the labels
-`claude-unmerged` and `claude-error`: the column means *your turn*, and both an
+`claude-unmerged` and `claude-error`: the column means _your turn_, and both an
 unmerged branch and a failed prompt are. Picking a card up clears both labels, so
 re-queueing stays a single gesture — drag it back to To Do and nothing else.
 One outcome comment per attempt, carrying Claude's own closing message — which
@@ -859,11 +865,11 @@ times, then appended to `backend/jira-pending-writes.jsonl` and replayed at the
 start of the next run. `OutcomeWrite` is a serialisable plan for exactly that
 reason.
 
-**REST, not MCP.** MCP is a protocol for giving a *model* tools, and the
+**REST, not MCP.** MCP is a protocol for giving a _model_ tools, and the
 scheduler is not a model: picking the top-ranked To Do card is a deterministic
 query with one right answer. It would also break the stdlib-only rule in the one
 place it is hardest, since `usage-host.py` imports the credential half of
-`queue_source_jira.py`. MCP's place is *inside* the run, where there is a model —
+`queue_source_jira.py`. MCP's place is _inside_ the run, where there is a model —
 and there the rule is that a prompt may read and comment on its own card but
 never transition it, enforced by the tool set rather than by instruction. Not
 built; it depends on an unmeasured admin toggle and nothing needs it.
@@ -871,8 +877,8 @@ built; it depends on an unmeasured admin toggle and nothing needs it.
 ### The credential, and the warning system that justifies it
 
 An **Atlassian API token**, not OAuth. Atlassian caps every token at one year and
-there is no indefinite one — but that expiry is a *scheduled event with a date
-known at creation time*, where OAuth's failure modes (a refresh token raced by
+there is no indefinite one — but that expiry is a _scheduled event with a date
+known at creation time_, where OAuth's failure modes (a refresh token raced by
 three processes here, a grant revocable without notice) announce themselves not
 at all.
 
