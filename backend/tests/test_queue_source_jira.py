@@ -1286,6 +1286,42 @@ class WritePlanTests(unittest.TestCase):
         self.assertIn("7 turns", plan.comment)
         self.assertIn("$0.42", plan.comment)
 
+    def test_resume_command_leads_the_account_for_each_provider(self):
+        import shlex
+
+        for agent, command in (
+            ("claude", ["claude", "--resume"]),
+            ("codex", ["codex", "resume"]),
+        ):
+            with self.subTest(agent=agent):
+                plan = self._plan(
+                    queue_source.STATUS_COMPLETED,
+                    jira.OutcomeReport(
+                        result_text="Finished the work.",
+                        working_directory="/tmp/a repo's directory",
+                        agent=agent,
+                        session_id="session-id",
+                    ),
+                )
+                self.assertTrue(plan.comment.startswith("**Resume interactively"))
+                shell_command = plan.comment.split("```sh\n", 1)[1].split("\n```", 1)[0]
+                self.assertEqual(
+                    shlex.split(shell_command),
+                    ["cd", "/tmp/a repo's directory", "&&", *command, "session-id"],
+                )
+                document = jira.markdown_to_adf(plan.comment)
+                self.assertEqual(document["content"][1]["type"], "codeBlock")
+                self.assertEqual(
+                    jira.flatten_adf(document["content"][1]), shell_command,
+                )
+
+    def test_missing_session_does_not_invent_a_resume_command(self):
+        plan = self._plan(
+            queue_source.STATUS_ERROR,
+            jira.OutcomeReport(agent="codex", working_directory="/tmp/repo"),
+        )
+        self.assertNotIn("codex resume", plan.comment)
+
     def test_how_long_the_run_took_leads_the_turns_and_cost_line(self):
         plan = self._plan(
             queue_source.STATUS_COMPLETED,

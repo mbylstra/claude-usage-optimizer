@@ -2352,6 +2352,8 @@ def main() -> int:
                 ).total_seconds(),
                 working_directory=str(working_directory),
                 unmerged_branch=prompt_result.unmerged_branch,
+                agent=selected_agent,
+                session_id=prompt_result.session_id,
             ),
         )
         # Last, so the terminal event is only written once the queue reflects the

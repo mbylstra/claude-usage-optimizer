@@ -47,6 +47,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
+from shlex import quote
 
 import queue_source
 from queue_source import (
@@ -976,6 +977,8 @@ class OutcomeReport:
     duration_seconds: "float | None" = None
     working_directory: "str | None" = None
     unmerged_branch: "str | None" = None
+    agent: str = "claude"
+    session_id: "str | None" = None
 
 
 @dataclass
@@ -1055,6 +1058,18 @@ def comment_for_outcome(status, report):
         return None
 
     lines = []  # type: list[str]
+    if report.session_id and report.working_directory:
+        resume_command = "codex resume" if report.agent == "codex" else "claude --resume"
+        lines.extend([
+            "**Resume interactively in a terminal**",
+            "",
+            "```sh",
+            "cd {} && {} {}".format(
+                quote(report.working_directory), resume_command, quote(report.session_id),
+            ),
+            "```",
+            "",
+        ])
     if name == STATUS_COMPLETED:
         lines.append("Ran and completed.")
     elif name == STATUS_UNMERGED:

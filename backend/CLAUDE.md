@@ -178,6 +178,11 @@ Four things about it are deliberate:
   or timed-out attempts. If no session was established, the report says no
   command is available rather than inventing an ID. Existing reports are not
   rewritten.
+- **Jira outcome summaries put the interactive resume command first**, above
+  the run status and model's account, in a shell code block. Claude runs use
+  `claude --resume <session-id>`; Codex runs use `codex resume <thread-id>`.
+  Both change into the run's shell-quoted working directory. No command is
+  offered if the CLI did not establish a session; existing comments stay unchanged.
 
 A dry run writes no summary, for the same reason it writes no run events.
 
