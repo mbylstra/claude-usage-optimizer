@@ -519,10 +519,13 @@ Settings in the popup has two run buttons, plus a **View run** button.
   to press when you are leaving credits idle for the day.
 
 All three buttons open a detached window that streams the run — a status header
-with elapsed time and cost, a timeline of what Claude is doing, a Cancel button,
-and a raw JSON toggle. The window follows the newest line until you scroll away
-from it, and a **live** button brings it back. Either run button is refused
-while a run is already in flight.
+with elapsed time and cost, a timeline of what the agent is doing, a Cancel button,
+and a raw JSON toggle. Once the CLI reports its session ID, the header shows a
+selectable terminal command: `claude --resume <session-id>` or
+`codex resume <thread-id>`. Run it from the working directory shown above the
+command to continue the session interactively. The window follows the newest
+line until you scroll away from it, and a **live** button brings it back. Either
+run button is refused while a run is already in flight.
 
 The nightly 2 AM job deliberately raises no window; it writes to the same
 stream, so opening **View run** shows whichever queued prompt is running, or

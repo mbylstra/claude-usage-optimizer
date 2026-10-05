@@ -89,6 +89,18 @@ function RunHeader({ model }: { model: AutonomousRunViewModel }) {
         </p>
       )}
 
+      {model.sessionId !== null && model.agent !== null && (
+        <div className="flex flex-col gap-1 text-xs">
+          <span className="text-muted-foreground">
+            Resume in a terminal
+            {model.workingDirectory === null ? ':' : ` from ${model.workingDirectory}:`}
+          </span>
+          <code className="font-mono break-all select-all">
+            {model.agent === 'codex' ? 'codex resume' : 'claude --resume'} {model.sessionId}
+          </code>
+        </div>
+      )}
+
       {/* A skip's reason is deliberately *not* repeated here: it is the single
           line of the timeline below, and saying it twice in eighty pixels reads
           as two different facts. */}
