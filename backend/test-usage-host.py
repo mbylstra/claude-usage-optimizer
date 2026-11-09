@@ -506,6 +506,7 @@ def main() -> int:
                 "scheduleHour": 3,
                 "scheduleMinute": 30,
                 "newProjectsDirectory": "~/code/experiments",
+                "codexModel": "gpt-6.1-terra",
             },
         }
 
@@ -530,6 +531,8 @@ def main() -> int:
                         # Not sent in settings_message above — parse_settings fills
                         # these in from defaults, and write_settings persists them.
                         "model": "opus",
+                        "agent": "claude",
+                        "codexModel": "gpt-6.1-terra",
                         "effort": "",
                         "maxPromptDurationHours": 5.0,
                         "appendToAllPrompts": "",

@@ -124,6 +124,22 @@ class ParseSettingsTests(unittest.TestCase):
             settings_module.AUTONOMOUS_WORK_AGENT_BEHIND_PACE,
         )
 
+    def test_codex_model_is_preserved_independently_of_claude_model(self):
+        for agent in settings_module.AUTONOMOUS_WORK_AGENTS:
+            for codex_model in settings_module.VALID_CODEX_MODELS:
+                with self.subTest(agent=agent, codex_model=codex_model):
+                    settings = settings_module.parse_settings(
+                        {"agent": agent, "model": "sonnet", "codexModel": codex_model}
+                    )
+                    self.assertEqual(settings.codex_model, codex_model)
+                    self.assertEqual(settings.model, "sonnet")
+
+    def test_missing_or_invalid_codex_model_keeps_sol_default(self):
+        for codex_model in (None, "", "unknown", 123, [], {}):
+            with self.subTest(codex_model=codex_model):
+                settings = settings_module.parse_settings({"codexModel": codex_model})
+                self.assertEqual(settings.codex_model, "gpt-6.1-sol")
+
     def test_blank_and_non_string_status_names_are_dropped(self):
         result = settings_module.parse_settings(
             {"jiraStatusNames": {"todo": "  ", "inReview": 3, "done": " Shipped "}}
@@ -318,6 +334,7 @@ class SettingsRoundTripTests(unittest.TestCase):
             schedule_minute=30,
             new_projects_directory="~/code/nightly",
             model="sonnet",
+            codex_model="gpt-6-astra",
             effort="xhigh",
             max_prompt_duration_hours=1.5,
             append_to_all_prompts="Keep changes small.",

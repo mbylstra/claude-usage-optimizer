@@ -11,6 +11,15 @@ export type AutonomousWorkAgent = 'claude' | 'codex' | 'behindPace';
 
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** Current Codex CLI model IDs: https://learn.chatgpt.com/docs/models */
+export const CODEX_MODELS = [
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra (most capable)' },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol (balanced)' },
+  { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra (visual reasoning)' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna (most efficient)' },
+] as const;
+export type CodexModel = (typeof CODEX_MODELS)[number]['id'];
+
 /**
  * Which of `EFFORT_LEVELS` each model this app offers actually accepts —
  * mirrors `autonomous_work_settings.MODEL_EFFORT_LEVELS` on the backend,
@@ -44,6 +53,8 @@ export interface AutonomousWorkSettings {
    * headless run then denies every edit and shell command.
    */
   model: 'sonnet' | 'opus';
+  /** The Codex model used whenever the selected agent for a prompt is Codex. */
+  codexModel: CodexModel;
   /**
    * The default `claude --effort` level for `model`, or `''` to send no
    * `--effort` flag at all and let `claude` pick its own. Must be one of
@@ -197,6 +208,7 @@ export interface ExtensionSettings {
 export const DEFAULT_NEW_PROJECTS_DIRECTORY = '~/code';
 export const DEFAULT_CODEX_USAGE_ENABLED = false;
 export const DEFAULT_MODEL = 'opus';
+export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6.1-sol';
 export const DEFAULT_AUTONOMOUS_WORK_AGENT: AutonomousWorkAgent = 'claude';
 /** No level — send no `--effort` flag, and let `claude` keep its own default. */
 export const DEFAULT_EFFORT = '';
@@ -213,6 +225,7 @@ export const DEFAULT_AUTONOMOUS_WORK_SETTINGS: AutonomousWorkSettings = {
   newProjectsDirectory: DEFAULT_NEW_PROJECTS_DIRECTORY,
   agent: DEFAULT_AUTONOMOUS_WORK_AGENT,
   model: DEFAULT_MODEL,
+  codexModel: DEFAULT_CODEX_MODEL,
   effort: DEFAULT_EFFORT,
   maxPromptDurationHours: DEFAULT_MAX_PROMPT_DURATION_HOURS,
   appendToAllPrompts: DEFAULT_APPEND_TO_ALL_PROMPTS,
@@ -253,6 +266,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     newProjectsDirectory?: unknown;
     agent?: unknown;
     model?: unknown;
+    codexModel?: unknown;
     effort?: unknown;
     maxPromptDurationHours?: unknown;
     appendToAllPrompts?: unknown;
@@ -274,6 +288,10 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
     autonomousWorkValue.agent === 'codex' || autonomousWorkValue.agent === 'behindPace'
       ? autonomousWorkValue.agent
       : DEFAULT_AUTONOMOUS_WORK_AGENT;
+
+  const codexModel =
+    CODEX_MODELS.find((modelOption) => modelOption.id === autonomousWorkValue.codexModel)?.id ??
+    DEFAULT_CODEX_MODEL;
 
   // A stored 'haiku' (no longer offered) lands on 'sonnet', the nearest still-
   // valid model, rather than jumping to DEFAULT_MODEL — which is the priciest.
@@ -353,6 +371,7 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
       newProjectsDirectory,
       agent,
       model,
+      codexModel,
       effort,
       maxPromptDurationHours,
       appendToAllPrompts,

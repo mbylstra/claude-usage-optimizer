@@ -1026,6 +1026,20 @@ class ClaudeOutputCollectorTests(unittest.TestCase):
 
 class CodexPromptCompletionTests(unittest.TestCase):
     def test_successful_codex_run_reaches_a_completed_queue_status(self):
+        for codex_model in work.autonomous_work_settings.VALID_CODEX_MODELS:
+            with self.subTest(codex_model=codex_model):
+                selected_settings = work.autonomous_work_settings.parse_settings(
+                    {"agent": "behindPace", "codexModel": codex_model}
+                )
+                with mock.patch.object(
+                    work.autonomous_work_settings, "read_settings", return_value=selected_settings
+                ):
+                    configured_scheduler = _load_module_under_test()
+                self.assertEqual(configured_scheduler.CODEX_MODEL, codex_model)
+                with mock.patch.object(work, "CODEX_MODEL", configured_scheduler.CODEX_MODEL):
+                    self._assert_successful_codex_run(codex_model)
+
+    def _assert_successful_codex_run(self, codex_model):
         # Previously run_prompt crashed after the CLI exited: it read Claude's
         # session_limit_notice from a CodexOutputCollector before main could
         # move the Jira card out of In Progress.
@@ -1049,7 +1063,7 @@ class CodexPromptCompletionTests(unittest.TestCase):
                 prompt="Do the work.",
             )
             session = work.autonomous_work_summary.SessionSummary(datetime.now(), forced=True)
-            with mock.patch.object(work.subprocess, "Popen", return_value=process), mock.patch.object(
+            with mock.patch.object(work.subprocess, "Popen", return_value=process) as start_process, mock.patch.object(
                 work, "capture_git_checkpoint", return_value=work.GitCheckpoint(None, None)
             ), mock.patch.object(work, "finalize_repository", return_value=None):
                 result = work.run_prompt(
@@ -1063,6 +1077,13 @@ class CodexPromptCompletionTests(unittest.TestCase):
                     "session-id",
                     "codex",
                 )
+
+            command = next(
+                invocation.args[0]
+                for invocation in start_process.call_args_list
+                if invocation.args[0][:2] == ["codex", "exec"]
+            )
+            self.assertEqual(command[command.index("--model") + 1], codex_model)
 
         self.assertEqual(result.outcome, "completed")
         self.assertEqual(result.result_text, "Work finished.")

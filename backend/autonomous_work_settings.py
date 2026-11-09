@@ -53,6 +53,9 @@ DEFAULT_SCHEDULE_MINUTE = 0
 # `~/code/auto-claude`.
 DEFAULT_NEW_PROJECTS_DIRECTORY = "~/code"
 DEFAULT_MODEL = "opus"
+# Current Codex CLI IDs: https://learn.chatgpt.com/docs/models
+VALID_CODEX_MODELS = ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna")
+DEFAULT_CODEX_MODEL = "gpt-6.1-sol"
 AUTONOMOUS_WORK_AGENT_CLAUDE = "claude"
 AUTONOMOUS_WORK_AGENT_CODEX = "codex"
 AUTONOMOUS_WORK_AGENT_BEHIND_PACE = "behindPace"
@@ -189,6 +192,7 @@ class AutonomousWorkSettings:
     the flat `VALID_EFFORT_LEVELS`, so a level that is not offered for the
     currently-selected model can never be stored here — see `parse_settings`."""
     effort: str = DEFAULT_EFFORT
+    codex_model: str = DEFAULT_CODEX_MODEL
     max_prompt_duration_hours: float = DEFAULT_MAX_PROMPT_DURATION_HOURS
     append_to_all_prompts: str = DEFAULT_APPEND_TO_ALL_PROMPTS
     pace_threshold_hours: float = DEFAULT_PACE_THRESHOLD_HOURS
@@ -292,6 +296,13 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
     agent_value = settings_data.get("agent")
     agent = agent_value if agent_value in AUTONOMOUS_WORK_AGENTS else DEFAULT_AUTONOMOUS_WORK_AGENT
 
+    codex_model_value = settings_data.get("codexModel")
+    codex_model = (
+        codex_model_value
+        if isinstance(codex_model_value, str) and codex_model_value in VALID_CODEX_MODELS
+        else DEFAULT_CODEX_MODEL
+    )
+
     # Validated against the *chosen* model's own levels, not the flat
     # VALID_EFFORT_LEVELS — a level valid for one model but not this one is
     # exactly as wrong as a level that never existed. Falls back to
@@ -375,6 +386,7 @@ def parse_settings(settings_data: object) -> AutonomousWorkSettings:
         new_projects_directory=new_projects_directory,
         agent=agent,
         model=model,
+        codex_model=codex_model,
         effort=effort,
         max_prompt_duration_hours=_coerce_positive_hours(
             settings_data.get("maxPromptDurationHours"), DEFAULT_MAX_PROMPT_DURATION_HOURS
@@ -411,6 +423,7 @@ def write_settings(settings: AutonomousWorkSettings) -> None:
         "newProjectsDirectory": settings.new_projects_directory,
         "agent": settings.agent,
         "model": settings.model,
+        "codexModel": settings.codex_model,
         "effort": settings.effort,
         "maxPromptDurationHours": settings.max_prompt_duration_hours,
         "appendToAllPrompts": settings.append_to_all_prompts,
@@ -613,6 +626,7 @@ def main() -> int:
     print("New projects in:    {}".format(settings.new_projects_directory))
     print("Agent for runs:     {}".format(settings.agent))
     print("Claude model:       {}".format(settings.model))
+    print("Codex model:        {}".format(settings.codex_model))
     print("Claude effort:      {}".format(settings.effort or "(claude's own default)"))
     print("Max time per prompt: {} hours".format(settings.max_prompt_duration_hours))
     print("Appended to prompts: {!r}".format(settings.append_to_all_prompts))

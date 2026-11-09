@@ -28,12 +28,14 @@ import {
   type ScheduleTime,
 } from '@/lib/scheduleTime';
 import {
+  CODEX_MODELS,
   DEFAULT_NEW_PROJECTS_DIRECTORY,
   JIRA_COLUMNS,
   MODEL_EFFORT_LEVELS,
   isRepositoryDraftComplete,
   repositoryFromDraft,
   type AutonomousWorkSettings,
+  type CodexModel,
   type EffortLevel,
   type JiraColumnKey,
   type QueueSourceName,
@@ -126,7 +128,7 @@ const MAX_PACE_THRESHOLD_HOURS = 168;
  * as a field next to the `Input`s around them without the Radix portal trouble.
  */
 const SELECT_CLASS_NAME =
-  'border-input bg-background h-8 rounded-md border px-2 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]';
+  'border-input bg-background h-8 rounded-md border px-2 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-50';
 
 const EFFORT_LEVEL_LABELS: Record<EffortLevel, string> = {
   low: 'Low',
@@ -364,7 +366,7 @@ export function SettingsPage({
               {autonomousWorkSettings.agent === 'behindPace'
                 ? 'The agent further behind pace'
                 : usesCodex
-                  ? 'Codex (Sol)'
+                  ? `Codex (${autonomousWorkSettings.codexModel})`
                   : 'Claude'}{' '}
               runs automatically at {describeScheduleTime(autonomousWorkSettings.scheduleTime)} when
               the week is far enough behind pace.
@@ -397,8 +399,8 @@ export function SettingsPage({
               </label>
             ))}
             <p className="text-muted-foreground text-xs">
-              Codex uses Sol. The automatic choice compares weekly pace before each prompt. This
-              does not affect the separate Codex usage display.
+              Each agent uses its model selected below. The automatic choice compares weekly pace
+              before each prompt. This does not affect the separate Codex usage display.
             </p>
           </fieldset>
 
@@ -510,7 +512,7 @@ export function SettingsPage({
             </select>
             <p className="text-muted-foreground text-xs">
               {usesCodex
-                ? 'Codex is currently pinned to Sol. Your Claude model choice is preserved.'
+                ? 'Your Claude model choice is preserved for when Claude runs.'
                 : 'The Claude model to use when running queued prompts automatically.'}
             </p>
           </div>
@@ -540,7 +542,7 @@ export function SettingsPage({
             </select>
             <p className="text-muted-foreground text-xs">
               {usesCodex ? (
-                'Codex is currently pinned to Sol; Claude effort and Jira overrides are ignored.'
+                'Claude effort and Jira model and effort overrides apply only to Claude runs.'
               ) : (
                 <>
                   How much the model thinks before acting. Only levels{' '}
@@ -549,6 +551,33 @@ export function SettingsPage({
                   this list, if the card leaves Model blank).
                 </>
               )}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor="codex-model-select" className="text-sm">
+              Codex model for autonomous runs
+            </label>
+            <select
+              id="codex-model-select"
+              className={SELECT_CLASS_NAME}
+              value={autonomousWorkSettings.codexModel}
+              onChange={(event) =>
+                onAutonomousWorkSettingsChange({
+                  ...autonomousWorkSettings,
+                  codexModel: event.target.value as CodexModel,
+                })
+              }
+            >
+              {CODEX_MODELS.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted-foreground text-xs">
+              Used whenever Codex runs, including automatic agent selection. Availability depends on
+              your plan and workspace. GPT-6.1 Terra needs Codex CLI 0.159.0 or later.
             </p>
           </div>
 

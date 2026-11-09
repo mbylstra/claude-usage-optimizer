@@ -425,6 +425,13 @@ neither launchd nor `run-autonomous-work.py` can see that. So the native host
 mirrors them to `backend/autonomous-work-settings.json`, and
 `autonomous_work_settings.py` is the single module that knows that file's shape.
 
+Claude's `model` and Codex's `codexModel` are independent settings. Codex offers
+`gpt-6-astra`, `gpt-6.1-sol` (the default), `gpt-6.1-terra`, and `gpt-6-luna`,
+verified against https://learn.chatgpt.com/docs/models on 2026-11-04. The scheduler
+uses `codex_model` for the CLI, run events, and summaries whenever Codex runs,
+including when `behindPace` selects it. Jira model and effort overrides remain
+Claude-only. GPT-6.1 Terra requires Codex CLI 0.159.0 or later.
+
 That module is imported by `usage-host.py`, so it inherits the host's
 constraints exactly: **stdlib-only and 3.9-compatible.** Underscores in its name
 rather than the hyphens its sibling scripts use, because a hyphen would make it
