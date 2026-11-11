@@ -286,8 +286,9 @@ MANDATORY_PROMPT_SUFFIX = (
 # that isn't here (a leftover Jira "haiku" option, or `AUTONOMOUS_WORK_MODEL=haiku`)
 # falls through: an entry to `CLAUDE_MODEL`, the session default to opus.
 _MODEL_ID_MAP = {
-    "sonnet": "claude-sonnet-5",
+    "sonnet": "claude-sonnet-5-5",
     "opus": "claude-opus-5-5",
+    "fable": "claude-fable-5-2",
 }
 CLAUDE_MODEL = _MODEL_ID_MAP.get(_model_name, _MODEL_ID_MAP["opus"])
 
@@ -316,7 +317,7 @@ def claude_model_id_for(entry: "QueueEntry") -> str:
 
 
 def _resolved_model_name_for(entry: "QueueEntry") -> str:
-    """The model *name* ("opus" / "sonnet") `claude_model_id_for` would resolve
+    """The model *name* ("opus" / "sonnet" / "fable") `claude_model_id_for` would resolve
     this entry to — needed here, and only here, because `claude_effort_for`
     has to know which model's effort levels to validate against, not just
     which id to pass. Mirrors `claude_model_id_for`'s precedence without

@@ -1497,8 +1497,9 @@ class ClaudeModelIdForTests(unittest.TestCase):
         )
 
     def test_an_entry_that_names_a_model_runs_on_that_model(self):
-        self.assertEqual(work.claude_model_id_for(self._entry("sonnet")), "claude-sonnet-5")
+        self.assertEqual(work.claude_model_id_for(self._entry("sonnet")), "claude-sonnet-5-5")
         self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-opus-5-5")
+        self.assertEqual(work.claude_model_id_for(self._entry("fable")), "claude-fable-5-2")
 
     def test_an_entry_that_names_nothing_runs_on_the_session_default(self):
         self.assertEqual(work.claude_model_id_for(self._entry(None)), work.CLAUDE_MODEL)
@@ -1515,15 +1516,15 @@ class ClaudeModelIdForTests(unittest.TestCase):
         # `AUTONOMOUS_WORK_MODEL` is an explicit "run everything on X" for the
         # whole session, the same precedence the other env knobs follow.
         with mock.patch.object(work, "_MODEL_NAME_FORCED_BY_ENV", "sonnet"), mock.patch.object(
-            work, "CLAUDE_MODEL", "claude-sonnet-5"
+            work, "CLAUDE_MODEL", "claude-sonnet-5-5"
         ):
-            self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-sonnet-5")
+            self.assertEqual(work.claude_model_id_for(self._entry("opus")), "claude-sonnet-5-5")
 
     def test_the_model_pin_is_the_first_two_claude_arguments(self):
         # Losing `--model` off the front of the invocation is the regression the
         # module's own line-190 comment records having shipped once.
         arguments = work.claude_arguments_for(self._entry("sonnet"), "session-uuid")
-        self.assertEqual(arguments[:2], ["--model", "claude-sonnet-5"])
+        self.assertEqual(arguments[:2], ["--model", "claude-sonnet-5-5"])
         # `--session-id` rides just behind the model pin, ahead of the shared base.
         self.assertEqual(arguments[2:4], ["--session-id", "session-uuid"])
         self.assertEqual(arguments[4:], work.CLAUDE_BASE_ARGUMENTS)
@@ -1593,7 +1594,7 @@ class ClaudeEffortForTests(unittest.TestCase):
                 arguments,
                 [
                     "--model",
-                    "claude-sonnet-5",
+                    "claude-sonnet-5-5",
                     "--session-id",
                     "session-uuid",
                     "--effort",

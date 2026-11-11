@@ -24,14 +24,18 @@ export type CodexModel = (typeof CODEX_MODELS)[number]['id'];
  * Which of `EFFORT_LEVELS` each model this app offers actually accepts —
  * mirrors `autonomous_work_settings.MODEL_EFFORT_LEVELS` on the backend,
  * which the Jira board's `Effort` dropdown and its per-card validation both
- * check against, so the two cannot drift. Both models currently take the
+ * check against, so the two cannot drift. Every model currently takes the
  * full range; this stays a per-model map (not a flat list) because a future
  * model may not, and the Settings screen's effort dropdown already filters
  * live against whichever model is selected.
  */
-export const MODEL_EFFORT_LEVELS: Record<'sonnet' | 'opus', readonly EffortLevel[]> = {
+/** The Claude models offered for autonomous runs — see `AutonomousWorkSettings.model`. */
+export type AutonomousWorkModel = 'sonnet' | 'opus' | 'fable';
+
+export const MODEL_EFFORT_LEVELS: Record<AutonomousWorkModel, readonly EffortLevel[]> = {
   opus: EFFORT_LEVELS,
   sonnet: EFFORT_LEVELS,
+  fable: EFFORT_LEVELS,
 };
 
 /** Mirrored to `backend/autonomous-work-settings.json` by the native host. */
@@ -52,7 +56,7 @@ export interface AutonomousWorkSettings {
    * Opus 4.6+ / Sonnet 4.6+ / Fable 5 — on Haiku it falls back to Manual and a
    * headless run then denies every edit and shell command.
    */
-  model: 'sonnet' | 'opus';
+  model: AutonomousWorkModel;
   /** The Codex model used whenever the selected agent for a prompt is Codex. */
   codexModel: CodexModel;
   /**
@@ -296,10 +300,10 @@ export function normaliseExtensionSettings(stored: unknown): ExtensionSettings {
   // A stored 'haiku' (no longer offered) lands on 'sonnet', the nearest still-
   // valid model, rather than jumping to DEFAULT_MODEL — which is the priciest.
   const rawModel = autonomousWorkValue.model;
-  const model: 'sonnet' | 'opus' =
+  const model: AutonomousWorkModel =
     rawModel === 'haiku'
       ? 'sonnet'
-      : rawModel === 'sonnet' || rawModel === 'opus'
+      : rawModel === 'sonnet' || rawModel === 'opus' || rawModel === 'fable'
         ? rawModel
         : DEFAULT_MODEL;
 

@@ -77,7 +77,7 @@ DEFAULT_AUTONOMOUS_WORK_AGENT = AUTONOMOUS_WORK_AGENT_CLAUDE
 # denies every file edit and shell command, so a Haiku session just asks a
 # question into the void and gets nothing done. A stored `"haiku"` is coerced
 # to `"sonnet"` in `parse_settings` rather than rejected.
-VALID_MODEL_NAMES = ("opus", "sonnet")
+VALID_MODEL_NAMES = ("opus", "sonnet", "fable")
 # The `claude --effort` values that exist at all, in the CLI's own low-to-high
 # order. Not every model offers every level — `MODEL_EFFORT_LEVELS` below is
 # the one place that narrower set lives — but this tuple is what a level is
@@ -86,14 +86,15 @@ VALID_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # Which of `VALID_EFFORT_LEVELS` each of `VALID_MODEL_NAMES` actually accepts.
 # The settings screen's dropdown and the Jira board's per-card `Effort`
 # dropdown (`queue_source_jira.EFFORT_FIELD_NAME`) both check a choice against
-# the entry naming this model, so the two cannot drift. Both current models
-# take the full range; this stays a per-model map (not a flat tuple) because a
+# the entry naming this model, so the two cannot drift. Every current model
+# takes the full range; this stays a per-model map (not a flat tuple) because a
 # future model — an older generation added back, say — may not, and the
 # settings-screen dropdown already filters live against whichever model is
 # selected.
 MODEL_EFFORT_LEVELS = {
     "opus": VALID_EFFORT_LEVELS,
     "sonnet": VALID_EFFORT_LEVELS,
+    "fable": VALID_EFFORT_LEVELS,
 }
 # The empty string, not a level, so an install that has never touched this
 # setting sends no `--effort` flag at all and `claude` keeps picking its own

@@ -775,7 +775,7 @@ sync that cannot reach Jira is reported next to the save confirmation and never
 fails the save, the same rule the credential probe follows.
 
 **A card can also pin its Claude model, from a second dropdown.** The `Model`
-field — `opus` / `sonnet`, the vocabulary
+field — `opus` / `sonnet` / `fable`, the vocabulary
 `autonomous_work_settings.VALID_MODEL_NAMES` owns — is a single-select created
 and put on the issue screen by `install-jira-queue`, exactly as `Repository` is.
 What makes it _much_ smaller than `Repository`: its options are a fixed

@@ -2261,7 +2261,7 @@ class ConfigureProjectOrchestrationTests(StubJiraTestCase):
         self.assertEqual(len(writes_before), len(writes_after))
 
 
-MODEL_NAMES = ("opus", "sonnet")
+MODEL_NAMES = ("opus", "sonnet", "fable")
 
 
 class SelectedModelNameTests(unittest.TestCase):
@@ -2323,7 +2323,7 @@ class ModelFieldTests(StubJiraTestCase):
         )
         self.assertTrue(setup.ok)
         self.assertTrue(setup.created_field)
-        self.assertEqual(sorted(setup.added_options), ["opus", "sonnet"])
+        self.assertEqual(sorted(setup.added_options), ["fable", "opus", "sonnet"])
 
         creation = [
             call for call in self.state.requests
@@ -2335,7 +2335,7 @@ class ModelFieldTests(StubJiraTestCase):
         self.assertEqual(creation[0][2]["searcherKey"], jira.SINGLE_SELECT_SEARCHER_KEY)
         self.assertEqual(
             self.state.options_of(setup.field_id),
-            {"opus": False, "sonnet": False},
+            {"opus": False, "sonnet": False, "fable": False},
         )
 
     def test_the_field_lands_on_the_issue_screen(self):
@@ -2355,7 +2355,7 @@ class ModelFieldTests(StubJiraTestCase):
         field_id = self.state.add_field(jira.MODEL_FIELD_NAME)
         self.state.add_field_option(field_id, "Opus")  # case-insensitive match
         setup = jira.ensure_model_field(self.source.client, PROJECT_ID, MODEL_NAMES)
-        self.assertEqual(setup.added_options, ["sonnet"])
+        self.assertEqual(setup.added_options, ["sonnet", "fable"])
 
     def test_a_write_failure_is_reported_rather_than_raised(self):
         self.state.fail_writes = True

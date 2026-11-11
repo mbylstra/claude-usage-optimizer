@@ -32,6 +32,7 @@ import {
   DEFAULT_NEW_PROJECTS_DIRECTORY,
   JIRA_COLUMNS,
   MODEL_EFFORT_LEVELS,
+  type AutonomousWorkModel,
   isRepositoryDraftComplete,
   repositoryFromDraft,
   type AutonomousWorkSettings,
@@ -494,7 +495,7 @@ export function SettingsPage({
               disabled={usesCodex}
               value={autonomousWorkSettings.model}
               onChange={(event) => {
-                const model = event.target.value as 'sonnet' | 'opus';
+                const model = event.target.value as AutonomousWorkModel;
                 // The effort dropdown below only ever offers levels this model
                 // supports — keeping a level the new model does not offer
                 // would leave the setting pointed at something its own
@@ -508,7 +509,8 @@ export function SettingsPage({
               }}
             >
               <option value="sonnet">Sonnet (balanced)</option>
-              <option value="opus">Opus (most capable)</option>
+              <option value="opus">Opus</option>
+              <option value="fable">Fable (most capable)</option>
             </select>
             <p className="text-muted-foreground text-xs">
               {usesCodex
