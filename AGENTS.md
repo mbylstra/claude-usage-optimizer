@@ -44,6 +44,11 @@ you are working under them:
 
 ## Commands
 
+Frontend recipes require `mise` on PATH and use `mise exec --`. Tool versions
+are pinned in the root `mise.toml`; run `mise trust` and `mise install` on a
+fresh checkout. Do not depend on nvm or shell activation. Keep the pnpm pin
+in sync with `chrome-extension/package.json`’s `packageManager` field.
+
 `just` is the entry point for everything. Do not run raw pnpm/vite commands —
 add a recipe instead. Never use `git add`. Never use `git commit` unless the user
 invokes the `/commit` slash command. That command authorizes committing only the

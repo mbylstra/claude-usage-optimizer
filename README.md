@@ -35,11 +35,11 @@ having on a development machine whether or not you ever run this project.
 On macOS, the prerequisites are:
 
 ```sh
-brew install just node uv       # just runs every command in this repo
-corepack enable pnpm            # or: brew install pnpm
+brew install just mise uv       # just runs recipes; mise manages Node and pnpm
 ```
 
-- **`just`, `node`, `pnpm`** — needed to build the extension.
+- **`just`, `mise`** — needed to build the extension. Node and pnpm versions
+  are pinned in the root `mise.toml`; no separate Node or pnpm install is needed.
 - **`uv`** — the scheduler script runs under `uv run --script`.
 - **`claude`** — the Claude Code CLI, which is what the scheduler actually
   runs. Install it from <https://claude.com/claude-code> if you have not
@@ -56,6 +56,8 @@ puts on `PATH`.
 Then, from the repository root:
 
 ```sh
+mise trust
+mise install
 just setup
 ```
 
@@ -157,7 +159,12 @@ new model.
 
 ## Install it locally
 
+Install `just` and `mise` first (on macOS: `brew install just mise`).
+Then, from the repository root:
+
 ```sh
+mise trust
+mise install
 just install
 just build
 ```
@@ -180,7 +187,11 @@ you only want the popup. `just setup` sets up both halves in one command.
 
 ## Commands
 
-`just` is the entry point for everything:
+`just` is the entry point for everything. Frontend recipes run through
+`mise exec --`, using the versions in `mise.toml` regardless of your shell’s
+active Node version. Shell activation and `nvm use` are not required. When
+updating pnpm, keep `mise.toml` and `chrome-extension/package.json`’s
+`packageManager` version in sync.
 
 ```sh
 just setup           # everything a fresh clone needs, in one command

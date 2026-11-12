@@ -1,5 +1,8 @@
 # Claude Usage Optimizer — every command for this project lives here.
 
+# Run the frontend toolchain through mise, independent of shell activation.
+frontend_toolchain := "mise exec --"
+
 # List available recipes
 default:
     @just --list
@@ -7,7 +10,7 @@ default:
 # Install dependencies
 [working-directory('chrome-extension')]
 install:
-    pnpm install
+    {{ frontend_toolchain }} pnpm install
 
 # Everything a fresh clone needs, in one go. Safe to re-run.
 setup: install install-shadcn-components build install-private-uv install-usage-host install-autonomous-work
@@ -67,7 +70,7 @@ install-shadcn-components:
         echo "shadcn $component already present — left alone"
       else
         echo "Adding shadcn $component…"
-        pnpm exec shadcn add "$component" --yes
+        {{ frontend_toolchain }} pnpm exec shadcn add "$component" --yes
       fi
     done
 
@@ -79,48 +82,48 @@ refresh-shadcn-components:
     echo "This overwrites components/ui/ from upstream shadcn, so any local edit"
     echo "to one of these is lost: {{ shadcn_components }}"
     echo "Check 'git diff' afterwards before committing."
-    pnpm exec shadcn add {{ shadcn_components }} --overwrite --yes
+    {{ frontend_toolchain }} pnpm exec shadcn add {{ shadcn_components }} --overwrite --yes
 
 # Vite dev server for the popup UI (no chrome.* APIs available)
 [working-directory('chrome-extension')]
 dev:
-    pnpm exec vite
+    {{ frontend_toolchain }} pnpm exec vite
 
 # The run-log window UI, driven by fixture events — no extension, no host, no run
 [working-directory('chrome-extension')]
 run-log-preview:
-    pnpm exec vite --open /run-log-preview.html
+    {{ frontend_toolchain }} pnpm exec vite --open /run-log-preview.html
 
 # Production build of the unpacked extension into chrome-extension/dist/
 [working-directory('chrome-extension')]
 build:
-    pnpm exec vite build
-    pnpm exec vite build --config vite.config.serviceWorker.ts
+    {{ frontend_toolchain }} pnpm exec vite build
+    {{ frontend_toolchain }} pnpm exec vite build --config vite.config.serviceWorker.ts
 
 # Lint
 [working-directory('chrome-extension')]
 lint:
-    pnpm exec eslint .
+    {{ frontend_toolchain }} pnpm exec eslint .
 
 # Rewrite files with Prettier
 [working-directory('chrome-extension')]
 format:
-    pnpm exec prettier --write .
+    {{ frontend_toolchain }} pnpm exec prettier --write .
 
 # Fail if anything is not Prettier-formatted
 [working-directory('chrome-extension')]
 format-check:
-    pnpm exec prettier --check .
+    {{ frontend_toolchain }} pnpm exec prettier --check .
 
 # Type-check without emitting
 [working-directory('chrome-extension')]
 typecheck:
-    pnpm exec tsc --noEmit
+    {{ frontend_toolchain }} pnpm exec tsc --noEmit
 
 # Regenerate the toolbar icons in public/icons/
 [working-directory('chrome-extension')]
 icons:
-    pnpm exec node scripts/generateIcons.js
+    {{ frontend_toolchain }} pnpm exec node scripts/generateIcons.js
 
 # Pre-commit gate: everything that must pass before work is considered done
 check: typecheck lint format-check

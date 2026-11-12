@@ -71,7 +71,7 @@ function UsageBar({
   tickMarks,
 }: {
   percentUsed: number;
-  pacePercent: number;
+  pacePercent: number | null;
   tone: PaceTone;
   tickMarks: WindowTickMark[];
 }) {
@@ -112,11 +112,13 @@ function UsageBar({
 
       {/* Where an even burn would have you. Drawn first so that when the two
           coincide it is the coloured one — the live figure — left on top. */}
-      <BarMarker
-        positionPercent={pacePercent}
-        colorClassName="bg-foreground"
-        title="Even-burn pace"
-      />
+      {pacePercent !== null && (
+        <BarMarker
+          positionPercent={pacePercent}
+          colorClassName="bg-foreground"
+          title="Even-burn pace"
+        />
+      )}
       <BarMarker
         positionPercent={percentUsed}
         colorClassName={USAGE_MARKER_CLASSES[tone]}
@@ -159,7 +161,8 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
   }
 
   // Derived once so the hero and the bar cannot end up different colours.
-  const tone = paceTone(status);
+  const isExhausted = status.percentUsed >= 100;
+  const tone = isExhausted ? 'aheadSevere' : paceTone(status);
 
   return (
     <Card>
@@ -177,7 +180,20 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
             "72% used" means nothing until you know how far into the window you
             are — which is exactly what the gap has already worked out. */}
         <div className="flex items-baseline justify-between gap-2">
-          <PaceIndicator tone={tone} paceDeltaMs={status.paceDeltaMs} />
+          {isExhausted ? (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-pace-ahead-severe text-xl leading-tight font-semibold">
+                {status.hasResetElapsed ? 'Awaiting reset' : 'Limit reached'}
+              </span>
+              <span className="text-muted-foreground text-xs font-medium">
+                {status.hasResetElapsed
+                  ? 'Waiting for updated usage'
+                  : `Resets in ${formatDuration(status.timeRemainingMs)}`}
+              </span>
+            </div>
+          ) : (
+            <PaceIndicator tone={tone} paceDeltaMs={status.paceDeltaMs} />
+          )}
           <span className="text-muted-foreground text-xs font-medium tabular-nums">
             {Math.round(status.percentUsed)}% used
           </span>
@@ -185,7 +201,7 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
 
         <UsageBar
           percentUsed={status.percentUsed}
-          pacePercent={status.pacePercent}
+          pacePercent={isExhausted ? null : status.pacePercent}
           tone={tone}
           tickMarks={buildWindowTickMarks(status)}
         />
@@ -194,7 +210,7 @@ export function UsageWindowCard({ status, now }: UsageWindowCardProps) {
           <DetailRow label="Started" value={formatClockTimeWithDay(status.windowStartedAt, now)} />
           <DetailRow label="Resets" value={formatClockTimeWithDay(status.windowResetsAt, now)} />
           <DetailRow
-            label="Left"
+            label="Time to reset"
             value={status.hasResetElapsed ? 'Resetting…' : formatDuration(status.timeRemainingMs)}
           />
         </div>
